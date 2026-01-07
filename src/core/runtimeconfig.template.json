@@ -1,0 +1,5 @@
+{
+  "configProperties": {
+    "System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault": true
+  }
+}

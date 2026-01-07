@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- WASM Build Configuration -->
+  <PropertyGroup Condition="'$(Configuration)' == 'WASM'">
+    <RuntimeIdentifier>browser-wasm</RuntimeIdentifier>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WasmEnableExceptionHandling>true</WasmEnableExceptionHandling>
+    <!-- Enable JSON reflection for JSExport/JSImport marshaling -->
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
+  </ItemGroup>
+</Project>
