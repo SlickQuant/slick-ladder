@@ -81,6 +81,28 @@ public class UpdateBatcher
     }
 
     /// <summary>
+    /// Queue an update without auto-flushing.
+    /// Use this when processing batches and you'll manually flush at the end.
+    /// Returns true if queued, false if queue is full.
+    /// </summary>
+    public bool QueueUpdateNoFlush(PriceLevel update)
+    {
+        if (_isPaused)
+        {
+            return false;
+        }
+
+        if (!_updateQueue.TryWrite(update))
+        {
+            // Queue full
+            return false;
+        }
+
+        _pendingUpdateCount++;
+        return true;
+    }
+
+    /// <summary>
     /// Queue multiple updates in batch
     /// </summary>
     public int QueueBatch(ReadOnlySpan<PriceLevel> updates)

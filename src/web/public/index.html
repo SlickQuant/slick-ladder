@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Slick Ladder - Ultra-Low Latency Price Ladder Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f0f0f;
+            color: #ffffff;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 1.1em;
+        }
+
+        .demo-container {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+            align-items: start;
+        }
+
+        .ladder-panel {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .controls-panel {
+            background: #1a1a1a;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        #ladder-container {
+            display: flex;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        .section {
+            margin-bottom: 20px;
+        }
+
+        .section h3 {
+            margin-bottom: 15px;
+            color: #667eea;
+            font-size: 1.2em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 8px;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #aaa;
+            font-size: 0.9em;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: opacity 0.2s;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        button:active {
+            opacity: 0.8;
+        }
+
+        button.danger {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        input[type="number"],
+        input[type="range"],
+        select {
+            width: 100%;
+            padding: 8px;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            color: #fff;
+            border-radius: 4px;
+            font-size: 1em;
+        }
+
+        input[type="range"] {
+            padding: 0;
+        }
+
+        input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
+            cursor: pointer;
+        }
+
+        label:has(input[type="checkbox"]) {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            color: #fff;
+            font-size: 1em;
+        }
+
+        .stats {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+
+        .stats-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #444;
+        }
+
+        .stats-row:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .stats-label {
+            color: #888;
+        }
+
+        .stats-value {
+            color: #26a69a;
+            font-weight: bold;
+        }
+
+        .info-box {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #667eea;
+            margin-top: 15px;
+        }
+
+        .info-box p {
+            margin: 5px 0;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+
+        .tooltip {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            pointer-events: none;
+            display: none;
+            z-index: 1000;
+        }
+
+        @media (max-width: 900px) {
+            .demo-container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚡ Slick Ladder</h1>
+            <p class="subtitle">Ultra-Low Latency Trading Component | &lt;1ms Processing | 60 FPS Rendering</p>
+        </header>
+
+        <div class="demo-container">
+            <div class="ladder-panel">
+                <h3>Price Ladder</h3>
+                <div id="ladder-container"></div>
+            </div>
+
+            <div class="controls-panel">
+                <div class="section">
+                    <h3>Processing Engine</h3>
+                    <div class="control-group">
+                        <label>Engine Selection</label>
+                        <select id="backend-select">
+                            <option value="typescript">TypeScript Engine</option>
+                            <option value="wasm">WASM Engine (C#)</option>
+                        </select>
+                    </div>
+                    <div class="info-box" style="margin-top: 10px; font-size: 0.85em;">
+                        <p><strong>⚡ WASM Engine:</strong></p>
+                        <p>• 10x faster processing (&lt;1ms)</p>
+                        <p>• C# high-performance core</p>
+                        <p>• Runs in Web Worker</p>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>Display Options</h3>
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="toggle-bars" checked> Show Volume Bars
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <label>
+                            <input type="checkbox" id="toggle-orders" checked> Show Order Count
+                        </label>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>Market Simulation</h3>
+                    <div class="control-group">
+                        <label>Update Rate</label>
+                        <select id="update-rate">
+                            <option value="10">10 updates/sec</option>
+                            <option value="100" selected>100 updates/sec</option>
+                            <option value="1000">1,000 updates/sec</option>
+                            <option value="10000">10,000 updates/sec</option>
+                        </select>
+                    </div>
+                    <button id="start-updates">Start Market Updates</button>
+                    <button id="stop-updates" class="danger">Stop Updates</button>
+                    <button id="clear-book">Clear Order Book</button>
+                </div>
+
+                <div class="section">
+                    <h3>Performance Metrics</h3>
+                    <div class="stats" id="stats">
+                        <div class="stats-row">
+                            <span class="stats-label">Engine:</span>
+                            <span class="stats-value" id="backend">TypeScript</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">FPS:</span>
+                            <span class="stats-value" id="fps">60</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">Frame Time:</span>
+                            <span class="stats-value" id="frame-time">16.67ms</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">Actual Update Rate:</span>
+                            <span class="stats-value" id="actual-update-rate">-</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">Avg Batch Time:</span>
+                            <span class="stats-value" id="avg-processing-time">-</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">Max Batch Time:</span>
+                            <span class="stats-value" id="max-processing-time">-</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">Updates Processed:</span>
+                            <span class="stats-value" id="update-count">0</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">Bid Levels:</span>
+                            <span class="stats-value" id="bid-levels">0</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">Ask Levels:</span>
+                            <span class="stats-value" id="ask-levels">0</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">Best Bid:</span>
+                            <span class="stats-value" id="best-bid">-</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">Best Ask:</span>
+                            <span class="stats-value" id="best-ask">-</span>
+                        </div>
+                        <div class="stats-row">
+                            <span class="stats-label">Spread:</span>
+                            <span class="stats-value" id="spread">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="info-box">
+                        <p><strong>💡 Stress Test Guide:</strong></p>
+                        <p>• <strong>Actual Update Rate:</strong> Real updates/sec achieved (watch this!)</p>
+                        <p>• <strong>Batch Time:</strong> Processing time per batch</p>
+                        <p>• Try 10k updates/sec with WASM - it now works properly!</p>
+                        <p>• Compare batch times: TypeScript vs WASM</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        // This will be replaced by Webpack bundle
+        console.log('Slick Ladder Demo Loading...');
+    </script>
+</body>
+</html>

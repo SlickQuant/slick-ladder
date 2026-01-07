@@ -19,4 +19,29 @@
   <ItemGroup>
     <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
   </ItemGroup>
+
+  <!-- Post-build event to copy WASM files to web public directory -->
+  <Target Name="CopyWasmFilesToWeb" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'browser-wasm'">
+    <PropertyGroup>
+      <WasmAppBundlePath>$(PublishDir)..\AppBundle\_framework</WasmAppBundlePath>
+      <WebPublicWasmPath>$(MSBuildProjectDirectory)\..\..\src\web\public\wasm</WebPublicWasmPath>
+    </PropertyGroup>
+
+    <Message Text="Copying WASM files from $(WasmAppBundlePath) to $(WebPublicWasmPath)" Importance="high" />
+
+    <!-- Create destination directory if it doesn't exist -->
+    <MakeDir Directories="$(WebPublicWasmPath)" Condition="!Exists('$(WebPublicWasmPath)')" />
+
+    <!-- Copy all WASM framework files -->
+    <ItemGroup>
+      <WasmFrameworkFiles Include="$(WasmAppBundlePath)\*.wasm" />
+      <WasmFrameworkFiles Include="$(WasmAppBundlePath)\*.js" />
+      <WasmFrameworkFiles Include="$(WasmAppBundlePath)\*.json" />
+      <WasmFrameworkFiles Include="$(WasmAppBundlePath)\*.map" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(WasmFrameworkFiles)" DestinationFolder="$(WebPublicWasmPath)" SkipUnchangedFiles="false" />
+
+    <Message Text="WASM files copied successfully!" Importance="high" />
+  </Target>
 </Project>

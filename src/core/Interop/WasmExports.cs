@@ -69,6 +69,24 @@ public partial class WasmExports
     }
 
     /// <summary>
+    /// Process a single price level update without auto-flushing
+    /// </summary>
+    [JSExport]
+    public static void ProcessPriceLevelUpdateNoFlush(int side, double price, int quantity, int numOrders)
+    {
+        if (_ladder == null) return;
+
+        var update = new PriceLevel(
+            (Side)side,
+            (decimal)price,
+            quantity,
+            numOrders
+        );
+
+        _ladder.ProcessPriceLevelUpdateNoFlush(update);
+    }
+
+    /// <summary>
     /// Flush pending updates
     /// </summary>
     [JSExport]

@@ -7,6 +7,7 @@ export interface WasmExports {
     HasNewSnapshot(): boolean;
     GetLatestSnapshot(): string;
     ProcessPriceLevelUpdate(side: number, price: number, quantity: number, numOrders: number): void;
+    ProcessPriceLevelUpdateNoFlush(side: number, price: number, quantity: number, numOrders: number): void;
     Flush(): void;
     GetBestBid(): number;
     GetBestAsk(): number;

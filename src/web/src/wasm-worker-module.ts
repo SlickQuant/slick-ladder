@@ -44,8 +44,10 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 
             case 'batch':
                 if (wasmExports) {
+                    console.log(`[WASM Worker] Processing batch of ${request.updates.length} updates`);
+                    const startTime = performance.now();
                     for (const update of request.updates) {
-                        wasmExports.ProcessPriceLevelUpdate(
+                        wasmExports.ProcessPriceLevelUpdateNoFlush(
                             update.side,
                             update.price,
                             update.quantity,
@@ -53,6 +55,8 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
                         );
                     }
                     wasmExports.Flush();
+                    const endTime = performance.now();
+                    console.log(`[WASM Worker] Batch processed in ${(endTime - startTime).toFixed(3)}ms`);
                 }
                 break;
 
@@ -138,11 +142,15 @@ async function initializeWasm(maxLevels: number): Promise<void> {
 }
 
 // Polling function to check for new snapshots
+let snapshotCount = 0;
 function startSnapshotPolling(): void {
     setInterval(() => {
         if (wasmExports && wasmExports.HasNewSnapshot()) {
             const snapshot = wasmExports.GetLatestSnapshot();
-            console.log('[WASM Worker] Sending snapshot');
+            snapshotCount++;
+            if (snapshotCount % 60 === 0) {
+                console.log(`[WASM Worker] Sent ${snapshotCount} snapshots`);
+            }
             postMessage({ type: 'snapshot', data: snapshot } as WorkerResponse);
         }
     }, 16); // Poll at ~60fps

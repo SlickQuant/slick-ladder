@@ -56,6 +56,20 @@ public class PriceLadderCore
     }
 
     /// <summary>
+    /// Process a PriceLevel update without auto-flushing.
+    /// Use when processing batches - call Flush() manually after all updates.
+    /// </summary>
+    public bool ProcessPriceLevelUpdateNoFlush(PriceLevel update)
+    {
+        if (_currentMode != DataMode.PriceLevel)
+        {
+            throw new InvalidOperationException("Not in PriceLevel mode");
+        }
+
+        return _batcher.QueueUpdateNoFlush(update);
+    }
+
+    /// <summary>
     /// Process a PriceLevel update from binary data (zero-copy parsing)
     /// </summary>
     public bool ProcessPriceLevelUpdateBinary(ReadOnlySpan<byte> data)

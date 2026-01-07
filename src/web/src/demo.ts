@@ -12,6 +12,12 @@ let renderer: CanvasRenderer | null = null;
 let updateInterval: number | null = null;
 let statsInterval: number | null = null;
 
+// Performance tracking
+let processingTimes: number[] = [];
+let actualUpdateRate = 0;
+let lastUpdateCount = 0;
+let lastUpdateTime = Date.now();
+
 // Initialize on DOM ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
@@ -298,49 +304,104 @@ function startMarketUpdates(rate: number) {
         clearInterval(updateInterval);
     }
 
-    const intervalMs = 1000 / rate;
-    console.log(`Starting market updates at ${rate} updates/sec (${intervalMs.toFixed(2)}ms interval)`);
+    // Reset performance tracking
+    processingTimes = [];
+    lastUpdateCount = 0;
+    lastUpdateTime = Date.now();
+
+    // Calculate batch size and interval for smooth updates
+    // For high rates (>1000/sec), use batching to overcome setInterval limitations
+    let batchSize: number;
+    let intervalMs: number;
+
+    if (rate <= 100) {
+        // Low rates: one update per interval
+        batchSize = 1;
+        intervalMs = 1000 / rate;
+    } else if (rate <= 1000) {
+        // Medium rates: small batches at reasonable intervals
+        batchSize = Math.ceil(rate / 100);
+        intervalMs = 10; // 100 Hz
+    } else {
+        // High rates: large batches to overcome browser timer limitations
+        batchSize = Math.ceil(rate / 60); // Target 60 batches/sec
+        intervalMs = 16; // ~60 Hz (one batch per frame)
+    }
+
+    console.log(`Starting market updates at ${rate} updates/sec`);
+    console.log(`  Batch size: ${batchSize} updates`);
+    console.log(`  Interval: ${intervalMs}ms (${(1000 / intervalMs).toFixed(1)} batches/sec)`);
+    console.log(`  Expected rate: ${(batchSize * 1000 / intervalMs).toFixed(0)} updates/sec`);
 
     updateInterval = window.setInterval(() => {
         if (!ladder) return;
 
-        // Generate random update
-        const side = Math.random() < 0.5 ? Side.BID : Side.ASK;
+        const startTime = performance.now();
 
-        // Get best bid/ask (TypeScript engine only has synchronous access)
-        let bestBid: number | null = null;
-        let bestAsk: number | null = null;
+        // For WASM, collect updates into a batch array
+        const isWasm = ladder instanceof WasmPriceLadder;
+        const batchUpdates: PriceLevel[] = [];
 
-        if (ladder instanceof PriceLadder) {
-            bestBid = ladder.getBestBid();
-            bestAsk = ladder.getBestAsk();
+        // Generate a batch of updates
+        for (let i = 0; i < batchSize; i++) {
+            // Generate random update
+            const side = Math.random() < 0.5 ? Side.BID : Side.ASK;
+
+            // Get best bid/ask (TypeScript engine only has synchronous access)
+            let bestBid: number | null = null;
+            let bestAsk: number | null = null;
+
+            if (ladder instanceof PriceLadder) {
+                bestBid = ladder.getBestBid();
+                bestAsk = ladder.getBestAsk();
+            }
+
+            // Generate price based on side to maintain order book integrity
+            let price: number;
+            if (side === Side.BID) {
+                // Bids must be <= best bid (or below best ask if no bids)
+                const maxBid = bestBid || (bestAsk ? bestAsk - 0.01 : 100);
+                price = Math.round((maxBid - Math.random() * 0.50) * 100) / 100;
+            } else {
+                // Asks must be >= best ask (or above best bid if no asks)
+                const minAsk = bestAsk || (bestBid ? bestBid + 0.01 : 100.01);
+                price = Math.round((minAsk + Math.random() * 0.50) * 100) / 100;
+            }
+
+            // 10% chance to remove a level (quantity = 0)
+            const shouldRemove = Math.random() < 0.1;
+            const qty = shouldRemove ? 0 : Math.floor(100 + Math.random() * 10000);
+            const numOrders = shouldRemove ? 0 : Math.floor(1 + Math.random() * 30);
+
+            const update: PriceLevel = {
+                side,
+                price,
+                quantity: qty,
+                numOrders
+            };
+
+            if (isWasm) {
+                // Collect for batch sending
+                batchUpdates.push(update);
+            } else {
+                // TypeScript engine: process immediately
+                ladder.processUpdate(update);
+            }
         }
 
-        // Generate price based on side to maintain order book integrity
-        let price: number;
-        if (side === Side.BID) {
-            // Bids must be <= best bid (or below best ask if no bids)
-            const maxBid = bestBid || (bestAsk ? bestAsk - 0.01 : 100);
-            price = Math.round((maxBid - Math.random() * 0.50) * 100) / 100;
-        } else {
-            // Asks must be >= best ask (or above best bid if no asks)
-            const minAsk = bestAsk || (bestBid ? bestBid + 0.01 : 100.01);
-            price = Math.round((minAsk + Math.random() * 0.50) * 100) / 100;
+        // Send batch to WASM worker in one message
+        if (isWasm && batchUpdates.length > 0) {
+            (ladder as WasmPriceLadder).processBatch(batchUpdates);
         }
 
-        // 10% chance to remove a level (quantity = 0)
-        const shouldRemove = Math.random() < 0.1;
-        const qty = shouldRemove ? 0 : Math.floor(100 + Math.random() * 10000);
-        const numOrders = shouldRemove ? 0 : Math.floor(1 + Math.random() * 30);
+        const endTime = performance.now();
+        const processingTime = endTime - startTime;
 
-        const update: PriceLevel = {
-            side,
-            price,
-            quantity: qty,
-            numOrders
-        };
-
-        ladder.processUpdate(update);
+        // Track processing times (keep last 100 samples)
+        processingTimes.push(processingTime);
+        if (processingTimes.length > 100) {
+            processingTimes.shift();
+        }
     }, intervalMs);
 }
 
@@ -366,13 +427,24 @@ function startStatsUpdate() {
 async function updateStats() {
     if (!ladder) return;
 
+    // Calculate actual update rate
+    const now = Date.now();
+    const timeDelta = (now - lastUpdateTime) / 1000; // seconds
+
     if (ladder instanceof WasmPriceLadder) {
         // WASM engine - get metrics asynchronously
         const metrics = await ladder.getMetrics();
+        const currentCount = metrics.updateCount || 0;
+
+        if (timeDelta >= 1.0) {
+            actualUpdateRate = (currentCount - lastUpdateCount) / timeDelta;
+            lastUpdateCount = currentCount;
+            lastUpdateTime = now;
+        }
 
         updateElement('fps', '60'); // WASM runs in worker, always 60 FPS for rendering
         updateElement('frame-time', '-'); // Not applicable for WASM
-        updateElement('update-count', metrics.updateCount?.toLocaleString() || '0');
+        updateElement('update-count', currentCount.toLocaleString());
         updateElement('bid-levels', metrics.bidLevels?.toString() || '0');
         updateElement('ask-levels', metrics.askLevels?.toString() || '0');
 
@@ -384,10 +456,17 @@ async function updateStats() {
     } else {
         // TypeScript engine - synchronous
         const metrics = ladder.getMetrics();
+        const currentCount = metrics.updateCount;
+
+        if (timeDelta >= 1.0) {
+            actualUpdateRate = (currentCount - lastUpdateCount) / timeDelta;
+            lastUpdateCount = currentCount;
+            lastUpdateTime = now;
+        }
 
         updateElement('fps', metrics.fps.toFixed(0));
         updateElement('frame-time', metrics.frameTime.toFixed(2) + 'ms');
-        updateElement('update-count', metrics.updateCount.toLocaleString());
+        updateElement('update-count', currentCount.toLocaleString());
         updateElement('bid-levels', metrics.bidLevels.toString());
         updateElement('ask-levels', metrics.askLevels.toString());
 
@@ -398,6 +477,24 @@ async function updateStats() {
         updateElement('best-bid', bestBid !== null ? `$${bestBid.toFixed(2)}` : '-');
         updateElement('best-ask', bestAsk !== null ? `$${bestAsk.toFixed(2)}` : '-');
         updateElement('spread', spread !== null ? `$${spread.toFixed(2)}` : '-');
+    }
+
+    // Update batch processing metrics
+    if (processingTimes.length > 0) {
+        const avgProcessingTime = processingTimes.reduce((a, b) => a + b, 0) / processingTimes.length;
+        const maxProcessingTime = Math.max(...processingTimes);
+        updateElement('avg-processing-time', avgProcessingTime.toFixed(3) + 'ms');
+        updateElement('max-processing-time', maxProcessingTime.toFixed(3) + 'ms');
+    } else {
+        updateElement('avg-processing-time', '-');
+        updateElement('max-processing-time', '-');
+    }
+
+    // Update actual update rate
+    if (actualUpdateRate > 0) {
+        updateElement('actual-update-rate', actualUpdateRate.toFixed(0) + '/sec');
+    } else {
+        updateElement('actual-update-rate', '-');
     }
 }
 
