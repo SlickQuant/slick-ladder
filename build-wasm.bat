@@ -27,33 +27,11 @@ dotnet publish src\core\SlickLadder.Core.csproj ^
 if %ERRORLEVEL% EQU 0 (
     echo ✅ WASM compilation successful!
     echo.
-
-    REM Copy from AppBundle to public directory
-    echo 📋 Copying WASM files from AppBundle to public directory...
-    set APPBUNDLE=src\core\bin\Release\net8.0\browser-wasm\AppBundle\_framework
-    if not exist src\web\public\wasm mkdir src\web\public\wasm
-
-    REM Copy all framework files (force overwrite with /Y)
-    copy /Y %APPBUNDLE%\*.wasm src\web\public\wasm\ >nul 2>&1
-    copy /Y %APPBUNDLE%\*.js src\web\public\wasm\ >nul 2>&1
-    copy /Y %APPBUNDLE%\*.json src\web\public\wasm\ >nul 2>&1
-    copy /Y %APPBUNDLE%\*.map src\web\public\wasm\ >nul 2>&1
-
-    REM Copy support files if they exist
-    if exist %APPBUNDLE%\supportFiles (
-        if not exist src\web\public\wasm\supportFiles mkdir src\web\public\wasm\supportFiles
-        copy %APPBUNDLE%\supportFiles\* src\web\public\wasm\supportFiles\ >nul 2>&1
-    )
-
-    REM Copy and patch runtime config to enable JSON reflection for JSExport/JSImport
-    set APPBUNDLE_ROOT=src\core\bin\Release\net8.0\browser-wasm\AppBundle
-    if exist %APPBUNDLE_ROOT%\SlickLadder.Core.runtimeconfig.json (
-        powershell -Command "(Get-Content '%APPBUNDLE_ROOT%\SlickLadder.Core.runtimeconfig.json' -Raw) -replace '\"System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault\": false', '\"System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault\": true' | Set-Content 'src\web\public\wasm\SlickLadder.Core.runtimeconfig.json'"
-    )
-
-    echo ✅ WASM files copied to public\wasm\
+    echo 📋 WASM files automatically copied to src\web\public\wasm\ by MSBuild post-build event
     echo.
-    echo 🎉 Build complete! You can now run 'npm run serve' in src\web\ to test.
+    echo 🎉 Build complete! You can now:
+    echo    1. Run 'cd src\web ^&^& npm run build' to build the web bundle
+    echo    2. Run 'cd src\web ^&^& npm run serve' to start the dev server
 ) else (
     echo ❌ WASM compilation failed!
     exit /b 1

@@ -28,34 +28,11 @@ dotnet publish src/core/SlickLadder.Core.csproj \
 if [ $? -eq 0 ]; then
     echo "✅ WASM compilation successful!"
     echo ""
-
-    # Copy from AppBundle to public directory
-    echo "📋 Copying WASM files from AppBundle to public directory..."
-    APPBUNDLE="src/core/bin/Release/net8.0/browser-wasm/AppBundle/_framework"
-    mkdir -p src/web/public/wasm
-
-    # Copy all framework files
-    cp -f "$APPBUNDLE"/*.wasm src/web/public/wasm/ 2>/dev/null || true
-    cp -f "$APPBUNDLE"/*.js src/web/public/wasm/ 2>/dev/null || true
-    cp -f "$APPBUNDLE"/*.json src/web/public/wasm/ 2>/dev/null || true
-    cp -f "$APPBUNDLE"/*.map src/web/public/wasm/ 2>/dev/null || true
-
-    # Copy support files if they exist
-    if [ -d "$APPBUNDLE/supportFiles" ]; then
-        mkdir -p src/web/public/wasm/supportFiles
-        cp -f "$APPBUNDLE"/supportFiles/* src/web/public/wasm/supportFiles/ 2>/dev/null || true
-    fi
-
-    # Copy and patch runtime config to enable JSON reflection for JSExport/JSImport
-    APPBUNDLE_ROOT="src/core/bin/Release/net8.0/browser-wasm/AppBundle"
-    if [ -f "$APPBUNDLE_ROOT/SlickLadder.Core.runtimeconfig.json" ]; then
-        sed 's/"System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault": false/"System.Text.Json.JsonSerializer.IsReflectionEnabledByDefault": true/' \
-            "$APPBUNDLE_ROOT/SlickLadder.Core.runtimeconfig.json" > src/web/public/wasm/SlickLadder.Core.runtimeconfig.json
-    fi
-
-    echo "✅ WASM files copied to public/wasm/"
+    echo "📋 WASM files automatically copied to src/web/public/wasm/ by MSBuild post-build event"
     echo ""
-    echo "🎉 Build complete! You can now run 'npm run serve' in src/web/ to test."
+    echo "🎉 Build complete! You can now:"
+    echo "   1. Run 'cd src/web && npm run build' to build the web bundle"
+    echo "   2. Run 'cd src/web && npm run serve' to start the dev server"
 else
     echo "❌ WASM compilation failed!"
     exit 1
