@@ -102,7 +102,20 @@ export class InteractionHandler {
         event.preventDefault();
 
         const delta = Math.sign(event.deltaY);
-        this.onScroll?.(delta);
+
+        // Check current mode to determine scroll behavior
+        const mode = this.renderer.getRemovalMode();
+
+        if (mode === 'removeRow') {
+            // Dense packing mode: row-based scrolling
+            const scrollTicks = delta * 5; // Scroll 5 rows per wheel tick
+            this.onScroll?.(scrollTicks);
+        } else {
+            // Show empty mode: price-based scrolling
+            const scrollTicks = delta > 0 ? -5 : 5; // Inverted for scroll up = higher prices
+            const scrollAmount = scrollTicks * 0.01; // 5 ticks * 0.01 = 0.05 price change
+            this.renderer.scrollByPrice(scrollAmount);
+        }
     }
 
     private handleContextMenu(event: MouseEvent): void {

@@ -250,7 +250,16 @@
                     </div>
                     <div class="control-group">
                         <label>
-                            <input type="checkbox" id="toggle-orders" checked> Show Order Count
+                            <input type="checkbox" id="toggle-orders"> Show Order Count
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <label style="display: block; color: #aaa; font-size: 0.9em; margin-bottom: 8px;">Removal Mode</label>
+                        <label style="margin-bottom: 8px;">
+                            <input type="radio" name="removal-mode" value="removeRow" checked> Remove Rows (Dense Packing)
+                        </label>
+                        <label>
+                            <input type="radio" name="removal-mode" value="showEmpty"> Show Empty Rows
                         </label>
                     </div>
                 </div>

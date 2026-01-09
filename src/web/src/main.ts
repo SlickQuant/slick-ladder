@@ -84,6 +84,11 @@ export class PriceLadder {
         this.interactionHandler.onPriceHover = (price) => {
             this.config.onPriceHover?.(price);
         };
+
+        this.interactionHandler.onScroll = (scrollTicks) => {
+            const currentOffset = this.renderer.getScrollOffset();
+            this.renderer.setScrollOffset(currentOffset + scrollTicks);
+        };
     }
 
     /**

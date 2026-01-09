@@ -67,7 +67,11 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const toggleBarsCheckbox = document.getElementById('toggle-bars') as HTMLInputElement;
             const toggleOrdersCheckbox = document.getElementById('toggle-orders') as HTMLInputElement;
             const showVolumeBars = toggleBarsCheckbox?.checked ?? true;
-            const showOrderCount = toggleOrdersCheckbox?.checked ?? true;
+            const showOrderCount = toggleOrdersCheckbox?.checked ?? false;
+
+            // Get current removal mode from radio buttons
+            const removalModeRadio = document.querySelector('input[name="removal-mode"]:checked') as HTMLInputElement;
+            const currentRemovalMode = (removalModeRadio?.value as 'showEmpty' | 'removeRow') ?? 'removeRow';
 
             // Calculate initial canvas width based on display settings
             const COL_WIDTH = 66.7;
@@ -90,6 +94,9 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
 
             // Create renderer with current display settings
             renderer = new CanvasRenderer(canvas, canvasWidth, 600, 24, undefined, showVolumeBars, showOrderCount);
+
+            // Apply current removal mode
+            renderer.setRemovalMode(currentRemovalMode);
 
             // Set up snapshot callback for rendering
             wasmLadder.onSnapshot((snapshot) => {
@@ -153,6 +160,27 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 }
             });
 
+            // Add wheel handler for scrolling
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                if (!renderer) return;
+
+                const delta = Math.sign(e.deltaY);
+                const mode = renderer.getRemovalMode();
+
+                if (mode === 'removeRow') {
+                    // Dense packing mode: row-based scrolling
+                    const scrollTicks = delta * 5; // Scroll 5 rows per wheel tick
+                    const currentOffset = renderer.getScrollOffset();
+                    renderer.setScrollOffset(currentOffset + scrollTicks);
+                } else {
+                    // Show empty mode: price-based scrolling
+                    const scrollTicks = delta > 0 ? -5 : 5; // Inverted for scroll up = higher prices
+                    const scrollAmount = scrollTicks * 0.01; // 5 ticks * 0.01 = 0.05 price change
+                    renderer.scrollByPrice(scrollAmount);
+                }
+            }, { passive: false });
+
             ladder = wasmLadder;
             updateElement('backend', 'WASM Engine');
             console.log('Slick Ladder initialized with WASM engine');
@@ -171,7 +199,11 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         const toggleBarsCheckbox = document.getElementById('toggle-bars') as HTMLInputElement;
         const toggleOrdersCheckbox = document.getElementById('toggle-orders') as HTMLInputElement;
         const showVolumeBars = toggleBarsCheckbox?.checked ?? true;
-        const showOrderCount = toggleOrdersCheckbox?.checked ?? true;
+        const showOrderCount = toggleOrdersCheckbox?.checked ?? false;
+
+        // Get current removal mode from radio buttons
+        const removalModeRadio = document.querySelector('input[name="removal-mode"]:checked') as HTMLInputElement;
+        const currentRemovalMode = (removalModeRadio?.value as 'showEmpty' | 'removeRow') ?? 'removeRow';
 
         // Calculate initial width based on display settings
         const COL_WIDTH = 66.7;
@@ -204,6 +236,12 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 }
             }
         });
+
+        // Apply current removal mode to the internal renderer
+        const internalRenderer = (ladder as any).renderer;
+        if (internalRenderer && typeof internalRenderer.setRemovalMode === 'function') {
+            internalRenderer.setRemovalMode(currentRemovalMode);
+        }
 
         updateElement('backend', 'TypeScript Engine');
         console.log('Slick Ladder initialized with TypeScript engine');
@@ -296,6 +334,23 @@ function setupControls() {
             // WASM engine uses CanvasRenderer
             renderer.setShowOrderCount(checked);
         }
+    });
+
+    // Removal mode switching
+    document.querySelectorAll('input[name="removal-mode"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const mode = (e.target as HTMLInputElement).value as 'showEmpty' | 'removeRow';
+            if (ladder instanceof PriceLadder) {
+                // TypeScript engine: ladder has internal renderer
+                const internalRenderer = (ladder as any).renderer;
+                if (internalRenderer && typeof internalRenderer.setRemovalMode === 'function') {
+                    internalRenderer.setRemovalMode(mode);
+                }
+            } else if (renderer) {
+                // WASM engine uses CanvasRenderer directly
+                renderer.setRemovalMode(mode);
+            }
+        });
     });
 }
 

@@ -34,7 +34,11 @@ export class CanvasRenderer {
 
     // Current snapshot
     private currentSnapshot: OrderBookSnapshot | null = null;
-    // private centerPrice: number = 0; // Reserved for viewport scrolling
+
+    // Scroll state
+    private scrollOffset: number = 0;              // Row-based scroll for dense packing
+    private centerPrice: number = 0;               // Price-based scroll for show empty mode
+    private removalMode: 'showEmpty' | 'removeRow' = 'removeRow';
 
     constructor(
         canvas: HTMLCanvasElement,
@@ -178,25 +182,143 @@ export class CanvasRenderer {
             this.offscreenCtx.stroke();
         }
 
-        const midRow = Math.floor(this.visibleRows / 2);
-
-        // Render ask levels (top half, lowest to highest)
-        const visibleAsks = Math.min(midRow, snapshot.asks.length);
-        for (let i = 0; i < visibleAsks; i++) {
-            const rowIndex = midRow - visibleAsks + i;
-            const level = snapshot.asks[visibleAsks - i - 1]; // Reverse order
-            this.renderRow(rowIndex, level);
-        }
-
-        // Render bid levels (bottom half, highest to lowest)
-        const visibleBids = Math.min(this.visibleRows - midRow, snapshot.bids.length);
-        for (let i = 0; i < visibleBids; i++) {
-            const rowIndex = midRow + i;
-            const level = snapshot.bids[snapshot.bids.length - i - 1]; // Reverse order
-            this.renderRow(rowIndex, level);
+        // Delegate to mode-specific rendering
+        if (this.removalMode === 'removeRow') {
+            this.renderDensePacking(snapshot);
+        } else {
+            this.renderShowEmpty(snapshot);
         }
 
         this.copyToMainCanvas();
+    }
+
+    private renderDensePacking(snapshot: OrderBookSnapshot): void {
+        // Filter out empty levels
+        const nonEmptyAsks = snapshot.asks.filter(l => l.quantity > 0);
+        const nonEmptyBids = snapshot.bids.filter(l => l.quantity > 0);
+
+        const midRow = Math.floor(this.visibleRows / 2);
+        const totalLevels = nonEmptyAsks.length + nonEmptyBids.length;
+
+        // Stable scroll formula (matches desktop SkiaRenderer.cs:116)
+        const virtualTopRow = nonEmptyAsks.length - midRow + this.scrollOffset;
+
+        let startAskIndex: number, askRowsToRender: number;
+        let startBidIndex: number, bidRowsToRender: number;
+        let topOffset: number = 0;
+
+        // Calculate which portion to show (matches desktop logic lines 126-161)
+        if (virtualTopRow < 0) {
+            // Scrolled above all data
+            topOffset = -virtualTopRow * this.rowHeight;
+            startAskIndex = 0;
+            askRowsToRender = Math.min(nonEmptyAsks.length, Math.max(0, this.visibleRows + virtualTopRow));
+            startBidIndex = 0;
+            const bidRowsAvailable = Math.max(0, this.visibleRows + virtualTopRow - nonEmptyAsks.length);
+            bidRowsToRender = Math.min(nonEmptyBids.length, bidRowsAvailable);
+        } else if (virtualTopRow < nonEmptyAsks.length) {
+            // Showing some asks at top
+            startAskIndex = virtualTopRow;
+            askRowsToRender = Math.min(nonEmptyAsks.length - startAskIndex, this.visibleRows);
+            startBidIndex = 0;
+            const bidRowsAvailable = this.visibleRows - askRowsToRender;
+            bidRowsToRender = Math.min(nonEmptyBids.length, bidRowsAvailable);
+        } else if (virtualTopRow < totalLevels) {
+            // Past all asks, showing only bids
+            startAskIndex = nonEmptyAsks.length;
+            askRowsToRender = 0;
+            const bidStartRow = virtualTopRow - nonEmptyAsks.length;
+            startBidIndex = bidStartRow;
+            bidRowsToRender = Math.min(nonEmptyBids.length - startBidIndex, this.visibleRows);
+        } else {
+            // Scrolled past all data
+            startAskIndex = nonEmptyAsks.length;
+            askRowsToRender = 0;
+            startBidIndex = nonEmptyBids.length;
+            bidRowsToRender = 0;
+        }
+
+        // Render asks (highest to lowest)
+        let currentY = topOffset;
+        for (let i = 0; i < askRowsToRender; i++) {
+            const askIndex = nonEmptyAsks.length - 1 - startAskIndex - i;
+            if (askIndex >= 0 && askIndex < nonEmptyAsks.length) {
+                const y = currentY + (i * this.rowHeight);
+                if (y >= 0 && y < this.height) {
+                    this.renderRow(Math.floor(y / this.rowHeight), nonEmptyAsks[askIndex]);
+                }
+            }
+        }
+
+        // Render bids (highest to lowest)
+        currentY = topOffset + (askRowsToRender * this.rowHeight);
+        for (let i = 0; i < bidRowsToRender; i++) {
+            const bidIndex = nonEmptyBids.length - 1 - startBidIndex - i;
+            if (bidIndex >= 0 && bidIndex < nonEmptyBids.length) {
+                const y = currentY + (i * this.rowHeight);
+                if (y >= 0 && y < this.height) {
+                    this.renderRow(Math.floor(y / this.rowHeight), nonEmptyBids[bidIndex]);
+                }
+            }
+        }
+    }
+
+    private renderShowEmpty(snapshot: OrderBookSnapshot): void {
+        // PRICE-TO-ROW MAPPING MODE: Each price maps to fixed row (shows gaps for empty levels)
+        // First, render all price rows (including empty ones with just price labels)
+        // Then, overlay data where it exists
+
+        // Determine reference price (viewport center or mid market)
+        let referencePrice = this.centerPrice;
+        if (referencePrice === 0) {
+            // Initialize from mid price if not set
+            referencePrice = snapshot.midPrice ?? 100.00;
+        }
+
+        const midRow = Math.floor(this.visibleRows / 2);
+        const tickSize = 0.01;
+
+        // Step 1: Render all price labels for visible rows (shows gaps)
+        for (let rowIndex = 0; rowIndex <= this.visibleRows; rowIndex++) {
+            // Calculate what price this row represents
+            const rowOffset = rowIndex - midRow;
+            const price = referencePrice - (rowOffset * tickSize);
+
+            // Render just the price label (no quantity/orders)
+            this.renderPriceOnly(rowIndex, price);
+        }
+
+        // Step 2: Create a map of price to level data for quick lookup
+        const levelMap = new Map<number, BookLevel>();
+
+        for (const level of snapshot.asks) {
+            if (level.quantity > 0) {
+                // Round price to tick size to ensure exact match
+                const roundedPrice = Math.round(level.price / tickSize) * tickSize;
+                levelMap.set(roundedPrice, level);
+            }
+        }
+
+        for (const level of snapshot.bids) {
+            if (level.quantity > 0) {
+                // Round price to tick size to ensure exact match
+                const roundedPrice = Math.round(level.price / tickSize) * tickSize;
+                levelMap.set(roundedPrice, level);
+            }
+        }
+
+        // Step 3: Overlay data on rows that have levels
+        for (let rowIndex = 0; rowIndex <= this.visibleRows; rowIndex++) {
+            const rowOffset = rowIndex - midRow;
+            const price = referencePrice - (rowOffset * tickSize);
+            const roundedPrice = Math.round(price / tickSize) * tickSize;
+
+            const level = levelMap.get(roundedPrice);
+            if (level) {
+                // Render data overlay (quantity, orders, bars)
+                this.renderDataOverlay(rowIndex, level);
+            }
+        }
     }
 
     private renderRow(rowIndex: number, level: BookLevel): void {
@@ -267,6 +389,94 @@ export class CanvasRenderer {
             if (this.showVolumeBars && barWidth > 0) {
                 this.offscreenCtx.fillStyle = this.colors.askBar;
                 this.offscreenCtx.fillRect(COL_WIDTH * barCol, y, barWidth, this.rowHeight);
+            }
+        }
+
+        // Own order indicator
+        if (level.hasOwnOrders) {
+            this.offscreenCtx.strokeStyle = this.colors.ownOrderBorder;
+            this.offscreenCtx.lineWidth = 2;
+            this.offscreenCtx.strokeRect(0, y + 1, this.width, this.rowHeight - 2);
+        }
+    }
+
+    /**
+     * Render only the price label for a row (used in Show Empty mode)
+     */
+    private renderPriceOnly(rowIndex: number, price: number): void {
+        const y = rowIndex * this.rowHeight;
+        const priceText = price.toFixed(2);
+        const COL_WIDTH = 66.7;
+
+        // Calculate price column index
+        const priceCol = this.showOrderCount ? 2 : 1;
+
+        // Set text style
+        this.offscreenCtx.fillStyle = this.colors.text;
+        this.offscreenCtx.textAlign = 'center';
+
+        // Render price only
+        this.offscreenCtx.fillText(priceText, COL_WIDTH * (priceCol + 0.5), y + this.rowHeight / 2);
+    }
+
+    /**
+     * Render data overlay (quantity, orders, bars) for a row that has a level
+     */
+    private renderDataOverlay(rowIndex: number, level: BookLevel): void {
+        const y = rowIndex * this.rowHeight;
+        const qtyText = level.quantity.toLocaleString();
+        const ordersText = `(${level.numOrders})`;
+        const COL_WIDTH = 66.7;
+
+        // Calculate column indices
+        const bidOrderCol = this.showOrderCount ? 0 : -1;
+        const bidQtyCol = this.showOrderCount ? 1 : 0;
+        const askQtyCol = this.showOrderCount ? 3 : 2;
+        const askOrderCol = this.showOrderCount ? 4 : -1;
+
+        let columnCount = 3;
+        if (this.showOrderCount) columnCount += 2;
+        const barCol = columnCount;
+
+        const maxQty = this.showVolumeBars ? this.calculateMaxQuantity() : 0;
+        const BAR_MAX_WIDTH = COL_WIDTH - 5;
+        const barWidth = maxQty > 0 ? (level.quantity / maxQty) * BAR_MAX_WIDTH : 0;
+
+        // Set text style
+        this.offscreenCtx.fillStyle = this.colors.text;
+        this.offscreenCtx.textAlign = 'center';
+
+        if (level.side === Side.BID) {
+            // BID: render bid_order_count, bid_qty, and bars
+
+            // bid_order_count (if enabled)
+            if (bidOrderCol >= 0) {
+                this.offscreenCtx.fillText(ordersText, COL_WIDTH * (bidOrderCol + 0.5), y + this.rowHeight / 2);
+            }
+
+            // bid_qty
+            this.offscreenCtx.fillText(qtyText, COL_WIDTH * (bidQtyCol + 0.5), y + this.rowHeight / 2);
+
+            // bars (if enabled)
+            if (this.showVolumeBars && barWidth > 0) {
+                this.offscreenCtx.fillStyle = this.colors.bidBar;
+                this.offscreenCtx.fillRect(COL_WIDTH * barCol, y + 4, barWidth, this.rowHeight - 8);
+            }
+        } else {
+            // ASK: render ask_qty, ask_order_count, and bars
+
+            // ask_qty
+            this.offscreenCtx.fillText(qtyText, COL_WIDTH * (askQtyCol + 0.5), y + this.rowHeight / 2);
+
+            // ask_order_count (if enabled)
+            if (askOrderCol >= 0) {
+                this.offscreenCtx.fillText(ordersText, COL_WIDTH * (askOrderCol + 0.5), y + this.rowHeight / 2);
+            }
+
+            // bars (if enabled)
+            if (this.showVolumeBars && barWidth > 0) {
+                this.offscreenCtx.fillStyle = this.colors.askBar;
+                this.offscreenCtx.fillRect(COL_WIDTH * barCol, y + 4, barWidth, this.rowHeight - 8);
             }
         }
 
@@ -447,6 +657,82 @@ export class CanvasRenderer {
             const newWidth = this.calculateCanvasWidth();
             this.resize(newWidth, this.height);
         }
+    }
+
+    /**
+     * Set scroll offset for dense packing mode
+     */
+    public setScrollOffset(offset: number): void {
+        this.scrollOffset = offset;
+        if (this.currentSnapshot) {
+            this.render(this.currentSnapshot);
+        }
+    }
+
+    /**
+     * Get current scroll offset
+     */
+    public getScrollOffset(): number {
+        return this.scrollOffset;
+    }
+
+    /**
+     * Set center price for show empty mode (price-based scrolling)
+     */
+    public setCenterPrice(price: number): void {
+        this.centerPrice = price;
+        if (this.currentSnapshot) {
+            this.render(this.currentSnapshot);
+        }
+    }
+
+    /**
+     * Get current center price
+     */
+    public getCenterPrice(): number {
+        return this.centerPrice;
+    }
+
+    /**
+     * Scroll by price delta (for show empty mode)
+     */
+    public scrollByPrice(delta: number): void {
+        const tickSize = 0.01;
+
+        // Initialize center price from mid price if not set
+        if (this.centerPrice === 0 && this.currentSnapshot) {
+            const midPrice = this.currentSnapshot.midPrice;
+            if (midPrice !== null) {
+                // Round to tick size to ensure proper alignment
+                this.centerPrice = Math.round(midPrice / tickSize) * tickSize;
+            }
+        }
+
+        // Apply scroll delta and round to tick size
+        this.centerPrice = Math.round((this.centerPrice + delta) / tickSize) * tickSize;
+
+        if (this.currentSnapshot) {
+            this.render(this.currentSnapshot);
+        }
+    }
+
+    /**
+     * Set removal mode (affects how empty levels are handled)
+     */
+    public setRemovalMode(mode: 'showEmpty' | 'removeRow'): void {
+        this.removalMode = mode;
+        this.scrollOffset = 0; // Reset scroll when changing modes
+        this.centerPrice = 0;  // Reset center price when changing modes
+        if (this.currentSnapshot) {
+            this.render(this.currentSnapshot);
+        }
+    }
+
+    /**
+     * Get current removal mode
+     */
+    public getRemovalMode(): 'showEmpty' | 'removeRow' {
+        return this.removalMode;
     }
 
     /**
