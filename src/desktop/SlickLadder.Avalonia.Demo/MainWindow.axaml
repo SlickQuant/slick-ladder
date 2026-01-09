@@ -1,0 +1,196 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:SlickLadder.Avalonia.Controls"
+        x:Class="SlickLadder.Avalonia.Demo.MainWindow"
+        Title="SlickLadder Avalonia Demo - High-Performance Price Ladder"
+        Height="900" Width="900"
+        Background="#0f0f0f">
+
+    <Grid ColumnDefinitions="300,*">
+
+        <!-- Control Panel -->
+        <Border Grid.Column="0" Background="#1a1a1a" Padding="20" BorderBrush="#333" BorderThickness="0,0,1,0">
+            <StackPanel>
+                <TextBlock Text="SlickLadder Demo"
+                          FontSize="24"
+                          FontWeight="Bold"
+                          Foreground="White"
+                          Margin="0,0,0,20"/>
+
+                <!-- Market Data Controls -->
+                <Border Background="#2a2a2a"
+                       BorderBrush="#444"
+                       BorderThickness="1"
+                       CornerRadius="4"
+                       Padding="10"
+                       Margin="0,0,0,20">
+                    <StackPanel>
+                        <TextBlock Text="Market Data Simulation"
+                                  Foreground="White"
+                                  FontSize="14"
+                                  FontWeight="Bold"
+                                  Margin="0,0,0,10"/>
+
+                        <Button x:Name="StartButton"
+                               Content="Start Market Data"
+                               Click="StartButton_Click"
+                               Height="35"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Background="#22c55e"
+                               Foreground="White"
+                               HorizontalContentAlignment="Center"
+                               CornerRadius="4"
+                               Margin="0,0,0,10"/>
+
+                        <Button x:Name="StopButton"
+                               Content="Stop Market Data"
+                               Click="StopButton_Click"
+                               Height="35"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Background="#ef4444"
+                               Foreground="White"
+                               HorizontalContentAlignment="Center"
+                               CornerRadius="4"
+                               IsEnabled="False"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Update Rate Dropdown -->
+                <Border Background="#2a2a2a"
+                       BorderBrush="#444"
+                       BorderThickness="1"
+                       CornerRadius="4"
+                       Padding="10"
+                       Margin="0,0,0,20">
+                    <StackPanel>
+                        <TextBlock Text="Update Rate"
+                                  Foreground="White"
+                                  FontSize="14"
+                                  FontWeight="Bold"
+                                  Margin="0,0,0,5"/>
+                        <TextBlock Text="Updates per second:" Foreground="White" Margin="0,0,0,5"/>
+                        <ComboBox x:Name="UpdateRateCombo"
+                                 Background="White"
+                                 Foreground="#000000"
+                                 FontSize="13"
+                                 SelectedIndex="2"
+                                 SelectionChanged="UpdateRateCombo_SelectionChanged">
+                            <ComboBoxItem Content="10 updates/sec" Tag="10"/>
+                            <ComboBoxItem Content="100 updates/sec" Tag="100"/>
+                            <ComboBoxItem Content="1,000 updates/sec" Tag="1000"/>
+                            <ComboBoxItem Content="10,000 updates/sec" Tag="10000"/>
+                        </ComboBox>
+                    </StackPanel>
+                </Border>
+
+                <!-- Feature Toggles -->
+                <Border Background="#2a2a2a"
+                       BorderBrush="#444"
+                       BorderThickness="1"
+                       CornerRadius="4"
+                       Padding="10"
+                       Margin="0,0,0,20">
+                    <StackPanel>
+                        <TextBlock Text="Display Options"
+                                  Foreground="White"
+                                  FontSize="14"
+                                  FontWeight="Bold"
+                                  Margin="0,0,0,10"/>
+
+                        <CheckBox x:Name="ShowVolumeBarsCheckbox"
+                                 Content="Show Volume Bars"
+                                 Foreground="White"
+                                 IsChecked="True"
+                                 Margin="0,0,0,10"/>
+
+                        <CheckBox x:Name="ShowOrderCountCheckbox"
+                                 Content="Show Order Count"
+                                 Foreground="White"
+                                 IsChecked="False"
+                                 Margin="0,0,0,10"/>
+
+                        <TextBlock Text="Level Removal Mode:" Foreground="White" Margin="0,0,0,5"/>
+                        <ComboBox x:Name="RemovalModeCombo"
+                                 Background="White"
+                                 Foreground="#000000"
+                                 FontSize="13"
+                                 SelectedIndex="1"
+                                 SelectionChanged="RemovalModeCombo_SelectionChanged">
+                            <ComboBoxItem Content="Show Empty Rows" Tag="ShowEmpty"/>
+                            <ComboBoxItem Content="Remove Rows" Tag="RemoveRow"/>
+                        </ComboBox>
+
+                        <TextBlock Text="Tick Size:" Foreground="White" Margin="0,10,0,5"/>
+                        <ComboBox x:Name="TickSizeCombo"
+                                 Background="White"
+                                 Foreground="#000000"
+                                 FontSize="13"
+                                 SelectedIndex="0"
+                                 SelectionChanged="TickSizeCombo_SelectionChanged">
+                            <ComboBoxItem Content="0.01 (Penny)" Tag="0.01"/>
+                            <ComboBoxItem Content="0.05 (Nickel)" Tag="0.05"/>
+                            <ComboBoxItem Content="0.10 (Dime)" Tag="0.10"/>
+                            <ComboBoxItem Content="0.25 (Quarter)" Tag="0.25"/>
+                            <ComboBoxItem Content="1.00 (Dollar)" Tag="1.00"/>
+                        </ComboBox>
+                    </StackPanel>
+                </Border>
+
+                <!-- Performance Metrics -->
+                <Border Background="#2a2a2a"
+                       BorderBrush="#444"
+                       BorderThickness="1"
+                       CornerRadius="4"
+                       Padding="10">
+                    <StackPanel>
+                        <TextBlock Text="Performance Metrics"
+                                  Foreground="White"
+                                  FontSize="14"
+                                  FontWeight="Bold"
+                                  Margin="0,0,0,10"/>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="FPS: " Foreground="White"/>
+                            <TextBlock x:Name="FpsText" Text="0.0" FontWeight="Bold" Foreground="#22c55e"/>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="Avg Frame Time: " Foreground="White"/>
+                            <TextBlock x:Name="FrameTimeText" Text="0.0" FontWeight="Bold" Foreground="White"/>
+                            <TextBlock Text=" ms" Foreground="White"/>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="Bid Levels: " Foreground="White"/>
+                            <TextBlock x:Name="BidCountText" Text="0" FontWeight="Bold" Foreground="White"/>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="Ask Levels: " Foreground="White"/>
+                            <TextBlock x:Name="AskCountText" Text="0" FontWeight="Bold" Foreground="White"/>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Spread: " Foreground="White"/>
+                            <TextBlock x:Name="SpreadText" Text="$0.00" FontWeight="Bold" Foreground="#3b82f6"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Info -->
+                <TextBlock Text="Architecture: Shared SkiaSharp Rendering"
+                          Foreground="#888"
+                          FontSize="10"
+                          TextWrapping="Wrap"
+                          Margin="0,20,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Price Ladder Display -->
+        <Border Grid.Column="1" Background="#0f0f0f">
+            <controls:PriceLadderControl x:Name="PriceLadder"/>
+        </Border>
+    </Grid>
+</Window>
