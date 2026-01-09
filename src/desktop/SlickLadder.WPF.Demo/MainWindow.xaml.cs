@@ -1,0 +1,143 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Threading;
+using SlickLadder.Core;
+using SlickLadder.Rendering.Simulation;
+using SlickLadder.WPF.ViewModels;
+
+namespace SlickLadder.WPF.Demo;
+
+/// <summary>
+/// WPF Demo Application showcasing the SlickLadder control with shared SkiaSharp rendering.
+/// Features: Market data simulation, performance metrics, interactive controls.
+/// </summary>
+public partial class MainWindow : Window
+{
+    private PriceLadderViewModel? _viewModel;
+    private MarketDataSimulator? _simulator;
+    private DispatcherTimer? _metricsTimer;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        InitializeDemo();
+    }
+
+    private void InitializeDemo()
+    {
+        // Create ViewModel and bind to control
+        _viewModel = new PriceLadderViewModel();
+        PriceLadder.DataContext = _viewModel;
+
+        // Create market data simulator
+        _simulator = new MarketDataSimulator(_viewModel.Core)
+        {
+            UpdatesPerSecond = 1000,
+            BasePrice = 50000.00m
+        };
+
+        // Setup metrics update timer (10 Hz for UI updates)
+        _metricsTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(100)
+        };
+        _metricsTimer.Tick += UpdateMetrics;
+        _metricsTimer.Start();
+    }
+
+    private void UpdateMetrics(object? sender, EventArgs e)
+    {
+        if (_viewModel == null) return;
+
+        // Update performance metrics
+        FpsText.Text = PriceLadder.GetMetrics().CurrentFps.ToString("F1");
+        FrameTimeText.Text = PriceLadder.GetMetrics().AverageFrameTime.ToString("F2");
+
+        // Update order book metrics
+        BidCountText.Text = _viewModel.BidLevelCount.Value.ToString();
+        AskCountText.Text = _viewModel.AskLevelCount.Value.ToString();
+        SpreadText.Text = $"${_viewModel.Spread.Value:F2}";
+    }
+
+    private void StartButton_Click(object sender, RoutedEventArgs e)
+    {
+        _simulator?.Start();
+        StartButton.IsEnabled = false;
+        StopButton.IsEnabled = true;
+    }
+
+    private void StopButton_Click(object sender, RoutedEventArgs e)
+    {
+        _simulator?.Stop();
+        StartButton.IsEnabled = true;
+        StopButton.IsEnabled = false;
+    }
+
+    private void UpdateRateCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_simulator == null || UpdateRateCombo.SelectedItem == null) return;
+
+        var selectedItem = (ComboBoxItem)UpdateRateCombo.SelectedItem;
+        var rate = int.Parse((string)selectedItem.Tag);
+        _simulator.UpdatesPerSecond = rate;
+    }
+
+    private void ShowVolumeBarsCheckbox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (PriceLadder?.GetViewport() != null)
+        {
+            PriceLadder.GetViewport().ShowVolumeBars = ShowVolumeBarsCheckbox.IsChecked ?? true;
+        }
+    }
+
+    private void ShowOrderCountCheckbox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (PriceLadder?.GetViewport() != null)
+        {
+            PriceLadder.GetViewport().ShowOrderCount = ShowOrderCountCheckbox.IsChecked ?? false;
+        }
+    }
+
+    private void RemovalModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_viewModel == null || RemovalModeCombo.SelectedItem == null) return;
+
+        var selectedItem = (ComboBoxItem)RemovalModeCombo.SelectedItem;
+        var mode = (string)selectedItem.Tag;
+
+        var isShowEmpty = mode == "ShowEmpty";
+
+        // Update viewport rendering mode
+        if (PriceLadder?.GetViewport() != null)
+        {
+            PriceLadder.GetViewport().RemovalMode = isShowEmpty
+                ? SlickLadder.Rendering.Core.LevelRemovalMode.ShowEmpty
+                : SlickLadder.Rendering.Core.LevelRemovalMode.RemoveRow;
+        }
+
+        // Configure snapshot generation to fill empty levels
+        if (_viewModel?.Core != null)
+        {
+            // Access the batcher through reflection or add a public property
+            var batcherField = _viewModel.Core.GetType().GetField("_batcher",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (batcherField != null)
+            {
+                var batcher = batcherField.GetValue(_viewModel.Core) as dynamic;
+                if (batcher != null)
+                {
+                    batcher.FillEmptyLevels = isShowEmpty;
+                }
+            }
+        }
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        // Cleanup
+        _metricsTimer?.Stop();
+        _simulator?.Stop();
+        _simulator?.Dispose();
+        base.OnClosed(e);
+    }
+}

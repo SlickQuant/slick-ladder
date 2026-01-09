@@ -27,6 +27,16 @@ public class PriceLadderCore
     /// <summary>Event fired when order book snapshot is ready for rendering</summary>
     public event Action<OrderBookSnapshot>? OnSnapshotReady;
 
+    /// <summary>
+    /// Set the viewport center price for snapshots (null = use mid price)
+    /// Call this when the user scrolls the ladder
+    /// </summary>
+    public void SetSnapshotViewport(decimal? centerPrice, int visibleLevels = 100)
+    {
+        _batcher.SnapshotCenterPrice = centerPrice;
+        _batcher.SnapshotVisibleLevels = visibleLevels;
+    }
+
     public PriceLadderCore(int maxLevels = 200, int queueCapacity = 4096)
     {
         _orderBook = new OrderBook(maxLevels);

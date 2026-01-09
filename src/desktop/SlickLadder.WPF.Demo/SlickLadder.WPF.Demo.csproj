@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ReactiveUI.WPF" Version="20.1.63" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SlickLadder.WPF\SlickLadder.WPF.csproj" />
+    <ProjectReference Include="..\SlickLadder.Rendering\SlickLadder.Rendering.csproj" />
+    <ProjectReference Include="..\..\core\SlickLadder.Core.csproj" />
+  </ItemGroup>
+
+</Project>

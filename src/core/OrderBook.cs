@@ -267,17 +267,26 @@ public class OrderBook
     /// <summary>
     /// Get snapshot of visible levels around a center price
     /// </summary>
-    public OrderBookSnapshot GetSnapshot(decimal centerPrice, int visibleLevels)
+    public OrderBookSnapshot GetSnapshot(decimal centerPrice, int visibleLevels, bool fillEmptyLevels = false)
     {
         var halfLevels = visibleLevels / 2;
+        const decimal tickSize = 0.01m;
 
-        // Get bids below center price
-        var bidMinPrice = centerPrice - (halfLevels * 0.01m); // Assuming 0.01 tick size for now
+        // Get bids at or below center price (inclusive)
+        var bidMinPrice = centerPrice - (halfLevels * tickSize);
         var bids = GetBidsInRange(bidMinPrice, centerPrice);
 
-        // Get asks above center price
-        var askMaxPrice = centerPrice + (halfLevels * 0.01m);
-        var asks = GetAsksInRange(centerPrice, askMaxPrice);
+        // Get asks above center price (exclusive - start from center + 1 tick)
+        var askMinPrice = centerPrice + tickSize;
+        var askMaxPrice = centerPrice + (halfLevels * tickSize);
+        var asks = GetAsksInRange(askMinPrice, askMaxPrice);
+
+        // Fill in empty levels if requested (for "Show Empty" mode)
+        if (fillEmptyLevels)
+        {
+            bids = FillEmptyLevels(bids, bidMinPrice, centerPrice, tickSize, Side.BID).ToArray();
+            asks = FillEmptyLevels(asks, askMinPrice, askMaxPrice, tickSize, Side.ASK).ToArray();
+        }
 
         return new OrderBookSnapshot
         {
@@ -288,6 +297,41 @@ public class OrderBook
             Asks = asks.ToArray(),
             Timestamp = DateTime.UtcNow
         };
+    }
+
+    /// <summary>
+    /// Fill in missing price levels with empty levels (qty=0)
+    /// Creates a continuous ladder with no gaps
+    /// </summary>
+    private ReadOnlySpan<BookLevel> FillEmptyLevels(ReadOnlySpan<BookLevel> levels, decimal minPrice, decimal maxPrice, decimal tickSize, Side side)
+    {
+        var result = new List<BookLevel>();
+        var currentPrice = minPrice;
+
+        // Convert span to array for easier lookup
+        var levelDict = new Dictionary<decimal, BookLevel>();
+        foreach (var level in levels)
+        {
+            levelDict[level.Price] = level;
+        }
+
+        // Fill all prices from min to max with tick increments
+        while (currentPrice <= maxPrice)
+        {
+            if (levelDict.TryGetValue(currentPrice, out var existingLevel))
+            {
+                result.Add(existingLevel);
+            }
+            else
+            {
+                // Create empty level
+                result.Add(new BookLevel(currentPrice, 0, 0, side));
+            }
+            currentPrice += tickSize;
+            currentPrice = Math.Round(currentPrice, 2); // Avoid floating point errors
+        }
+
+        return result.ToArray();
     }
 }
 

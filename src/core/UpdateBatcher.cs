@@ -35,6 +35,15 @@ public class UpdateBatcher
     /// <summary>Whether batching is paused</summary>
     public bool IsPaused => _isPaused;
 
+    /// <summary>Snapshot center price (null = use mid price)</summary>
+    public decimal? SnapshotCenterPrice { get; set; }
+
+    /// <summary>Snapshot visible levels</summary>
+    public int SnapshotVisibleLevels { get; set; } = 100;
+
+    /// <summary>Fill empty price levels in snapshot (for continuous ladder display)</summary>
+    public bool FillEmptyLevels { get; set; } = false;
+
     /// <summary>Event fired when a batch is flushed</summary>
     public event Action<OrderBookSnapshot>? OnBatchFlushed;
 
@@ -153,9 +162,13 @@ public class UpdateBatcher
         TotalBatchesFlushed++;
 
         // Get snapshot of dirty levels for rendering
+        // Use configured center price or fall back to mid price rounded to tick
+        // Round mid price to nearest tick to avoid fractional ticks (50000.005 -> 50000.00)
+        var centerPrice = SnapshotCenterPrice ?? RoundToTick(_orderBook.MidPrice ?? 0m);
         var snapshot = _orderBook.GetSnapshot(
-            _orderBook.MidPrice ?? 0m,
-            50 // Visible levels
+            centerPrice,
+            SnapshotVisibleLevels,
+            FillEmptyLevels
         );
 
         // Clear dirty flags after snapshot
@@ -222,6 +235,16 @@ public class UpdateBatcher
             PendingUpdateCount = _pendingUpdateCount,
             QueueUtilization = (double)_updateQueue.Count / _updateQueue.Capacity
         };
+    }
+
+    /// <summary>
+    /// Round price to nearest tick (0.01). Rounds down to avoid fractional ticks.
+    /// Example: 50000.005 -> 50000.00
+    /// </summary>
+    private static decimal RoundToTick(decimal price)
+    {
+        const decimal tickSize = 0.01m;
+        return Math.Floor(price / tickSize) * tickSize;
     }
 }
 
