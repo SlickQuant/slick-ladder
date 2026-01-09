@@ -40,6 +40,9 @@ export class CanvasRenderer {
     private centerPrice: number = 0;               // Price-based scroll for show empty mode
     private removalMode: 'showEmpty' | 'removeRow' = 'removeRow';
 
+    // Price configuration
+    private tickSize: number;
+
     constructor(
         canvas: HTMLCanvasElement,
         width: number,
@@ -47,7 +50,8 @@ export class CanvasRenderer {
         rowHeight: number = 24,
         colors: CanvasColors = DEFAULT_COLORS,
         showVolumeBars: boolean = true,
-        showOrderCount: boolean = true
+        showOrderCount: boolean = true,
+        tickSize: number = 0.01
     ) {
         this.canvas = canvas;
         this.width = width;
@@ -56,6 +60,7 @@ export class CanvasRenderer {
         this.colors = colors;
         this.showVolumeBars = showVolumeBars;
         this.showOrderCount = showOrderCount;
+        this.tickSize = tickSize;
         this.visibleRows = Math.floor(height / rowHeight);
 
         // Set canvas size
@@ -94,6 +99,38 @@ export class CanvasRenderer {
         ctx.font = '14px monospace';
         ctx.textBaseline = 'middle';
         ctx.imageSmoothingEnabled = false;
+    }
+
+    /**
+     * Format price based on tick size
+     */
+    private formatPrice(price: number): string {
+        // Determine decimal places needed based on tick size
+        // Find the number of decimal places required to represent the tick size
+        let decimalPlaces = 0;
+        let tickSizeTest = this.tickSize;
+
+        // Keep multiplying by 10 until we get a value >= 1
+        while (tickSizeTest < 1 && decimalPlaces < 10) {
+            tickSizeTest *= 10;
+            decimalPlaces++;
+        }
+
+        // Verify if this number of decimals is sufficient
+        // by checking if tickSize * 10^decimalPlaces is a whole number
+        while (decimalPlaces < 10) {
+            const multiplier = Math.pow(10, decimalPlaces);
+            const rounded = Math.round(this.tickSize * multiplier);
+
+            // If close enough to a whole number, we have the right decimal places
+            if (Math.abs((rounded / multiplier) - this.tickSize) < 1e-10) {
+                break;
+            }
+
+            decimalPlaces++;
+        }
+
+        return price.toFixed(decimalPlaces);
     }
 
     private renderBackground(): void {
@@ -270,50 +307,69 @@ export class CanvasRenderer {
 
         // Determine reference price (viewport center or mid market)
         let referencePrice = this.centerPrice;
-        if (referencePrice === 0) {
-            // Initialize from mid price if not set
-            referencePrice = snapshot.midPrice ?? 100.00;
+
+        // Reset centerPrice if order book is empty (after clear)
+        const isEmpty = snapshot.bids.length === 0 && snapshot.asks.length === 0;
+        if (isEmpty) {
+            this.centerPrice = 0;
+            referencePrice = 0;
+        } else {
+            // Initialize centerPrice if not set (first render or after clear)
+            if (this.centerPrice === 0) {
+                const midPrice = snapshot.midPrice ?? 100.00;
+                // Round to tick size to ensure proper alignment
+                this.centerPrice = Math.round(midPrice / this.tickSize) * this.tickSize;
+            }
+            // In Show Empty Rows mode, centerPrice is FIXED after initialization
+            // The viewport does NOT track mid-price - it shows actual price levels
+            // If market drifts away, empty rows are displayed (that's the point!)
+            referencePrice = this.centerPrice;
         }
 
         const midRow = Math.floor(this.visibleRows / 2);
-        const tickSize = 0.01;
 
         // Step 1: Render all price labels for visible rows (shows gaps)
         for (let rowIndex = 0; rowIndex <= this.visibleRows; rowIndex++) {
             // Calculate what price this row represents
             const rowOffset = rowIndex - midRow;
-            const price = referencePrice - (rowOffset * tickSize);
+            const price = referencePrice - (rowOffset * this.tickSize);
+            // Round to tick size to avoid floating-point precision issues
+            const roundedPrice = Math.round(price / this.tickSize) * this.tickSize;
 
             // Render just the price label (no quantity/orders)
-            this.renderPriceOnly(rowIndex, price);
+            this.renderPriceOnly(rowIndex, roundedPrice);
         }
 
         // Step 2: Create a map of price to level data for quick lookup
-        const levelMap = new Map<number, BookLevel>();
+        // Use string keys to avoid floating-point precision issues
+        const levelMap = new Map<string, BookLevel>();
 
         for (const level of snapshot.asks) {
             if (level.quantity > 0) {
                 // Round price to tick size to ensure exact match
-                const roundedPrice = Math.round(level.price / tickSize) * tickSize;
-                levelMap.set(roundedPrice, level);
+                const roundedPrice = Math.round(level.price / this.tickSize) * this.tickSize;
+                const priceKey = this.formatPrice(roundedPrice);
+                levelMap.set(priceKey, level);
             }
         }
 
         for (const level of snapshot.bids) {
             if (level.quantity > 0) {
                 // Round price to tick size to ensure exact match
-                const roundedPrice = Math.round(level.price / tickSize) * tickSize;
-                levelMap.set(roundedPrice, level);
+                const roundedPrice = Math.round(level.price / this.tickSize) * this.tickSize;
+                const priceKey = this.formatPrice(roundedPrice);
+                levelMap.set(priceKey, level);
             }
         }
 
         // Step 3: Overlay data on rows that have levels
         for (let rowIndex = 0; rowIndex <= this.visibleRows; rowIndex++) {
             const rowOffset = rowIndex - midRow;
-            const price = referencePrice - (rowOffset * tickSize);
-            const roundedPrice = Math.round(price / tickSize) * tickSize;
+            const price = referencePrice - (rowOffset * this.tickSize);
+            const roundedPrice = Math.round(price / this.tickSize) * this.tickSize;
+            const priceKey = this.formatPrice(roundedPrice);
 
-            const level = levelMap.get(roundedPrice);
+            const level = levelMap.get(priceKey);
             if (level) {
                 // Render data overlay (quantity, orders, bars)
                 this.renderDataOverlay(rowIndex, level);
@@ -325,7 +381,7 @@ export class CanvasRenderer {
         const y = rowIndex * this.rowHeight;
 
         // Prepare text values
-        const priceText = level.price.toFixed(2);
+        const priceText = this.formatPrice(level.price);
         const qtyText = level.quantity.toLocaleString();
         const ordersText = `(${level.numOrders})`;
 
@@ -405,7 +461,7 @@ export class CanvasRenderer {
      */
     private renderPriceOnly(rowIndex: number, price: number): void {
         const y = rowIndex * this.rowHeight;
-        const priceText = price.toFixed(2);
+        const priceText = this.formatPrice(price);
         const COL_WIDTH = 66.7;
 
         // Calculate price column index
@@ -694,22 +750,27 @@ export class CanvasRenderer {
     }
 
     /**
+     * Reset center price (called when order book is cleared)
+     */
+    public resetCenterPrice(): void {
+        this.centerPrice = 0;
+    }
+
+    /**
      * Scroll by price delta (for show empty mode)
      */
     public scrollByPrice(delta: number): void {
-        const tickSize = 0.01;
-
         // Initialize center price from mid price if not set
         if (this.centerPrice === 0 && this.currentSnapshot) {
             const midPrice = this.currentSnapshot.midPrice;
             if (midPrice !== null) {
                 // Round to tick size to ensure proper alignment
-                this.centerPrice = Math.round(midPrice / tickSize) * tickSize;
+                this.centerPrice = Math.round(midPrice / this.tickSize) * this.tickSize;
             }
         }
 
         // Apply scroll delta and round to tick size
-        this.centerPrice = Math.round((this.centerPrice + delta) / tickSize) * tickSize;
+        this.centerPrice = Math.round((this.centerPrice + delta) / this.tickSize) * this.tickSize;
 
         if (this.currentSnapshot) {
             this.render(this.currentSnapshot);
@@ -733,6 +794,13 @@ export class CanvasRenderer {
      */
     public getRemovalMode(): 'showEmpty' | 'removeRow' {
         return this.removalMode;
+    }
+
+    /**
+     * Get configured tick size
+     */
+    public getTickSize(): number {
+        return this.tickSize;
     }
 
     /**

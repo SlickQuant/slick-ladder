@@ -28,7 +28,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     try {
         switch (request.type) {
             case 'init':
-                await initializeWasm(request.maxLevels);
+                await initializeWasm(request.maxLevels, request.tickSize);
                 break;
 
             case 'update':
@@ -83,7 +83,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     }
 };
 
-async function initializeWasm(maxLevels: number): Promise<void> {
+async function initializeWasm(maxLevels: number, tickSize: number): Promise<void> {
     if (isInitialized) {
         return;
     }
@@ -119,9 +119,9 @@ async function initializeWasm(maxLevels: number): Promise<void> {
         wasmExports = exports as WasmExports;
         console.log('[WASM Worker] Assembly exports loaded');
 
-        // Initialize the ladder
-        wasmExports.Initialize(maxLevels);
-        console.log('[WASM Worker] Ladder initialized');
+        // Initialize the ladder with tick size
+        wasmExports.Initialize(maxLevels, tickSize);
+        console.log(`[WASM Worker] Ladder initialized with tickSize=${tickSize}`);
 
         isInitialized = true;
 

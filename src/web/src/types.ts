@@ -38,6 +38,7 @@ export interface PriceLadderConfig {
     height?: number;
     rowHeight?: number;
     visibleLevels?: number;
+    tickSize?: number;
     mode?: 'PriceLevel' | 'MBO';
     readOnly?: boolean;
     showVolumeBars?: boolean;

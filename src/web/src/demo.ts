@@ -11,6 +11,7 @@ let ladder: PriceLadder | WasmPriceLadder | null = null;
 let renderer: CanvasRenderer | null = null;
 let updateInterval: number | null = null;
 let statsInterval: number | null = null;
+let wasCleared: boolean = false; // Track if order book was just cleared
 
 // Performance tracking
 let processingTimes: number[] = [];
@@ -73,6 +74,10 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const removalModeRadio = document.querySelector('input[name="removal-mode"]:checked') as HTMLInputElement;
             const currentRemovalMode = (removalModeRadio?.value as 'showEmpty' | 'removeRow') ?? 'removeRow';
 
+            // Get current tick size from dropdown
+            const tickSizeSelect = document.getElementById('tick-size') as HTMLSelectElement;
+            const tickSize = parseFloat(tickSizeSelect?.value ?? '0.01');
+
             // Calculate initial canvas width based on display settings
             const COL_WIDTH = 66.7;
             let columnCount = 6;
@@ -86,14 +91,14 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             canvas.height = 600;
             container.appendChild(canvas);
 
-            // Create WASM-backed ladder
-            const wasmLadder = new WasmPriceLadder(200);
+            // Create WASM-backed ladder with tick size
+            const wasmLadder = new WasmPriceLadder(200, tickSize);
 
             // Wait for WASM to be ready
             await wasmLadder.waitForReady();
 
             // Create renderer with current display settings
-            renderer = new CanvasRenderer(canvas, canvasWidth, 600, 24, undefined, showVolumeBars, showOrderCount);
+            renderer = new CanvasRenderer(canvas, canvasWidth, 600, 24, undefined, showVolumeBars, showOrderCount, tickSize);
 
             // Apply current removal mode
             renderer.setRemovalMode(currentRemovalMode);
@@ -176,7 +181,8 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 } else {
                     // Show empty mode: price-based scrolling
                     const scrollTicks = delta > 0 ? -5 : 5; // Inverted for scroll up = higher prices
-                    const scrollAmount = scrollTicks * 0.01; // 5 ticks * 0.01 = 0.05 price change
+                    const tickSize = renderer.getTickSize();
+                    const scrollAmount = scrollTicks * tickSize; // 5 ticks * tickSize
                     renderer.scrollByPrice(scrollAmount);
                 }
             }, { passive: false });
@@ -205,6 +211,10 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         const removalModeRadio = document.querySelector('input[name="removal-mode"]:checked') as HTMLInputElement;
         const currentRemovalMode = (removalModeRadio?.value as 'showEmpty' | 'removeRow') ?? 'removeRow';
 
+        // Get current tick size from dropdown
+        const tickSizeSelect = document.getElementById('tick-size') as HTMLSelectElement;
+        const tickSize = parseFloat(tickSizeSelect?.value ?? '0.01');
+
         // Calculate initial width based on display settings
         const COL_WIDTH = 66.7;
         let columnCount = 6;
@@ -218,6 +228,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             width: initialWidth,
             height: 600,
             rowHeight: 24,
+            tickSize,
             readOnly: false,
             showVolumeBars,
             showOrderCount,
@@ -254,12 +265,23 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
 function initializeOrderBook() {
     if (!ladder) return;
 
+    // Get current tick size from the renderer
+    let tickSize = 0.01;
+    if (ladder instanceof PriceLadder) {
+        const internalRenderer = (ladder as any).renderer;
+        if (internalRenderer && typeof internalRenderer.getTickSize === 'function') {
+            tickSize = internalRenderer.getTickSize();
+        }
+    } else if (renderer) {
+        tickSize = renderer.getTickSize();
+    }
+
     const basePrice = 100;
     const levels = 50;
 
     // Add bid levels
     for (let i = 0; i < levels; i++) {
-        const price = basePrice - i * 0.01;
+        const price = basePrice - i * tickSize;
         const qty = Math.floor(1000 + Math.random() * 5000);
         const numOrders = Math.floor(1 + Math.random() * 20);
 
@@ -273,7 +295,7 @@ function initializeOrderBook() {
 
     // Add ask levels
     for (let i = 0; i < levels; i++) {
-        const price = basePrice + 0.01 + i * 0.01;
+        const price = basePrice + tickSize + i * tickSize;
         const qty = Math.floor(1000 + Math.random() * 5000);
         const numOrders = Math.floor(1 + Math.random() * 20);
 
@@ -285,7 +307,7 @@ function initializeOrderBook() {
         });
     }
 
-    console.log('Order book initialized with sample data');
+    console.log(`Order book initialized with sample data (tickSize: ${tickSize})`);
 }
 
 function setupControls() {
@@ -352,11 +374,31 @@ function setupControls() {
             }
         });
     });
+
+    // Tick size changing
+    const tickSizeSelect = document.getElementById('tick-size') as HTMLSelectElement;
+    tickSizeSelect?.addEventListener('change', async () => {
+        const container = document.getElementById('ladder-container');
+        if (!container) return;
+
+        // Get current backend
+        const backendSelect = document.getElementById('backend-select') as HTMLSelectElement;
+        const currentBackend = backendSelect?.value as 'typescript' | 'wasm' ?? 'typescript';
+
+        // Reinitialize with new tick size
+        await initializeBackend(currentBackend, container);
+    });
 }
 
 function startMarketUpdates(rate: number) {
     if (updateInterval) {
         clearInterval(updateInterval);
+    }
+
+    // Reinitialize order book if it was just cleared (for both TypeScript and WASM)
+    if (wasCleared && ladder) {
+        initializeOrderBook();
+        wasCleared = false; // Reset flag
     }
 
     // Reset performance tracking
@@ -402,25 +444,32 @@ function startMarketUpdates(rate: number) {
             // Generate random update
             const side = Math.random() < 0.5 ? Side.BID : Side.ASK;
 
-            // Get best bid/ask (TypeScript engine only has synchronous access)
-            let bestBid: number | null = null;
-            let bestAsk: number | null = null;
-
+            // Get current tick size from the renderer
+            let tickSize = 0.01;
             if (ladder instanceof PriceLadder) {
-                bestBid = ladder.getBestBid();
-                bestAsk = ladder.getBestAsk();
+                const internalRenderer = (ladder as any).renderer;
+                if (internalRenderer && typeof internalRenderer.getTickSize === 'function') {
+                    tickSize = internalRenderer.getTickSize();
+                }
+            } else if (renderer) {
+                tickSize = renderer.getTickSize();
             }
 
             // Generate price based on side to maintain order book integrity
+            // Use a fixed reference price (100) to prevent drift
+            const referencePrice = 100;
             let price: number;
+
             if (side === Side.BID) {
-                // Bids must be <= best bid (or below best ask if no bids)
-                const maxBid = bestBid || (bestAsk ? bestAsk - 0.01 : 100);
-                price = Math.round((maxBid - Math.random() * 0.50) * 100) / 100;
+                // Generate bids around reference price - tickSize/2, going down
+                // Pick a level from 0 to 20 ticks below reference
+                const ticksBelow = Math.floor(Math.random() * 20);
+                price = Math.round((referencePrice - tickSize / 2 - ticksBelow * tickSize) / tickSize) * tickSize;
             } else {
-                // Asks must be >= best ask (or above best bid if no asks)
-                const minAsk = bestAsk || (bestBid ? bestBid + 0.01 : 100.01);
-                price = Math.round((minAsk + Math.random() * 0.50) * 100) / 100;
+                // Generate asks around reference price + tickSize/2, going up
+                // Pick a level from 0 to 20 ticks above reference
+                const ticksAbove = Math.floor(Math.random() * 20);
+                price = Math.round((referencePrice + tickSize / 2 + ticksAbove * tickSize) / tickSize) * tickSize;
             }
 
             // 10% chance to remove a level (quantity = 0)
@@ -471,6 +520,7 @@ function stopMarketUpdates() {
 function clearOrderBook() {
     if (ladder) {
         ladder.clear();
+        wasCleared = true; // Mark that we need to reinitialize on next start
         console.log('Order book cleared');
     }
 }

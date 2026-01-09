@@ -37,9 +37,9 @@ public class PriceLadderCore
         _batcher.SnapshotVisibleLevels = visibleLevels;
     }
 
-    public PriceLadderCore(int maxLevels = 200, int queueCapacity = 4096)
+    public PriceLadderCore(int maxLevels = 200, int queueCapacity = 4096, decimal tickSize = 0.01m)
     {
-        _orderBook = new OrderBook(maxLevels);
+        _orderBook = new OrderBook(maxLevels, tickSize);
         _batcher = new UpdateBatcher(_orderBook, queueCapacity);
         _priceLevelManager = new PriceLevelManager(_orderBook);
         _currentMode = DataMode.PriceLevel;

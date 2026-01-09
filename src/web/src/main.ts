@@ -40,6 +40,7 @@ export class PriceLadder {
             height: config.height || 600,
             rowHeight: config.rowHeight || 24,
             visibleLevels: config.visibleLevels || 50,
+            tickSize: config.tickSize || 0.01,
             mode: config.mode || 'PriceLevel',
             readOnly: config.readOnly || false,
             showVolumeBars: config.showVolumeBars !== undefined ? config.showVolumeBars : true,
@@ -62,7 +63,8 @@ export class PriceLadder {
             this.config.rowHeight,
             this.config.colors,
             this.config.showVolumeBars,
-            this.config.showOrderCount
+            this.config.showOrderCount,
+            this.config.tickSize
         );
 
         // Create interaction handler
@@ -302,7 +304,8 @@ export class PriceLadder {
             this.config.rowHeight,
             this.config.colors!,
             this.config.showVolumeBars,
-            this.config.showOrderCount
+            this.config.showOrderCount,
+            this.config.tickSize
         );
 
         // Update interaction handler with new renderer
@@ -330,7 +333,8 @@ export class PriceLadder {
             this.config.rowHeight,
             this.config.colors!,
             this.config.showVolumeBars,
-            this.config.showOrderCount
+            this.config.showOrderCount,
+            this.config.tickSize
         );
 
         // Update interaction handler with new renderer
@@ -348,6 +352,8 @@ export class PriceLadder {
         this.bids.clear();
         this.asks.clear();
         this.updateCount = 0;
+        // Reset renderer's centerPrice for Show Empty Rows mode
+        this.renderer.resetCenterPrice();
     }
 
     /**

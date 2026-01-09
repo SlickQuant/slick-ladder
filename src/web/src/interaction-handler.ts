@@ -113,7 +113,8 @@ export class InteractionHandler {
         } else {
             // Show empty mode: price-based scrolling
             const scrollTicks = delta > 0 ? -5 : 5; // Inverted for scroll up = higher prices
-            const scrollAmount = scrollTicks * 0.01; // 5 ticks * 0.01 = 0.05 price change
+            const tickSize = this.renderer.getTickSize();
+            const scrollAmount = scrollTicks * tickSize; // 5 ticks * tickSize
             this.renderer.scrollByPrice(scrollAmount);
         }
     }

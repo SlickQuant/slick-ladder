@@ -12,7 +12,7 @@ export class WasmPriceLadder {
     private snapshotCallback?: (snapshot: OrderBookSnapshot) => void;
     private updateCount: number = 0;
 
-    constructor(maxLevels: number = 200) {
+    constructor(maxLevels: number = 200, tickSize: number = 0.01) {
         // Create the Web Worker as a module worker
         // This allows it to import the .NET WASM runtime as an ES module
         this.worker = new Worker(new URL('./wasm-worker-module.ts', import.meta.url), {
@@ -41,7 +41,7 @@ export class WasmPriceLadder {
             }, { once: true });
         });
 
-        this.postMessage({ type: 'init', maxLevels });
+        this.postMessage({ type: 'init', maxLevels, tickSize });
     }
 
     /**

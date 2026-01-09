@@ -15,6 +15,7 @@ public class OrderBook
     private readonly SortedArray<decimal, BookLevel> _asks;
     private readonly BitArray _dirtyLevels;
     private readonly int _maxLevels;
+    private readonly decimal _tickSize;
 
     /// <summary>Number of bid levels</summary>
     public int BidCount => _bids.Count;
@@ -39,9 +40,13 @@ public class OrderBook
         }
     }
 
-    public OrderBook(int maxLevels = 200)
+    /// <summary>Tick size for price increments</summary>
+    public decimal TickSize => _tickSize;
+
+    public OrderBook(int maxLevels = 200, decimal tickSize = 0.01m)
     {
         _maxLevels = maxLevels;
+        _tickSize = tickSize;
         _bids = new SortedArray<decimal, BookLevel>(maxLevels);
         _asks = new SortedArray<decimal, BookLevel>(maxLevels);
         _dirtyLevels = new BitArray(maxLevels * 2); // Bids + Asks
@@ -270,22 +275,21 @@ public class OrderBook
     public OrderBookSnapshot GetSnapshot(decimal centerPrice, int visibleLevels, bool fillEmptyLevels = false)
     {
         var halfLevels = visibleLevels / 2;
-        const decimal tickSize = 0.01m;
 
         // Get bids at or below center price (inclusive)
-        var bidMinPrice = centerPrice - (halfLevels * tickSize);
+        var bidMinPrice = centerPrice - (halfLevels * _tickSize);
         var bids = GetBidsInRange(bidMinPrice, centerPrice);
 
         // Get asks above center price (exclusive - start from center + 1 tick)
-        var askMinPrice = centerPrice + tickSize;
-        var askMaxPrice = centerPrice + (halfLevels * tickSize);
+        var askMinPrice = centerPrice + _tickSize;
+        var askMaxPrice = centerPrice + (halfLevels * _tickSize);
         var asks = GetAsksInRange(askMinPrice, askMaxPrice);
 
         // Fill in empty levels if requested (for "Show Empty" mode)
         if (fillEmptyLevels)
         {
-            bids = FillEmptyLevels(bids, bidMinPrice, centerPrice, tickSize, Side.BID).ToArray();
-            asks = FillEmptyLevels(asks, askMinPrice, askMaxPrice, tickSize, Side.ASK).ToArray();
+            bids = FillEmptyLevels(bids, bidMinPrice, centerPrice, _tickSize, Side.BID).ToArray();
+            asks = FillEmptyLevels(asks, askMinPrice, askMaxPrice, _tickSize, Side.ASK).ToArray();
         }
 
         return new OrderBookSnapshot
@@ -315,6 +319,9 @@ public class OrderBook
             levelDict[level.Price] = level;
         }
 
+        // Calculate decimal places for rounding based on tick size
+        int decimalPlaces = GetDecimalPlaces(tickSize);
+
         // Fill all prices from min to max with tick increments
         while (currentPrice <= maxPrice)
         {
@@ -328,10 +335,40 @@ public class OrderBook
                 result.Add(new BookLevel(currentPrice, 0, 0, side));
             }
             currentPrice += tickSize;
-            currentPrice = Math.Round(currentPrice, 2); // Avoid floating point errors
+            currentPrice = Math.Round(currentPrice, decimalPlaces); // Avoid floating point errors
         }
 
         return result.ToArray();
+    }
+
+    /// <summary>
+    /// Calculate the number of decimal places needed for a given tick size
+    /// </summary>
+    private static int GetDecimalPlaces(decimal tickSize)
+    {
+        int decimalPlaces = 0;
+        decimal test = tickSize;
+
+        // Multiply by 10 until we get a value >= 1
+        while (test < 1 && decimalPlaces < 10)
+        {
+            test *= 10;
+            decimalPlaces++;
+        }
+
+        // Verify if this number of decimals is sufficient
+        decimal multiplier = (decimal)Math.Pow(10, decimalPlaces);
+        decimal rounded = Math.Round(tickSize * multiplier);
+
+        // If not a whole number, we may need more decimals
+        while (Math.Abs((rounded / multiplier) - tickSize) > 0.0000000001m && decimalPlaces < 10)
+        {
+            decimalPlaces++;
+            multiplier = (decimal)Math.Pow(10, decimalPlaces);
+            rounded = Math.Round(tickSize * multiplier);
+        }
+
+        return decimalPlaces;
     }
 }
 

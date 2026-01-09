@@ -164,7 +164,7 @@ public class UpdateBatcher
         // Get snapshot of dirty levels for rendering
         // Use configured center price or fall back to mid price rounded to tick
         // Round mid price to nearest tick to avoid fractional ticks (50000.005 -> 50000.00)
-        var centerPrice = SnapshotCenterPrice ?? RoundToTick(_orderBook.MidPrice ?? 0m);
+        var centerPrice = SnapshotCenterPrice ?? RoundToTick(_orderBook.MidPrice ?? 0m, _orderBook.TickSize);
         var snapshot = _orderBook.GetSnapshot(
             centerPrice,
             SnapshotVisibleLevels,
@@ -241,9 +241,8 @@ public class UpdateBatcher
     /// Round price to nearest tick (0.01). Rounds down to avoid fractional ticks.
     /// Example: 50000.005 -> 50000.00
     /// </summary>
-    private static decimal RoundToTick(decimal price)
+    private static decimal RoundToTick(decimal price, decimal tickSize)
     {
-        const decimal tickSize = 0.01m;
         return Math.Floor(price / tickSize) * tickSize;
     }
 }

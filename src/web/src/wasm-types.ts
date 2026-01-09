@@ -3,7 +3,7 @@
  */
 
 export interface WasmExports {
-    Initialize(maxLevels: number): void;
+    Initialize(maxLevels: number, tickSize: number): void;
     HasNewSnapshot(): boolean;
     GetLatestSnapshot(): string;
     ProcessPriceLevelUpdate(side: number, price: number, quantity: number, numOrders: number): void;
@@ -35,7 +35,7 @@ export interface WasmModule {
  * Messages sent to the WASM worker
  */
 export type WorkerRequest =
-    | { type: 'init'; maxLevels: number }
+    | { type: 'init'; maxLevels: number; tickSize: number }
     | { type: 'update'; side: number; price: number; quantity: number; numOrders: number }
     | { type: 'batch'; updates: Array<{ side: number; price: number; quantity: number; numOrders: number }> }
     | { type: 'flush' }

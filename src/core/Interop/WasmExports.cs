@@ -19,9 +19,9 @@ public partial class WasmExports
     /// Initialize the price ladder
     /// </summary>
     [JSExport]
-    public static void Initialize(int maxLevels)
+    public static void Initialize(int maxLevels, double tickSize)
     {
-        _ladder = new PriceLadderCore(maxLevels);
+        _ladder = new PriceLadderCore(maxLevels, 4096, (decimal)tickSize);
 
         // Subscribe to snapshot events
         _ladder.OnSnapshotReady += snapshot =>
