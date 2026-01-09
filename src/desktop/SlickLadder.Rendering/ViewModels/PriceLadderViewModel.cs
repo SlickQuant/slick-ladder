@@ -1,12 +1,13 @@
+using System.Collections.Generic;
+using System.Reactive.Linq;
 using ReactiveUI;
 using SlickLadder.Core;
 using SlickLadder.Core.Models;
-using System.Reactive.Linq;
 
-namespace SlickLadder.WPF.ViewModels;
+namespace SlickLadder.Rendering.ViewModels;
 
 /// <summary>
-/// ReactiveUI ViewModel for the WPF PriceLadder control.
+/// Shared ReactiveUI ViewModel for both WPF and Avalonia PriceLadder controls.
 /// Provides MVVM binding to the core business logic.
 /// </summary>
 public class PriceLadderViewModel : ReactiveObject

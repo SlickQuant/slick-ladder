@@ -6,7 +6,7 @@ using System.Windows.Media;
 using SkiaSharp.Views.Desktop;
 using SkiaSharp.Views.WPF;
 using SlickLadder.Rendering.Core;
-using SlickLadder.WPF.ViewModels;
+using SlickLadder.Rendering.ViewModels;
 
 namespace SlickLadder.WPF.Controls;
 
