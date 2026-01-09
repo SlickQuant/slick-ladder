@@ -94,7 +94,7 @@ public partial class PriceLadderControl : UserControl
             : (snapshot.MidPrice ?? 50000m);
 
         // Convert row to price using price-to-row mapping (reverse calculation)
-        const decimal tickSize = 0.01m;
+        var tickSize = _viewport.TickSize;
         var rowOffset = rowIndex - midRow;
         var price = referencePrice - (rowOffset * tickSize); // Negative rowOffset because higher price = lower row
 
@@ -152,9 +152,9 @@ public partial class PriceLadderControl : UserControl
         else
         {
             // PRICE-TO-ROW MAPPING MODE: Price-based scrolling
-            // Each tick moves 5 price levels (5 * 0.01 = 0.05)
+            // Each tick moves 5 price levels based on current tick size
             var scrollTicks = e.Delta > 0 ? 5 : -5;
-            var scrollAmount = scrollTicks * 0.01m;
+            var scrollAmount = scrollTicks * _viewport.TickSize;
 
             // Initialize center price from mid price on first scroll (if not set)
             if (_viewport.CenterPrice == 0 && _viewModel.CurrentSnapshot.HasValue)

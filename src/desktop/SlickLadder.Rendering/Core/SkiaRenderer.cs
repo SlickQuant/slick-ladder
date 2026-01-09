@@ -88,7 +88,7 @@ public class SkiaRenderer : IDisposable
         // Calculate visible rows - add 1 to ensure we fill to the bottom
         var visibleRows = (viewport.Height + RenderConfig.RowHeight - 1) / RenderConfig.RowHeight;
         var midRow = visibleRows / 2;
-        const decimal tickSize = 0.01m;
+        var tickSize = viewport.TickSize;
 
         if (viewport.RemovalMode == LevelRemovalMode.RemoveRow)
         {
@@ -203,6 +203,29 @@ public class SkiaRenderer : IDisposable
                 ? viewport.CenterPrice
                 : (snapshot.MidPrice ?? 50000m);
 
+            // Step 1: Render all price labels for visible rows (shows gaps)
+            // This matches web version: render all prices first, then overlay data
+            for (int rowIndex = 0; rowIndex <= visibleRows; rowIndex++)
+            {
+                // Calculate what price this row represents
+                var rowOffset = rowIndex - midRow;
+                var price = referencePrice - (rowOffset * tickSize); // Negative because higher rows = higher prices
+
+                // Round to tick size to avoid floating-point precision issues
+                price = Math.Round(price / tickSize) * tickSize;
+
+                var y = rowIndex * RenderConfig.RowHeight;
+                var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
+
+                // Draw price label in center column
+                canvas.DrawText(
+                    price.ToString("F2"),
+                    viewport.PriceColumnX + (viewport.ColumnWidth / 2),
+                    textY,
+                    _textPaint);
+            }
+
+            // Step 2: Overlay quantity data for levels that exist
             // Render all ask levels, mapping price to screen row
             foreach (var level in snapshot.Asks)
             {
@@ -215,7 +238,7 @@ public class SkiaRenderer : IDisposable
                 if (rowIndex >= 0 && rowIndex <= visibleRows)
                 {
                     var y = rowIndex * RenderConfig.RowHeight;
-                    DrawAskLevel(canvas, level, viewport, maxVolume, y);
+                    DrawAskLevelQuantity(canvas, level, viewport, maxVolume, y);
                 }
             }
 
@@ -231,7 +254,7 @@ public class SkiaRenderer : IDisposable
                 if (rowIndex >= 0 && rowIndex <= visibleRows)
                 {
                     var y = rowIndex * RenderConfig.RowHeight;
-                    DrawBidLevel(canvas, level, viewport, maxVolume, y);
+                    DrawBidLevelQuantity(canvas, level, viewport, maxVolume, y);
                 }
             }
         }
@@ -356,6 +379,86 @@ public class SkiaRenderer : IDisposable
             viewport.PriceColumnX + (viewport.ColumnWidth / 2),
             textY,
             _textPaint);
+
+        // Ask quantity (skip if empty)
+        if (!isEmpty)
+        {
+            canvas.DrawText(
+                level.Quantity.ToString("N0"),
+                viewport.AskQtyColumnX + (viewport.ColumnWidth / 2),
+                textY,
+                _textPaint);
+        }
+
+        // Ask order count (if enabled and not empty)
+        if (viewport.ShowOrderCount && !isEmpty)
+        {
+            canvas.DrawText(
+                $"({level.NumOrders})",
+                viewport.AskOrderCountColumnX + (viewport.ColumnWidth / 2),
+                textY,
+                _textPaint);
+        }
+
+        // Draw volume bar (if enabled and not empty)
+        if (viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 && !isEmpty)
+        {
+            var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
+
+            canvas.DrawRect(
+                viewport.VolumeBarColumnX.Value,
+                y + 4,
+                barWidth,
+                RenderConfig.RowHeight - 8,
+                _askVolumePaint);
+        }
+    }
+
+    private void DrawBidLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y)
+    {
+        // Draw only quantity data (price already drawn in Step 1)
+        var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
+        var isEmpty = level.Quantity == 0;
+
+        // Bid order count (if enabled and not empty)
+        if (viewport.ShowOrderCount && !isEmpty)
+        {
+            canvas.DrawText(
+                $"({level.NumOrders})",
+                viewport.BidOrderCountColumnX + (viewport.ColumnWidth / 2),
+                textY,
+                _textPaint);
+        }
+
+        // Bid quantity (skip if empty)
+        if (!isEmpty)
+        {
+            canvas.DrawText(
+                level.Quantity.ToString("N0"),
+                viewport.BidQtyColumnX + (viewport.ColumnWidth / 2),
+                textY,
+                _textPaint);
+        }
+
+        // Draw volume bar (if enabled and not empty)
+        if (viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 && !isEmpty)
+        {
+            var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
+
+            canvas.DrawRect(
+                viewport.VolumeBarColumnX.Value,
+                y + 4,
+                barWidth,
+                RenderConfig.RowHeight - 8,
+                _bidVolumePaint);
+        }
+    }
+
+    private void DrawAskLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y)
+    {
+        // Draw only quantity data (price already drawn in Step 1)
+        var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
+        var isEmpty = level.Quantity == 0;
 
         // Ask quantity (skip if empty)
         if (!isEmpty)

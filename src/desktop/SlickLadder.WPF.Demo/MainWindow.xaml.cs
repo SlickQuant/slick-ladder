@@ -29,8 +29,9 @@ public partial class MainWindow : Window
         _viewModel = new PriceLadderViewModel();
         PriceLadder.DataContext = _viewModel;
 
-        // Create market data simulator
-        _simulator = new MarketDataSimulator(_viewModel.Core)
+        // Create market data simulator (pass tick size from ViewModel)
+        var tickSize = 0.01m; // Default tick size
+        _simulator = new MarketDataSimulator(_viewModel.Core, tickSize)
         {
             UpdatesPerSecond = 1000,
             BasePrice = 50000.00m
@@ -129,6 +130,55 @@ public partial class MainWindow : Window
                     batcher.FillEmptyLevels = isShowEmpty;
                 }
             }
+        }
+    }
+
+    private void TickSizeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (TickSizeCombo?.SelectedItem == null || _viewModel == null) return;
+
+        var selectedItem = (ComboBoxItem)TickSizeCombo.SelectedItem;
+        var tickSizeStr = (string)selectedItem.Tag;
+        var tickSize = decimal.Parse(tickSizeStr, System.Globalization.CultureInfo.InvariantCulture);
+
+        // Stop market data if running
+        bool wasRunning = _simulator?.IsRunning ?? false;
+        if (wasRunning)
+        {
+            _simulator?.Stop();
+        }
+
+        // Dispose old simulator
+        _simulator?.Dispose();
+
+        // Recreate ViewModel with new tick size
+        _viewModel = new PriceLadderViewModel(tickSize);
+        PriceLadder.DataContext = _viewModel;
+
+        // Recreate simulator with new tick size
+        _simulator = new MarketDataSimulator(_viewModel.Core, tickSize)
+        {
+            UpdatesPerSecond = int.Parse((string)((ComboBoxItem)UpdateRateCombo.SelectedItem).Tag),
+            BasePrice = 50000.00m
+        };
+
+        // Update viewport tick size
+        if (PriceLadder?.GetViewport() != null)
+        {
+            PriceLadder.GetViewport().TickSize = tickSize;
+
+            // Re-center viewport on a price aligned to the new tick size
+            var basePrice = 50000.00m;
+            var alignedPrice = Math.Round(basePrice / tickSize) * tickSize;
+            PriceLadder.GetViewport().CenterPrice = alignedPrice;
+        }
+
+        // Restart market data if it was running
+        if (wasRunning)
+        {
+            _simulator?.Start();
+            StartButton.IsEnabled = false;
+            StopButton.IsEnabled = true;
         }
     }
 

@@ -40,8 +40,10 @@ public class ViewportManager
     public bool ShowOrderCount { get; set; } = false;
     public LevelRemovalMode RemovalMode { get; set; } = LevelRemovalMode.RemoveRow;
 
+    // Price configuration
+    public decimal TickSize { get; set; } = 0.01m;
+
     // Constants
-    private const decimal TickSize = 0.01m;
     private const int RowHeight = RenderConfig.RowHeight;
 
     /// <summary>

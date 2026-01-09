@@ -25,9 +25,9 @@ public class PriceLadderViewModel : ReactiveObject
     public ObservableAsPropertyHelper<int> BidLevelCount { get; }
     public ObservableAsPropertyHelper<int> AskLevelCount { get; }
 
-    public PriceLadderViewModel()
+    public PriceLadderViewModel(decimal tickSize = 0.01m)
     {
-        _core = new PriceLadderCore(maxLevels: 200);
+        _core = new PriceLadderCore(maxLevels: 200, tickSize: tickSize);
 
         // Subscribe to snapshot updates from core
         _core.OnSnapshotReady += snapshot =>

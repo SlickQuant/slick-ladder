@@ -15,6 +15,7 @@ public class MarketDataSimulator : IDisposable
     private SystemTimer? _timer;
     private int _updatesPerSecond = 100;
     private decimal _basePrice = 50000.00m;
+    private decimal _tickSize = 0.01m;
     private readonly Random _random = new();
 
     public int UpdatesPerSecond
@@ -36,11 +37,18 @@ public class MarketDataSimulator : IDisposable
         set => _basePrice = value;
     }
 
+    public decimal TickSize
+    {
+        get => _tickSize;
+        set => _tickSize = value;
+    }
+
     public bool IsRunning => _timer != null;
 
-    public MarketDataSimulator(PriceLadderCore core)
+    public MarketDataSimulator(PriceLadderCore core, decimal tickSize = 0.01m)
     {
         _core = core ?? throw new ArgumentNullException(nameof(core));
+        _tickSize = tickSize;
     }
 
     public void Start()
@@ -48,15 +56,15 @@ public class MarketDataSimulator : IDisposable
         if (_timer != null) return;
 
         // Initialize critical price levels to ensure they appear immediately
-        // Seed first few ask levels explicitly
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, 50000.01m, 5000, 15));
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, 50000.02m, 4500, 12));
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, 50000.03m, 4000, 10));
+        // Seed first few ask levels explicitly using tick size
+        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, _basePrice + _tickSize, 5000, 15));
+        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, _basePrice + _tickSize * 2, 4500, 12));
+        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, _basePrice + _tickSize * 3, 4000, 10));
 
-        // Seed first few bid levels explicitly
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, 50000.00m, 5000, 15));
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, 49999.99m, 4800, 14));
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, 49999.98m, 4600, 13));
+        // Seed first few bid levels explicitly using tick size
+        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, _basePrice, 5000, 15));
+        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, _basePrice - _tickSize, 4800, 14));
+        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, _basePrice - _tickSize * 2, 4600, 13));
         _core.Flush();
 
         var (batchSize, intervalMs) = CalculateBatchParams(_updatesPerSecond);
@@ -135,27 +143,28 @@ public class MarketDataSimulator : IDisposable
 
     private decimal GeneratePrice(Side side)
     {
-        // Generate prices in concentrated range with enough levels to fill viewport
-        // Bids: basePrice (50000.00) down to basePrice - 2.00 (49998.00)
-        // Asks: basePrice + 0.01 (50000.01) to basePrice + 2.00 (50002.00)
-        // This gives 200 price levels on each side - fills viewport plus scrolling buffer
-        // With explicit init of 50000.01, it appears immediately
+        // Generate prices using the configured tick size
+        // Use basePrice as reference to match viewport center
+        decimal referencePrice = _basePrice;
 
         decimal price;
         if (side == Side.BID)
         {
-            // Bids: 50000.00, 49999.99, 49999.98, ... down to 49998.00
-            var offset = _random.Next(0, 201) * 0.01m; // Range: 0.00 to 2.00
-            price = _basePrice - offset;
+            // Generate bids around basePrice, going down
+            // Pick a level from 0 to 50 ticks below reference
+            var ticksBelow = _random.Next(0, 51);
+            price = referencePrice - ticksBelow * _tickSize;
         }
         else
         {
-            // Asks: 50000.01, 50000.02, ... up to 50002.00 (NEVER equal to base price)
-            var offset = _random.Next(1, 201) * 0.01m; // Range: 0.01 to 2.00
-            price = _basePrice + offset;
+            // Generate asks around basePrice + tickSize, going up
+            // Pick a level from 1 to 50 ticks above reference
+            var ticksAbove = _random.Next(1, 51);
+            price = referencePrice + ticksAbove * _tickSize;
         }
 
-        return Math.Round(price, 2);
+        // Round to tick size to avoid floating-point precision issues
+        return Math.Round(price / _tickSize) * _tickSize;
     }
 
     public void Dispose()
