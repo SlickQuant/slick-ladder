@@ -13,6 +13,7 @@ public class RenderConfig
     public SKColor BidBackground { get; } = new SKColor(26, 47, 58);        // #1a2f3a (very dark blue - barely visible)
     public SKColor AskBackground { get; } = new SKColor(58, 26, 31);        // #3a1a1f (very dark red - barely visible)
     public SKColor PriceBackground { get; } = new SKColor(58, 58, 58);      // #3a3a3a (medium gray)
+    public SKColor OrderCountBackground { get; } = new SKColor(30, 30, 30); // #1e1e1e (same as main background - matches web)
 
     // Text colors
     public SKColor TextColor { get; } = SKColors.White;

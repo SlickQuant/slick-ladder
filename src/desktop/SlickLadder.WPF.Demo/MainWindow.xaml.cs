@@ -3,7 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Threading;
 using SlickLadder.Core;
 using SlickLadder.Rendering.Simulation;
-using SlickLadder.WPF.ViewModels;
+using SlickLadder.Rendering.ViewModels;
 
 namespace SlickLadder.WPF.Demo;
 

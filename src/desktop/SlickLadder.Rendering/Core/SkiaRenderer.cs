@@ -17,6 +17,7 @@ public class SkiaRenderer : IDisposable
     private readonly SKPaint _bidBackgroundPaint;
     private readonly SKPaint _askBackgroundPaint;
     private readonly SKPaint _priceBackgroundPaint;
+    private readonly SKPaint _orderCountBackgroundPaint;
     private readonly SKPaint _textPaint;
     private readonly SKPaint _bidVolumePaint;
     private readonly SKPaint _askVolumePaint;
@@ -33,6 +34,7 @@ public class SkiaRenderer : IDisposable
         _bidBackgroundPaint = new SKPaint { Color = _config.BidBackground, Style = SKPaintStyle.Fill };
         _askBackgroundPaint = new SKPaint { Color = _config.AskBackground, Style = SKPaintStyle.Fill };
         _priceBackgroundPaint = new SKPaint { Color = _config.PriceBackground, Style = SKPaintStyle.Fill };
+        _orderCountBackgroundPaint = new SKPaint { Color = _config.OrderCountBackground, Style = SKPaintStyle.Fill };
 
         _textPaint = new SKPaint
         {
@@ -264,13 +266,13 @@ public class SkiaRenderer : IDisposable
     {
         // Column order: Bid Order Count | Bid Qty | Price | Ask Qty | Ask Order Count | Volume Bars
 
-        // Bid order count column (blue background, same as bid qty)
+        // Bid order count column (darker background to match web - NOT the same as bid qty)
         if (viewport.ShowOrderCount)
         {
             canvas.DrawRect(
                 viewport.BidOrderCountColumnX, 0,
                 viewport.ColumnWidth, viewport.Height,
-                _bidBackgroundPaint);
+                _orderCountBackgroundPaint);
         }
 
         // Bid quantity column (blue background)
@@ -291,13 +293,13 @@ public class SkiaRenderer : IDisposable
             viewport.ColumnWidth, viewport.Height,
             _askBackgroundPaint);
 
-        // Ask order count column (red background, same as ask qty)
+        // Ask order count column (darker background to match web - NOT the same as ask qty)
         if (viewport.ShowOrderCount)
         {
             canvas.DrawRect(
                 viewport.AskOrderCountColumnX, 0,
                 viewport.ColumnWidth, viewport.Height,
-                _askBackgroundPaint);
+                _orderCountBackgroundPaint);
         }
     }
 
@@ -511,6 +513,7 @@ public class SkiaRenderer : IDisposable
         _bidBackgroundPaint?.Dispose();
         _askBackgroundPaint?.Dispose();
         _priceBackgroundPaint?.Dispose();
+        _orderCountBackgroundPaint?.Dispose();
         _textPaint?.Dispose();
         _bidVolumePaint?.Dispose();
         _askVolumePaint?.Dispose();
