@@ -3,12 +3,39 @@
   "version": "0.1.0",
   "description": "Ultra-low latency price ladder component for web",
   "main": "dist/slick-ladder.js",
+  "types": "dist/main.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/main.d.ts",
+      "default": "./dist/slick-ladder.js"
+    },
+    "./main": {
+      "types": "./dist/main.d.ts",
+      "default": "./src/main.ts"
+    },
+    "./wasm-adapter": {
+      "types": "./dist/wasm-adapter.d.ts",
+      "default": "./src/wasm-adapter.ts"
+    },
+    "./canvas-renderer": {
+      "types": "./dist/canvas-renderer.d.ts",
+      "default": "./src/canvas-renderer.ts"
+    },
+    "./types": {
+      "types": "./dist/types.d.ts",
+      "default": "./src/types.ts"
+    },
+    "./wasm-types": {
+      "types": "./dist/wasm-types.d.ts",
+      "default": "./src/wasm-types.ts"
+    }
+  },
   "scripts": {
     "build": "webpack --mode production",
     "dev": "webpack --mode development --watch",
-    "serve": "webpack serve --mode development --open",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "note": "Demo application is located in ../../examples/web/",
   "keywords": [
     "price-ladder",
     "trading",

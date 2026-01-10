@@ -24,7 +24,7 @@
   <Target Name="CopyWasmFilesToWeb" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'browser-wasm'">
     <PropertyGroup>
       <WasmAppBundlePath>$(PublishDir)..\AppBundle\_framework</WasmAppBundlePath>
-      <WebPublicWasmPath>$(MSBuildProjectDirectory)\..\..\src\web\public\wasm</WebPublicWasmPath>
+      <WebPublicWasmPath>$(MSBuildProjectDirectory)\..\..\examples\web\public\wasm</WebPublicWasmPath>
     </PropertyGroup>
 
     <Message Text="Copying WASM files from $(WasmAppBundlePath) to $(WebPublicWasmPath)" Importance="high" />
@@ -32,15 +32,12 @@
     <!-- Create destination directory if it doesn't exist -->
     <MakeDir Directories="$(WebPublicWasmPath)" Condition="!Exists('$(WebPublicWasmPath)')" />
 
-    <!-- Copy all WASM framework files -->
+    <!-- Copy all WASM framework files (including subdirectories) -->
     <ItemGroup>
-      <WasmFrameworkFiles Include="$(WasmAppBundlePath)\*.wasm" />
-      <WasmFrameworkFiles Include="$(WasmAppBundlePath)\*.js" />
-      <WasmFrameworkFiles Include="$(WasmAppBundlePath)\*.json" />
-      <WasmFrameworkFiles Include="$(WasmAppBundlePath)\*.map" />
+      <WasmFrameworkFiles Include="$(WasmAppBundlePath)\**\*" />
     </ItemGroup>
 
-    <Copy SourceFiles="@(WasmFrameworkFiles)" DestinationFolder="$(WebPublicWasmPath)" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(WasmFrameworkFiles)" DestinationFolder="$(WebPublicWasmPath)\%(RecursiveDir)" SkipUnchangedFiles="false" />
 
     <Message Text="WASM files copied successfully!" Importance="high" />
   </Target>

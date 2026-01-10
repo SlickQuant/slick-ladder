@@ -1,7 +1,7 @@
-import { PriceLadder } from './main';
-import { WasmPriceLadder } from './wasm-adapter';
-import { CanvasRenderer } from './canvas-renderer';
-import { Side, PriceLevel } from './types';
+import { PriceLadder } from 'slick-ladder/main';
+import { WasmPriceLadder } from 'slick-ladder/wasm-adapter';
+import { CanvasRenderer } from 'slick-ladder/canvas-renderer';
+import { Side, PriceLevel } from 'slick-ladder/types';
 
 /**
  * Demo application showing SlickUI price ladder in action

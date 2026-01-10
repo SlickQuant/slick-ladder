@@ -1,0 +1,32 @@
+{
+  "name": "slick-ladder-monorepo",
+  "version": "0.1.0",
+  "description": "SlickLadder - Ultra-low latency price ladder component",
+  "private": true,
+  "workspaces": [
+    "src/web",
+    "examples/web"
+  ],
+  "scripts": {
+    "build:wasm": "node scripts/build-wasm.js",
+    "build:lib": "npm run build --workspace=src/web",
+    "build:lib:full": "npm run build:wasm && npm run build:lib",
+    "build:demo": "npm run build --workspace=examples/web",
+    "build:all": "npm run build:wasm && npm run build:lib && npm run build:demo",
+    "dev:demo": "npm run dev --workspace=examples/web",
+    "serve:demo": "npm run serve --workspace=examples/web"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SlickQuant/slick-ladder"
+  },
+  "keywords": [
+    "price-ladder",
+    "trading",
+    "orderbook",
+    "webassembly",
+    "canvas"
+  ],
+  "author": "",
+  "license": "ISC"
+}

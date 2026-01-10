@@ -13,9 +13,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\SlickLadder.WPF\SlickLadder.WPF.csproj" />
-    <ProjectReference Include="..\SlickLadder.Rendering\SlickLadder.Rendering.csproj" />
-    <ProjectReference Include="..\..\core\SlickLadder.Core.csproj" />
+    <ProjectReference Include="..\..\src\desktop\SlickLadder.WPF\SlickLadder.WPF.csproj" />
+    <ProjectReference Include="..\..\src\desktop\SlickLadder.Rendering\SlickLadder.Rendering.csproj" />
+    <ProjectReference Include="..\..\src\core\SlickLadder.Core.csproj" />
   </ItemGroup>
 
 </Project>

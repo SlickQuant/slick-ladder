@@ -1,12 +1,9 @@
 const path = require('path');
-const HtmlWebpackPlugin = require('html-webpack-plugin');
-const CopyWebpackPlugin = require('copy-webpack-plugin');
 const TerserPlugin = require('terser-webpack-plugin');
 
 module.exports = {
   entry: {
-    'slick-ladder': './src/main.ts',
-    'demo': './src/demo.ts'
+    'slick-ladder': './src/main.ts'
   },
   module: {
     rules: [
@@ -29,46 +26,7 @@ module.exports = {
       type: 'umd',
     },
   },
-  plugins: [
-    new HtmlWebpackPlugin({
-      template: './public/index.html',
-      filename: 'index.html',
-    }),
-    new CopyWebpackPlugin({
-      patterns: [
-        {
-          from: 'public/wasm/*.wasm',
-          to: 'wasm/[name][ext]',
-          noErrorOnMissing: true
-        },
-        {
-          from: 'public/wasm/*.dll',
-          to: 'wasm/[name][ext]',
-          noErrorOnMissing: true
-        },
-        {
-          from: 'public/wasm/*.js',
-          to: 'wasm/[name][ext]',
-          noErrorOnMissing: true
-        },
-        {
-          from: 'public/wasm/*.json',
-          to: 'wasm/[name][ext]',
-          noErrorOnMissing: true
-        },
-        {
-          from: 'public/wasm/*.symbols',
-          to: 'wasm/[name][ext]',
-          noErrorOnMissing: true
-        },
-        {
-          from: 'public/wasm/supportFiles/**/*',
-          to: 'wasm/supportFiles/[name][ext]',
-          noErrorOnMissing: true
-        },
-      ],
-    }),
-  ],
+  plugins: [],
   optimization: {
     minimizer: [
       new TerserPlugin({

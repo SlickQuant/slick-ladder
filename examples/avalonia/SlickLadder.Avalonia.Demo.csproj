@@ -17,9 +17,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\SlickLadder.Avalonia\SlickLadder.Avalonia.csproj" />
-    <ProjectReference Include="..\SlickLadder.Rendering\SlickLadder.Rendering.csproj" />
-    <ProjectReference Include="..\..\core\SlickLadder.Core.csproj" />
+    <ProjectReference Include="..\..\src\desktop\SlickLadder.Avalonia\SlickLadder.Avalonia.csproj" />
+    <ProjectReference Include="..\..\src\desktop\SlickLadder.Rendering\SlickLadder.Rendering.csproj" />
+    <ProjectReference Include="..\..\src\core\SlickLadder.Core.csproj" />
   </ItemGroup>
 
 </Project>
