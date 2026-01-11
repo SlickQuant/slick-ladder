@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "SlickLadder.WPF.Demo": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "SLICKLADDER_TRACE_RENDER": "1"
+      }
+    }
+  }
+}

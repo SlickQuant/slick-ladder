@@ -129,7 +129,31 @@
                                  Unchecked="ShowOrderCountCheckbox_Changed"
                                  Margin="0,0,0,10"/>
 
-                        <TextBlock Text="Level Removal Mode:" Foreground="White" Margin="0,0,0,5"/>
+                        <TextBlock Text="Data Mode:" Foreground="White" Margin="0,0,0,5"/>
+                        <ComboBox x:Name="DataModeCombo"
+                                 Background="White"
+                                 Foreground="#000000"
+                                 BorderBrush="#444"
+                                 FontSize="13"
+                                 SelectedIndex="0"
+                                 SelectionChanged="DataModeCombo_SelectionChanged">
+                            <ComboBox.Resources>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="Foreground" Value="#000000"/>
+                                    <Setter Property="Background" Value="White"/>
+                                    <Style.Triggers>
+                                        <Trigger Property="IsHighlighted" Value="True">
+                                            <Setter Property="Background" Value="#3b82f6"/>
+                                            <Setter Property="Foreground" Value="#ffffff"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ComboBox.Resources>
+                            <ComboBoxItem Content="Price Level (Aggregated)" Tag="PriceLevel"/>
+                            <ComboBoxItem Content="MBO (Market By Order)" Tag="MBO"/>
+                        </ComboBox>
+
+                        <TextBlock Text="Level Removal Mode:" Foreground="White" Margin="0,10,0,5"/>
                         <ComboBox x:Name="RemovalModeCombo"
                                  Background="White"
                                  Foreground="#000000"

@@ -19,8 +19,10 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        System.Diagnostics.Debug.WriteLine("===== SLICKL ADDER WPF DEMO STARTING =====");
         InitializeComponent();
         InitializeDemo();
+        System.Diagnostics.Debug.WriteLine("===== SLICKLADDER WPF DEMO INITIALIZED =====");
     }
 
     private void InitializeDemo()
@@ -99,6 +101,52 @@ public partial class MainWindow : Window
         }
     }
 
+    private void DataModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        System.Diagnostics.Debug.WriteLine("DataModeCombo_SelectionChanged CALLED");
+
+        if (_viewModel == null || DataModeCombo.SelectedItem == null || _simulator == null)
+        {
+            System.Diagnostics.Debug.WriteLine($"DataModeCombo_SelectionChanged: EARLY RETURN - _viewModel={_viewModel != null}, SelectedItem={DataModeCombo.SelectedItem != null}, _simulator={_simulator != null}");
+            return;
+        }
+
+        var selectedItem = (ComboBoxItem)DataModeCombo.SelectedItem;
+        var mode = (string)selectedItem.Tag;
+
+        System.Diagnostics.Debug.WriteLine($"DataModeCombo_SelectionChanged: mode={mode}");
+
+        // Stop market data if running
+        bool wasRunning = _simulator.IsRunning;
+        if (wasRunning)
+        {
+            System.Diagnostics.Debug.WriteLine("DataModeCombo_SelectionChanged: Stopping simulator");
+            _simulator.Stop();
+        }
+
+        // Set data mode
+        var dataMode = mode == "MBO" ? DataMode.MBO : DataMode.PriceLevel;
+        System.Diagnostics.Debug.WriteLine($"DataModeCombo_SelectionChanged: Setting dataMode to {dataMode}");
+        _viewModel.Core.SetDataMode(dataMode);
+
+        // Set simulator mode
+        System.Diagnostics.Debug.WriteLine($"DataModeCombo_SelectionChanged: Setting simulator.UseMBOMode to {mode == "MBO"}");
+        _simulator.UseMBOMode = mode == "MBO";
+
+        // Clear order book
+        System.Diagnostics.Debug.WriteLine("DataModeCombo_SelectionChanged: Calling Reset()");
+        _viewModel.Core.Reset();
+
+        // Restart market data if it was running
+        if (wasRunning)
+        {
+            System.Diagnostics.Debug.WriteLine("DataModeCombo_SelectionChanged: Restarting simulator");
+            _simulator.Start();
+        }
+
+        System.Diagnostics.Debug.WriteLine("DataModeCombo_SelectionChanged: DONE");
+    }
+
     private void RemovalModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_viewModel == null || RemovalModeCombo.SelectedItem == null) return;
@@ -141,6 +189,12 @@ public partial class MainWindow : Window
         var tickSizeStr = (string)selectedItem.Tag;
         var tickSize = decimal.Parse(tickSizeStr, System.Globalization.CultureInfo.InvariantCulture);
 
+        // Preserve current data mode
+        var currentMode = DataModeCombo?.SelectedItem != null
+            ? (string)((ComboBoxItem)DataModeCombo.SelectedItem).Tag
+            : "PriceLevel";
+        var isMBOMode = currentMode == "MBO";
+
         // Stop market data if running
         bool wasRunning = _simulator?.IsRunning ?? false;
         if (wasRunning)
@@ -155,11 +209,15 @@ public partial class MainWindow : Window
         _viewModel = new PriceLadderViewModel(tickSize);
         PriceLadder.DataContext = _viewModel;
 
-        // Recreate simulator with new tick size
+        // Restore data mode
+        _viewModel.Core.SetDataMode(isMBOMode ? DataMode.MBO : DataMode.PriceLevel);
+
+        // Recreate simulator with new tick size and restored mode
         _simulator = new MarketDataSimulator(_viewModel.Core, tickSize)
         {
             UpdatesPerSecond = int.Parse((string)((ComboBoxItem)UpdateRateCombo.SelectedItem).Tag),
-            BasePrice = 50000.00m
+            BasePrice = 50000.00m,
+            UseMBOMode = isMBOMode
         };
 
         // Update viewport tick size

@@ -29,9 +29,14 @@ public class RenderConfig
     public string FontFamily { get; } = "Consolas";
     public float FontSize { get; } = 12.0f;
 
+    // Order segment gap (MBO volume bars)
+    public float OrderSegmentGap { get; } = 1.0f;
+    public float MinOrderSegmentWidth { get; } = 1.0f;
+
     // Layout constants (must match web version exactly)
     public const int RowHeight = 24;
     public const float ColumnWidth = 66.7f;  // Matches web version COL_WIDTH
+    public const float VolumeBarWidthMultiplier = 2.5f;
 }
 
 /// <summary>

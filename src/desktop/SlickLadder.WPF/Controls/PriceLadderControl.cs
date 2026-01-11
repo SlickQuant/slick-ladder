@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -69,8 +70,19 @@ public partial class PriceLadderControl : UserControl
             return;
         }
 
-        // Use shared renderer (no scrolling support - matches web version)
-        _renderer!.Render(canvas, _viewModel.CurrentSnapshot.Value, _viewport);
+        var snapshot = _viewModel.CurrentSnapshot.Value;
+
+        if (_metrics.TraceRenderTimings)
+        {
+            var start = Stopwatch.GetTimestamp();
+            _renderer!.Render(canvas, snapshot, _viewport);
+            _metrics.RecordRenderTime(Stopwatch.GetTimestamp() - start, in snapshot);
+        }
+        else
+        {
+            // Use shared renderer (no scrolling support - matches web version)
+            _renderer!.Render(canvas, snapshot, _viewport);
+        }
 
         // Track FPS
         _metrics.RecordFrame();

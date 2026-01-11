@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using SlickLadder.Core.DataStructures;
 using SlickLadder.Core.Models;
 
@@ -14,13 +15,17 @@ public class UpdateBatcher
     private const int BATCH_INTERVAL_MICROSECONDS = 100; // 100μs micro-batches
     private const int MAX_BATCH_SIZE = 1000; // Auto-flush if exceeded
     private const long TICKS_PER_MICROSECOND = 10; // 100ns ticks per microsecond
+    private const bool EnableDebugLogging = false;
 
     private readonly RingBuffer<PriceLevel> _updateQueue;
+    private readonly RingBuffer<(OrderUpdate, OrderUpdateType)> _orderQueue;
     private readonly OrderBook _orderBook;
     private readonly Stopwatch _batchTimer;
     private long _lastFlushTicks;
     private int _pendingUpdateCount;
     private bool _isPaused;
+    private DataMode _mode;
+    private Managers.MBOManager? _mboManager;
 
     /// <summary>Total updates processed</summary>
     public long TotalUpdatesProcessed { get; private set; }
@@ -51,10 +56,12 @@ public class UpdateBatcher
     {
         _orderBook = orderBook;
         _updateQueue = new RingBuffer<PriceLevel>(queueCapacity);
+        _orderQueue = new RingBuffer<(OrderUpdate, OrderUpdateType)>(queueCapacity);
         _batchTimer = Stopwatch.StartNew();
         _lastFlushTicks = _batchTimer.ElapsedTicks;
         _pendingUpdateCount = 0;
         _isPaused = false;
+        _mode = DataMode.PriceLevel;
     }
 
     /// <summary>
@@ -138,23 +145,106 @@ public class UpdateBatcher
     }
 
     /// <summary>
+    /// Queue an OrderUpdate for batched processing (MBO mode).
+    /// Returns true if queued, false if queue is full.
+    /// </summary>
+    public bool QueueOrderUpdate(OrderUpdate update, OrderUpdateType type)
+    {
+        if (_isPaused || _mode != DataMode.MBO)
+        {
+            return false;
+        }
+
+        if (!_orderQueue.TryWrite((update, type)))
+        {
+            // Queue full, force flush and retry
+            FlushBatch();
+            return _orderQueue.TryWrite((update, type));
+        }
+
+        _pendingUpdateCount++;
+
+        // Check if we should flush
+        var elapsedTicks = _batchTimer.ElapsedTicks - _lastFlushTicks;
+        var elapsedMicroseconds = elapsedTicks / TICKS_PER_MICROSECOND;
+
+        if (_pendingUpdateCount >= MAX_BATCH_SIZE || elapsedMicroseconds >= BATCH_INTERVAL_MICROSECONDS)
+        {
+            FlushBatch();
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Queue an OrderUpdate without auto-flushing (MBO mode).
+    /// Use this when processing batches and you'll manually flush at the end.
+    /// Returns true if queued, false if queue is full.
+    /// </summary>
+    public bool QueueOrderUpdateNoFlush(OrderUpdate update, OrderUpdateType type)
+    {
+        if (_isPaused || _mode != DataMode.MBO)
+        {
+            return false;
+        }
+
+        if (!_orderQueue.TryWrite((update, type)))
+        {
+            // Queue full
+            return false;
+        }
+
+        _pendingUpdateCount++;
+        return true;
+    }
+
+    /// <summary>
+    /// Set data mode (PriceLevel vs MBO).
+    /// </summary>
+    public void SetDataMode(DataMode mode, Managers.MBOManager? mboManager)
+    {
+        _mode = mode;
+        _mboManager = mboManager;
+    }
+
+    /// <summary>
     /// Force flush all pending updates immediately.
     /// Call this to ensure all updates are processed.
     /// </summary>
     public void FlushBatch()
     {
+        DebugLog($"UpdateBatcher.FlushBatch CALLED: _pendingUpdateCount={_pendingUpdateCount}, TotalBatchesFlushed={TotalBatchesFlushed}, _mode={_mode}");
+
         if (_pendingUpdateCount == 0)
         {
+            DebugLog("UpdateBatcher.FlushBatch: EARLY RETURN - no pending updates");
             return;
         }
 
         var flushedCount = 0;
 
-        // Process all pending updates in tight loop
-        while (_updateQueue.TryRead(out var update))
+        if (_mode == DataMode.MBO)
         {
-            _orderBook.UpdateLevel(update);
-            flushedCount++;
+            DebugLog($"UpdateBatcher.FlushBatch: Processing MBO mode, _mboManager={(object?)_mboManager != null}");
+            // MBO mode: Process order updates
+            while (_orderQueue.TryRead(out var item))
+            {
+                var (update, type) = item;
+                _mboManager?.ProcessOrderUpdate(update, type);
+                flushedCount++;
+            }
+            DebugLog($"UpdateBatcher.FlushBatch: Flushed {flushedCount} MBO orders");
+        }
+        else
+        {
+            DebugLog("UpdateBatcher.FlushBatch: Processing PriceLevel mode");
+            // PriceLevel mode: Process price level updates
+            while (_updateQueue.TryRead(out var update))
+            {
+                _orderBook.UpdateLevel(update);
+                flushedCount++;
+            }
+            DebugLog($"UpdateBatcher.FlushBatch: Flushed {flushedCount} price levels");
         }
 
         // Update statistics
@@ -170,6 +260,42 @@ public class UpdateBatcher
             SnapshotVisibleLevels,
             FillEmptyLevels
         );
+        snapshot.DirtyChanges = _orderBook.GetDirtyChanges();
+        snapshot.StructuralChange = _orderBook.HasStructuralChange;
+
+        // In MBO mode, add individual orders to snapshot
+        if (_mode == DataMode.MBO && _mboManager != null)
+        {
+            snapshot.BidOrders = _mboManager.GetBidOrders();
+            snapshot.AskOrders = _mboManager.GetAskOrders();
+
+            // Debug: Log first 10 flushes to see when orders appear
+            if (TotalBatchesFlushed <= 10)
+            {
+                if (snapshot.BidOrders == null && snapshot.AskOrders == null)
+                {
+                    DebugLog($"UpdateBatcher.FlushBatch #{TotalBatchesFlushed}: MBO mode, but BidOrders and AskOrders are BOTH NULL");
+                }
+                else if (snapshot.BidOrders != null && snapshot.AskOrders != null)
+                {
+                    var totalOrders = snapshot.BidOrders.Values.Sum(orders => orders.Length) +
+                                      snapshot.AskOrders.Values.Sum(orders => orders.Length);
+                    DebugLog($"UpdateBatcher.FlushBatch #{TotalBatchesFlushed}: MBO mode, BidOrders={snapshot.BidOrders.Count} levels, AskOrders={snapshot.AskOrders.Count} levels, totalOrders={totalOrders}");
+                }
+                else
+                {
+                    DebugLog($"UpdateBatcher.FlushBatch #{TotalBatchesFlushed}: MBO mode, BidOrders={(snapshot.BidOrders != null ? snapshot.BidOrders.Count.ToString() : "NULL")}, AskOrders={(snapshot.AskOrders != null ? snapshot.AskOrders.Count.ToString() : "NULL")}");
+                }
+            }
+        }
+        else
+        {
+            // Debug: Log if not in MBO mode (first 10 flushes)
+            if (TotalBatchesFlushed <= 10)
+            {
+                DebugLog($"UpdateBatcher.FlushBatch #{TotalBatchesFlushed}: mode={_mode}, mboManager={(object?)_mboManager != null}");
+            }
+        }
 
         // Clear dirty flags after snapshot
         _orderBook.ClearDirtyFlags();
@@ -223,6 +349,18 @@ public class UpdateBatcher
     }
 
     /// <summary>
+    /// Clear queued updates without flushing.
+    /// Call only when no producer is writing to the queues.
+    /// </summary>
+    public void ClearPending()
+    {
+        _updateQueue.Clear();
+        _orderQueue.Clear();
+        _pendingUpdateCount = 0;
+        _lastFlushTicks = _batchTimer.ElapsedTicks;
+    }
+
+    /// <summary>
     /// Get current batching performance metrics
     /// </summary>
     public BatchingMetrics GetMetrics()
@@ -244,6 +382,17 @@ public class UpdateBatcher
     private static decimal RoundToTick(decimal price, decimal tickSize)
     {
         return Math.Floor(price / tickSize) * tickSize;
+    }
+
+    [System.Diagnostics.Conditional("DEBUG")]
+    private static void DebugLog(string message)
+    {
+        if (!EnableDebugLogging)
+        {
+            return;
+        }
+
+        System.Diagnostics.Debug.WriteLine(message);
     }
 }
 

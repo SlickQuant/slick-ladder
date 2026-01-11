@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
@@ -157,8 +158,19 @@ public partial class PriceLadderControl : UserControl
                     return;
                 }
 
-                // Use shared renderer (supports scrolling)
-                _parent._renderer!.Render(canvas, _parent._viewModel.CurrentSnapshot.Value, _parent._viewport!);
+                var snapshot = _parent._viewModel.CurrentSnapshot.Value;
+
+                if (_parent._metrics.TraceRenderTimings)
+                {
+                    var start = Stopwatch.GetTimestamp();
+                    _parent._renderer!.Render(canvas, snapshot, _parent._viewport!);
+                    _parent._metrics.RecordRenderTime(Stopwatch.GetTimestamp() - start, in snapshot);
+                }
+                else
+                {
+                    // Use shared renderer (supports scrolling)
+                    _parent._renderer!.Render(canvas, snapshot, _parent._viewport!);
+                }
 
                 // Track FPS
                 _parent._metrics.RecordFrame();

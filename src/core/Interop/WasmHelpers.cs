@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using SlickLadder.Core.Managers;
 using SlickLadder.Core.Models;
 
 namespace SlickLadder.Core.Interop;
@@ -52,6 +53,50 @@ public static class WasmHelpers
             sb.Append($"{{\"price\":{(double)a.Price:G17},\"quantity\":{a.Quantity},\"numOrders\":{a.NumOrders},\"side\":{(int)a.Side}}}");
         }
         sb.Append("],");
+
+        // bidOrders (MBO mode - map of price to Order[])
+        if (snapshot.BidOrders != null)
+        {
+            sb.Append("\"bidOrders\":{");
+            bool firstBidPrice = true;
+            foreach (var kvp in snapshot.BidOrders)
+            {
+                if (!firstBidPrice) sb.Append(",");
+                firstBidPrice = false;
+
+                sb.Append($"\"{(double)kvp.Key:G17}\":[");
+                for (int i = 0; i < kvp.Value.Length; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    var order = kvp.Value[i];
+                    sb.Append($"{{\"orderId\":{order.OrderId},\"quantity\":{order.Quantity},\"priority\":{order.Priority}}}");
+                }
+                sb.Append("]");
+            }
+            sb.Append("},");
+        }
+
+        // askOrders (MBO mode - map of price to Order[])
+        if (snapshot.AskOrders != null)
+        {
+            sb.Append("\"askOrders\":{");
+            bool firstAskPrice = true;
+            foreach (var kvp in snapshot.AskOrders)
+            {
+                if (!firstAskPrice) sb.Append(",");
+                firstAskPrice = false;
+
+                sb.Append($"\"{(double)kvp.Key:G17}\":[");
+                for (int i = 0; i < kvp.Value.Length; i++)
+                {
+                    if (i > 0) sb.Append(",");
+                    var order = kvp.Value[i];
+                    sb.Append($"{{\"orderId\":{order.OrderId},\"quantity\":{order.Quantity},\"priority\":{order.Priority}}}");
+                }
+                sb.Append("]");
+            }
+            sb.Append("},");
+        }
 
         // timestamp
         sb.Append($"\"timestamp\":{snapshot.Timestamp.Ticks}");

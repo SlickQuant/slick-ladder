@@ -1,4 +1,4 @@
-import { BookLevel, Side, OrderBookSnapshot, CanvasColors, DEFAULT_COLORS, RenderMetrics } from './types';
+import { BookLevel, Side, OrderBookSnapshot, CanvasColors, DEFAULT_COLORS, RenderMetrics, Order } from './types';
 
 /**
  * Ultra-fast Canvas 2D renderer optimized for <1ms rendering of dirty regions.
@@ -282,7 +282,9 @@ export class CanvasRenderer {
             if (askIndex >= 0 && askIndex < nonEmptyAsks.length) {
                 const y = currentY + (i * this.rowHeight);
                 if (y >= 0 && y < this.height) {
-                    this.renderRow(Math.floor(y / this.rowHeight), nonEmptyAsks[askIndex]);
+                    const level = nonEmptyAsks[askIndex];
+                    const orders = snapshot.askOrders?.get(level.price);
+                    this.renderRow(Math.floor(y / this.rowHeight), level, orders);
                 }
             }
         }
@@ -294,7 +296,9 @@ export class CanvasRenderer {
             if (bidIndex >= 0 && bidIndex < nonEmptyBids.length) {
                 const y = currentY + (i * this.rowHeight);
                 if (y >= 0 && y < this.height) {
-                    this.renderRow(Math.floor(y / this.rowHeight), nonEmptyBids[bidIndex]);
+                    const level = nonEmptyBids[bidIndex];
+                    const orders = snapshot.bidOrders?.get(level.price);
+                    this.renderRow(Math.floor(y / this.rowHeight), level, orders);
                 }
             }
         }
@@ -371,13 +375,17 @@ export class CanvasRenderer {
 
             const level = levelMap.get(priceKey);
             if (level) {
+                // Get individual orders if available (MBO mode)
+                const orderMap = level.side === Side.BID ? snapshot.bidOrders : snapshot.askOrders;
+                const orders = orderMap?.get(level.price);
+
                 // Render data overlay (quantity, orders, bars)
-                this.renderDataOverlay(rowIndex, level);
+                this.renderDataOverlay(rowIndex, level, orders);
             }
         }
     }
 
-    private renderRow(rowIndex: number, level: BookLevel): void {
+    private renderRow(rowIndex: number, level: BookLevel, orders?: Order[]): void {
         const y = rowIndex * this.rowHeight;
 
         // Prepare text values
@@ -423,9 +431,15 @@ export class CanvasRenderer {
             this.offscreenCtx.fillText(priceText, COL_WIDTH * (priceCol + 0.5), y + this.rowHeight / 2);
 
             // bars (if enabled)
-            if (this.showVolumeBars && barWidth > 0) {
-                this.offscreenCtx.fillStyle = this.colors.bidBar;
-                this.offscreenCtx.fillRect(COL_WIDTH * barCol, y, barWidth, this.rowHeight);
+            if (this.showVolumeBars) {
+                if (orders && orders.length > 0) {
+                    // MBO mode: Draw individual order bars
+                    this.drawIndividualOrders(orders, Side.BID, maxQty, y, level.quantity);
+                } else if (barWidth > 0) {
+                    // PriceLevel mode: Draw single aggregated bar
+                    this.offscreenCtx.fillStyle = this.colors.bidBar;
+                    this.offscreenCtx.fillRect(COL_WIDTH * barCol, y, barWidth, this.rowHeight);
+                }
             }
         } else {
             // ASK: price, ask_qty, ask_order_count, bars
@@ -442,9 +456,15 @@ export class CanvasRenderer {
             }
 
             // bars (if enabled)
-            if (this.showVolumeBars && barWidth > 0) {
-                this.offscreenCtx.fillStyle = this.colors.askBar;
-                this.offscreenCtx.fillRect(COL_WIDTH * barCol, y, barWidth, this.rowHeight);
+            if (this.showVolumeBars) {
+                if (orders && orders.length > 0) {
+                    // MBO mode: Draw individual order bars
+                    this.drawIndividualOrders(orders, Side.ASK, maxQty, y, level.quantity);
+                } else if (barWidth > 0) {
+                    // PriceLevel mode: Draw single aggregated bar
+                    this.offscreenCtx.fillStyle = this.colors.askBar;
+                    this.offscreenCtx.fillRect(COL_WIDTH * barCol, y, barWidth, this.rowHeight);
+                }
             }
         }
 
@@ -478,7 +498,7 @@ export class CanvasRenderer {
     /**
      * Render data overlay (quantity, orders, bars) for a row that has a level
      */
-    private renderDataOverlay(rowIndex: number, level: BookLevel): void {
+    private renderDataOverlay(rowIndex: number, level: BookLevel, orders?: Order[]): void {
         const y = rowIndex * this.rowHeight;
         const qtyText = level.quantity.toLocaleString();
         const ordersText = `(${level.numOrders})`;
@@ -514,9 +534,15 @@ export class CanvasRenderer {
             this.offscreenCtx.fillText(qtyText, COL_WIDTH * (bidQtyCol + 0.5), y + this.rowHeight / 2);
 
             // bars (if enabled)
-            if (this.showVolumeBars && barWidth > 0) {
-                this.offscreenCtx.fillStyle = this.colors.bidBar;
-                this.offscreenCtx.fillRect(COL_WIDTH * barCol, y + 4, barWidth, this.rowHeight - 8);
+            if (this.showVolumeBars) {
+                if (orders && orders.length > 0) {
+                    // MBO mode: Draw individual order bars
+                    this.drawIndividualOrders(orders, Side.BID, maxQty, y, level.quantity);
+                } else if (barWidth > 0) {
+                    // PriceLevel mode: Draw single aggregated bar
+                    this.offscreenCtx.fillStyle = this.colors.bidBar;
+                    this.offscreenCtx.fillRect(COL_WIDTH * barCol, y + 4, barWidth, this.rowHeight - 8);
+                }
             }
         } else {
             // ASK: render ask_qty, ask_order_count, and bars
@@ -530,9 +556,15 @@ export class CanvasRenderer {
             }
 
             // bars (if enabled)
-            if (this.showVolumeBars && barWidth > 0) {
-                this.offscreenCtx.fillStyle = this.colors.askBar;
-                this.offscreenCtx.fillRect(COL_WIDTH * barCol, y + 4, barWidth, this.rowHeight - 8);
+            if (this.showVolumeBars) {
+                if (orders && orders.length > 0) {
+                    // MBO mode: Draw individual order bars
+                    this.drawIndividualOrders(orders, Side.ASK, maxQty, y, level.quantity);
+                } else if (barWidth > 0) {
+                    // PriceLevel mode: Draw single aggregated bar
+                    this.offscreenCtx.fillStyle = this.colors.askBar;
+                    this.offscreenCtx.fillRect(COL_WIDTH * barCol, y + 4, barWidth, this.rowHeight - 8);
+                }
             }
         }
 
@@ -541,6 +573,61 @@ export class CanvasRenderer {
             this.offscreenCtx.strokeStyle = this.colors.ownOrderBorder;
             this.offscreenCtx.lineWidth = 2;
             this.offscreenCtx.strokeRect(0, y + 1, this.width, this.rowHeight - 2);
+        }
+    }
+
+    /**
+     * Draw individual order bars (MBO mode)
+     * Draws bars as horizontally adjacent segments within the row
+     */
+    private drawIndividualOrders(
+        orders: Order[],
+        side: Side,
+        maxQty: number,
+        y: number,
+        levelTotalQuantity: number
+    ): void {
+        if (!orders || orders.length === 0 || !this.showVolumeBars) return;
+
+        const COL_WIDTH = 66.7;
+        let columnCount = 3;
+        if (this.showOrderCount) columnCount += 2;
+        const barCol = columnCount;
+        const barStartX = COL_WIDTH * barCol;
+        const BAR_MAX_WIDTH = COL_WIDTH - 5;
+
+        // Same height as single bar (with padding)
+        const barHeight = this.rowHeight - 8;
+        const fillColor = side === Side.BID ? this.colors.bidBar : this.colors.askBar;
+        const segmentGap = 1; // 1px gap between order segments for visual separation
+
+        // Calculate the total bar width for this level (proportional to maxQty)
+        const levelBarWidth = maxQty > 0 ? (levelTotalQuantity / maxQty) * BAR_MAX_WIDTH : 0;
+
+        let xOffset = barStartX;  // Start at left edge of volume bar column
+        for (let i = 0; i < orders.length; i++) {
+            const order = orders[i];
+
+            // Calculate segment width as proportion of levelBarWidth (not BAR_MAX_WIDTH)
+            // This ensures all orders at this level fit within the level's total bar
+            const segmentProportion = levelTotalQuantity > 0 ? order.quantity / levelTotalQuantity : 0;
+            const barWidth = segmentProportion * levelBarWidth;
+
+            // Subtract gap from bar width to create visual separation
+            const segmentWidth = Math.max(0, barWidth - segmentGap);
+
+            // Draw individual order bar as a segment with gap
+            if (segmentWidth > 0) {
+                this.offscreenCtx.fillStyle = fillColor;
+                this.offscreenCtx.fillRect(xOffset, y + 4, segmentWidth, barHeight);
+            }
+
+            // Move to the right for next bar segment (full barWidth includes gap)
+            xOffset += barWidth;
+
+            // Stop if we've exceeded the level's total bar width
+            if (xOffset >= barStartX + levelBarWidth)
+                break;
         }
     }
 

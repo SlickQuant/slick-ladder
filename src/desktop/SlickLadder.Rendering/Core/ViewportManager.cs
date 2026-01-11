@@ -25,7 +25,7 @@ public class ViewportManager
     public float AskOrderCountColumnX => ColumnWidth * 4; // Always column 4
 
     public float? VolumeBarColumnX => ShowVolumeBars ? ColumnWidth * ColumnCount : null;
-    public float VolumeBarMaxWidth => RenderConfig.ColumnWidth - 5; // Matches web: COL_WIDTH - 5
+    public float VolumeBarMaxWidth => (RenderConfig.ColumnWidth * RenderConfig.VolumeBarWidthMultiplier) - 5;
 
     // Viewport state
     public decimal CenterPrice { get; set; } = 50000.00m;

@@ -23,6 +23,26 @@ export interface PriceLevel {
     numOrders: number;
 }
 
+export interface Order {
+    orderId: number;
+    quantity: number;
+    priority: number;
+}
+
+export enum OrderUpdateType {
+    Add = 0,
+    Modify = 1,
+    Delete = 2
+}
+
+export interface OrderUpdate {
+    orderId: number;
+    side: Side;
+    price: number;
+    quantity: number;
+    priority: number;
+}
+
 export interface OrderBookSnapshot {
     bestBid: number | null;
     bestAsk: number | null;
@@ -30,6 +50,10 @@ export interface OrderBookSnapshot {
     bids: BookLevel[];
     asks: BookLevel[];
     timestamp: number;
+
+    // MBO mode: Individual orders per price level (null in PriceLevel mode)
+    bidOrders?: Map<number, Order[]> | null;
+    askOrders?: Map<number, Order[]> | null;
 }
 
 export interface PriceLadderConfig {

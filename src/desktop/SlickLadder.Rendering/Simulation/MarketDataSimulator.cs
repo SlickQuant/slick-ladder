@@ -1,6 +1,7 @@
 using SlickLadder.Core;
 using SlickLadder.Core.Models;
 using System;
+using System.Threading;
 using SystemTimer = System.Timers.Timer;
 
 namespace SlickLadder.Rendering.Simulation;
@@ -11,12 +12,34 @@ namespace SlickLadder.Rendering.Simulation;
 /// </summary>
 public class MarketDataSimulator : IDisposable
 {
+    private const int TargetTotalOrders = 1500;
+    private const int MaxOrdersPerLevel = 25;
+    private const int MinOrderQuantity = 50;
+    private const int MidOrderQuantity = 500;
+    private const int MaxOrderQuantity = 20000;
+    private const int LevelRemovalChancePercent = 4;
+
     private readonly PriceLadderCore _core;
     private SystemTimer? _timer;
     private int _updatesPerSecond = 100;
     private decimal _basePrice = 50000.00m;
     private decimal _tickSize = 0.01m;
     private readonly Random _random = new();
+    private bool _useMBOMode = false;
+    private volatile bool _isRunning = false;
+    private int _batchInProgress;
+
+    // MBO mode tracking
+    private readonly Dictionary<decimal, List<long>> _ordersByPrice = new();
+    private long _nextOrderId = 1;
+    private int _totalOrders = 0;
+
+    private enum MboAction
+    {
+        Add,
+        Modify,
+        Delete
+    }
 
     public int UpdatesPerSecond
     {
@@ -43,7 +66,13 @@ public class MarketDataSimulator : IDisposable
         set => _tickSize = value;
     }
 
-    public bool IsRunning => _timer != null;
+    public bool IsRunning => _isRunning;
+
+    public bool UseMBOMode
+    {
+        get => _useMBOMode;
+        set => _useMBOMode = value;
+    }
 
     public MarketDataSimulator(PriceLadderCore core, decimal tickSize = 0.01m)
     {
@@ -53,18 +82,36 @@ public class MarketDataSimulator : IDisposable
 
     public void Start()
     {
-        if (_timer != null) return;
+        System.Diagnostics.Debug.WriteLine($"MarketDataSimulator.Start CALLED: _useMBOMode={_useMBOMode}, _isRunning={_isRunning}");
 
-        // Initialize critical price levels to ensure they appear immediately
-        // Seed first few ask levels explicitly using tick size
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, _basePrice + _tickSize, 5000, 15));
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, _basePrice + _tickSize * 2, 4500, 12));
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, _basePrice + _tickSize * 3, 4000, 10));
+        if (_isRunning)
+        {
+            System.Diagnostics.Debug.WriteLine("MarketDataSimulator.Start: EARLY RETURN - already running");
+            return;
+        }
 
-        // Seed first few bid levels explicitly using tick size
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, _basePrice, 5000, 15));
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, _basePrice - _tickSize, 4800, 14));
-        _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, _basePrice - _tickSize * 2, 4600, 13));
+        _isRunning = true;
+
+        if (_useMBOMode)
+        {
+            System.Diagnostics.Debug.WriteLine("MarketDataSimulator.Start: MBO mode - seeding orders");
+            // MBO mode: Seed with individual orders
+            SeedMBOOrders();
+        }
+        else
+        {
+            System.Diagnostics.Debug.WriteLine("MarketDataSimulator.Start: PriceLevel mode - seeding levels");
+            // PriceLevel mode: Seed with aggregated price levels
+            _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, _basePrice + _tickSize, 5000, 15));
+            _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, _basePrice + _tickSize * 2, 4500, 12));
+            _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.ASK, _basePrice + _tickSize * 3, 4000, 10));
+
+            _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, _basePrice, 5000, 15));
+            _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, _basePrice - _tickSize, 4800, 14));
+            _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(Side.BID, _basePrice - _tickSize * 2, 4600, 13));
+        }
+
+        System.Diagnostics.Debug.WriteLine("MarketDataSimulator.Start: Calling Flush()");
         _core.Flush();
 
         var (batchSize, intervalMs) = CalculateBatchParams(_updatesPerSecond);
@@ -77,11 +124,21 @@ public class MarketDataSimulator : IDisposable
 
     public void Stop()
     {
-        if (_timer == null) return;
+        if (!_isRunning) return;
 
-        _timer.Stop();
-        _timer.Dispose();
-        _timer = null;
+        _isRunning = false;
+
+        if (_timer != null)
+        {
+            _timer.Stop();
+            _timer.Dispose();
+            _timer = null;
+        }
+
+        if (Interlocked.CompareExchange(ref _batchInProgress, 0, 0) == 0)
+        {
+            _core.ClearPendingUpdates();
+        }
     }
 
     private void Restart()
@@ -115,8 +172,43 @@ public class MarketDataSimulator : IDisposable
 
     private void GenerateBatch(int batchSize)
     {
+        // Check if still running (prevents race condition with Stop)
+        if (!_isRunning) return;
+
+        if (Interlocked.Exchange(ref _batchInProgress, 1) == 1)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!_isRunning) return;
+
+            if (_useMBOMode)
+            {
+                GenerateMBOBatch(batchSize);
+            }
+            else
+            {
+                GeneratePriceLevelBatch(batchSize);
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _batchInProgress, 0);
+        }
+    }
+
+    private void GeneratePriceLevelBatch(int batchSize)
+    {
         for (int i = 0; i < batchSize; i++)
         {
+            if (!_isRunning)
+            {
+                _core.ClearPendingUpdates();
+                return;
+            }
+
             var side = _random.Next(2) == 0 ? Side.BID : Side.ASK;
             var price = GeneratePrice(side);
 
@@ -138,7 +230,170 @@ public class MarketDataSimulator : IDisposable
             _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(side, price, qty, numOrders));
         }
 
+        if (!_isRunning)
+        {
+            _core.ClearPendingUpdates();
+            return;
+        }
+
         _core.Flush();
+    }
+
+    private void GenerateMBOBatch(int batchSize)
+    {
+        for (int i = 0; i < batchSize; i++)
+        {
+            if (!_isRunning)
+            {
+                _core.ClearPendingUpdates();
+                return;
+            }
+
+            var hasExistingOrders = _ordersByPrice.Count > 0;
+            var action = ChooseMboAction(hasExistingOrders);
+
+            switch (action)
+            {
+                case MboAction.Add:
+                    AddRandomOrder(hasExistingOrders);
+                    break;
+                case MboAction.Modify:
+                    ModifyRandomOrder();
+                    break;
+                case MboAction.Delete:
+                    DeleteRandomOrder();
+                    break;
+            }
+        }
+
+        if (!_isRunning)
+        {
+            _core.ClearPendingUpdates();
+            return;
+        }
+
+        _core.Flush();
+    }
+
+    private bool HasOrdersAtPrice(decimal price)
+    {
+        return _ordersByPrice.TryGetValue(price, out var orders) && orders.Count > 0;
+    }
+
+    private long GetRandomOrderAtPrice(decimal price)
+    {
+        if (!_ordersByPrice.TryGetValue(price, out var orders) || orders.Count == 0)
+        {
+            return 0;
+        }
+
+        // Create snapshot to avoid race condition if list is modified
+        var orderArray = orders.ToArray();
+        if (orderArray.Length == 0)
+        {
+            return 0;
+        }
+
+        var index = _random.Next(orderArray.Length);
+        return orderArray[index];
+    }
+
+    private (decimal price, long orderId) GetRandomOrder()
+    {
+        if (_ordersByPrice.Count == 0)
+        {
+            return (0, 0);
+        }
+
+        // Pick a random price level (snapshot to avoid race condition)
+        var prices = _ordersByPrice.Keys.ToArray();
+        if (prices.Length == 0)
+        {
+            return (0, 0);
+        }
+
+        var randomPrice = prices[_random.Next(prices.Length)];
+
+        // Pick a random order at that price
+        var orderId = GetRandomOrderAtPrice(randomPrice);
+        return (randomPrice, orderId);
+    }
+
+    private Side GetSideForPrice(decimal price)
+    {
+        // Determine side based on price relative to base price
+        return price >= _basePrice ? Side.ASK : Side.BID;
+    }
+
+    private void TrackOrder(long orderId, decimal price)
+    {
+        if (!_ordersByPrice.TryGetValue(price, out var orders))
+        {
+            orders = new List<long>();
+            _ordersByPrice[price] = orders;
+        }
+        orders.Add(orderId);
+        _totalOrders++;
+    }
+
+    private void UntrackOrder(long orderId, decimal price)
+    {
+        if (_ordersByPrice.TryGetValue(price, out var orders))
+        {
+            if (orders.Remove(orderId))
+            {
+                _totalOrders = Math.Max(0, _totalOrders - 1);
+            }
+            if (orders.Count == 0)
+            {
+                _ordersByPrice.Remove(price);
+            }
+        }
+    }
+
+    private void SeedMBOOrders()
+    {
+        // Seed asks with multiple orders per level
+        for (int levelOffset = 1; levelOffset <= 3; levelOffset++)
+        {
+            var price = _basePrice + _tickSize * levelOffset;
+            var ordersPerLevel = 10 + levelOffset * 2;
+
+            for (int i = 0; i < ordersPerLevel; i++)
+            {
+                var orderId = _nextOrderId++;
+                var quantity = NextOrderQuantity();
+                var priority = DateTime.UtcNow.Ticks + i;
+
+                _core.ProcessOrderUpdateNoFlush(
+                    new OrderUpdate(orderId, Side.ASK, price, quantity, priority),
+                    OrderUpdateType.Add
+                );
+
+                TrackOrder(orderId, price);
+            }
+        }
+
+        // Seed bids with multiple orders per level
+        for (int levelOffset = 0; levelOffset < 3; levelOffset++)
+        {
+            var price = _basePrice - _tickSize * levelOffset;
+            var ordersPerLevel = 12 + levelOffset * 2;
+
+            for (int i = 0; i < ordersPerLevel; i++)
+            {
+                var orderId = _nextOrderId++;
+                var quantity = NextOrderQuantity();
+                var priority = DateTime.UtcNow.Ticks + i;
+
+                _core.ProcessOrderUpdateNoFlush(
+                    new OrderUpdate(orderId, Side.BID, price, quantity, priority),
+                    OrderUpdateType.Add
+                );
+
+                TrackOrder(orderId, price);
+            }
+        }
     }
 
     private decimal GeneratePrice(Side side)
@@ -165,6 +420,156 @@ public class MarketDataSimulator : IDisposable
 
         // Round to tick size to avoid floating-point precision issues
         return Math.Round(price / _tickSize) * _tickSize;
+    }
+
+    private MboAction ChooseMboAction(bool hasExistingOrders)
+    {
+        if (!hasExistingOrders)
+        {
+            return MboAction.Add;
+        }
+
+        var upperBound = TargetTotalOrders + (TargetTotalOrders / 5);
+        var lowerBound = TargetTotalOrders - (TargetTotalOrders / 5);
+
+        if (_totalOrders >= upperBound)
+        {
+            return _random.Next(100) < 70 ? MboAction.Delete : MboAction.Modify;
+        }
+
+        if (_totalOrders <= lowerBound)
+        {
+            return _random.Next(100) < 70 ? MboAction.Add : MboAction.Modify;
+        }
+
+        var roll = _random.Next(100);
+        if (roll < 40)
+        {
+            return MboAction.Add;
+        }
+        if (roll < 75)
+        {
+            return MboAction.Modify;
+        }
+        return MboAction.Delete;
+    }
+
+    private void AddRandomOrder(bool hasExistingOrders)
+    {
+        if (hasExistingOrders && _totalOrders >= TargetTotalOrders + (TargetTotalOrders / 2))
+        {
+            DeleteRandomOrder();
+            return;
+        }
+
+        var side = _random.Next(2) == 0 ? Side.BID : Side.ASK;
+        var price = FindPriceWithCapacity(side);
+
+        if (!price.HasValue)
+        {
+            ModifyRandomOrder();
+            return;
+        }
+
+        var orderId = _nextOrderId++;
+        var quantity = NextOrderQuantity();
+        var priority = DateTime.UtcNow.Ticks;
+
+        _core.ProcessOrderUpdateNoFlush(
+            new OrderUpdate(orderId, side, price.Value, quantity, priority),
+            OrderUpdateType.Add
+        );
+
+        TrackOrder(orderId, price.Value);
+    }
+
+    private void ModifyRandomOrder()
+    {
+        var (price, orderId) = GetRandomOrder();
+        if (orderId == 0)
+        {
+            return;
+        }
+
+        var newQuantity = NextOrderQuantity();
+        var side = GetSideForPrice(price);
+
+        _core.ProcessOrderUpdateNoFlush(
+            new OrderUpdate(orderId, side, price, newQuantity, 0),
+            OrderUpdateType.Modify
+        );
+    }
+
+    private void DeleteRandomOrder()
+    {
+        var (price, orderId) = GetRandomOrder();
+        if (orderId == 0)
+        {
+            return;
+        }
+
+        if (_ordersByPrice.TryGetValue(price, out var orders))
+        {
+            if (orders.Count <= 1 || _random.Next(100) < LevelRemovalChancePercent)
+            {
+                var side = GetSideForPrice(price);
+                var snapshot = orders.ToArray();
+                for (int i = 0; i < snapshot.Length; i++)
+                {
+                    var id = snapshot[i];
+                    _core.ProcessOrderUpdateNoFlush(
+                        new OrderUpdate(id, side, price, 0, 0),
+                        OrderUpdateType.Delete
+                    );
+                    UntrackOrder(id, price);
+                }
+                return;
+            }
+        }
+
+        var deleteSide = GetSideForPrice(price);
+        _core.ProcessOrderUpdateNoFlush(
+            new OrderUpdate(orderId, deleteSide, price, 0, 0),
+            OrderUpdateType.Delete
+        );
+
+        UntrackOrder(orderId, price);
+    }
+
+    private decimal? FindPriceWithCapacity(Side side)
+    {
+        for (int attempt = 0; attempt < 6; attempt++)
+        {
+            var price = GeneratePrice(side);
+            if (!_ordersByPrice.TryGetValue(price, out var orders) || orders.Count < MaxOrdersPerLevel)
+            {
+                return price;
+            }
+        }
+
+        foreach (var kvp in _ordersByPrice)
+        {
+            if (GetSideForPrice(kvp.Key) == side && kvp.Value.Count < MaxOrdersPerLevel)
+            {
+                return kvp.Key;
+            }
+        }
+
+        return null;
+    }
+
+    private long NextOrderQuantity()
+    {
+        var roll = _random.Next(100);
+        if (roll < 60)
+        {
+            return _random.Next(MinOrderQuantity, MidOrderQuantity + 1);
+        }
+        if (roll < 90)
+        {
+            return _random.Next(MidOrderQuantity, 5000);
+        }
+        return _random.Next(5000, MaxOrderQuantity + 1);
     }
 
     public void Dispose()

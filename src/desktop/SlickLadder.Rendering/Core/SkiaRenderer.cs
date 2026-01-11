@@ -1,7 +1,9 @@
 using SkiaSharp;
 using SlickLadder.Core;
+using SlickLadder.Core.Managers;
 using SlickLadder.Core.Models;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace SlickLadder.Rendering.Core;
@@ -18,6 +20,7 @@ public class SkiaRenderer : IDisposable
     private readonly SKPaint _askBackgroundPaint;
     private readonly SKPaint _priceBackgroundPaint;
     private readonly SKPaint _orderCountBackgroundPaint;
+    private readonly SKPaint _backgroundPaint;
     private readonly SKPaint _textPaint;
     private readonly SKPaint _bidVolumePaint;
     private readonly SKPaint _askVolumePaint;
@@ -25,6 +28,17 @@ public class SkiaRenderer : IDisposable
     private readonly SKPaint _highlightPaint;
 
     private readonly RenderConfig _config;
+    private SKSurface? _cachedSurface;
+    private int _cachedWidth;
+    private int _cachedHeight;
+    private bool _needsFullRedraw = true;
+    private LevelRemovalMode _lastRemovalMode;
+    private bool _lastShowOrderCount;
+    private bool _lastShowVolumeBars;
+    private decimal _lastTickSize;
+    private decimal _lastReferencePrice;
+    private int _lastDensePackingScrollOffset;
+    private decimal _lastCenterPrice;
 
     public SkiaRenderer(RenderConfig config)
     {
@@ -35,6 +49,7 @@ public class SkiaRenderer : IDisposable
         _askBackgroundPaint = new SKPaint { Color = _config.AskBackground, Style = SKPaintStyle.Fill };
         _priceBackgroundPaint = new SKPaint { Color = _config.PriceBackground, Style = SKPaintStyle.Fill };
         _orderCountBackgroundPaint = new SKPaint { Color = _config.OrderCountBackground, Style = SKPaintStyle.Fill };
+        _backgroundPaint = new SKPaint { Color = _config.BackgroundColor, Style = SKPaintStyle.Fill };
 
         _textPaint = new SKPaint
         {
@@ -69,14 +84,8 @@ public class SkiaRenderer : IDisposable
     /// </summary>
     public void Render(SKCanvas canvas, OrderBookSnapshot snapshot, ViewportManager viewport)
     {
-        // Clear background
-        canvas.Clear(_config.BackgroundColor);
-
-        // Draw column backgrounds
-        DrawColumnBackgrounds(canvas, viewport);
-
-        // Draw grid lines
-        DrawGridLines(canvas, viewport);
+        EnsureCache(viewport.Width, viewport.Height);
+        var targetCanvas = _cachedSurface!.Canvas;
 
         // Calculate max volume for proportional bars
         var maxVolume = 0L;
@@ -91,175 +100,24 @@ public class SkiaRenderer : IDisposable
         var visibleRows = (viewport.Height + RenderConfig.RowHeight - 1) / RenderConfig.RowHeight;
         var midRow = visibleRows / 2;
         var tickSize = viewport.TickSize;
+        var referencePrice = viewport.CenterPrice != 0
+            ? viewport.CenterPrice
+            : (snapshot.MidPrice ?? 50000m);
 
-        if (viewport.RemovalMode == LevelRemovalMode.RemoveRow)
+        var fullRedraw = ShouldFullRedraw(snapshot, viewport, referencePrice);
+        if (fullRedraw)
         {
-            // DENSE PACKING MODE: Render levels consecutively without gaps
-            // Filter out empty levels and pack remaining levels together
-            var nonEmptyAsks = snapshot.Asks.Where(l => l.Quantity > 0).ToArray();
-            var nonEmptyBids = snapshot.Bids.Where(l => l.Quantity > 0).ToArray();
-
-            // Use row-based scroll offset for dense packing
-            // scrollOffset directly controls position: 0 = centered at spread
-            // scrollOffset > 0: scrolled down (show more bids)
-            // scrollOffset < 0: scrolled up (show more asks)
-            var scrollOffset = viewport.DensePackingScrollOffset;
-
-            // Both arrays sorted low-to-high (index 0 = lowest price, end = highest price)
-            // Strategy: Keep the spread (ask/bid boundary) stable at midRow when scrollOffset = 0
-            // The spread should always be at the center of the viewport regardless of data changes
-
-            var totalLevels = nonEmptyAsks.Length + nonEmptyBids.Length;
-
-            // At scrollOffset = 0, the spread is at midRow
-            // startAskIndex should show the last few asks (highest prices) above midRow
-            // startBidIndex should show the first few bids (highest prices) below midRow
-            // scrollOffset adjusts from this centered position
-            var virtualTopRow = nonEmptyAsks.Length - midRow + scrollOffset;
-
-            // Clamp virtualTopRow to allow continuous scrolling with empty space
-            // Allow scrolling beyond data boundaries
-            var virtualBottomRow = virtualTopRow + visibleRows;
-
-            int startAskIndex, askRowsToRender;
-            int startBidIndex, bidRowsToRender;
-            float topOffset = 0;
-
-            // Calculate which part of asks/bids to show based on virtual scroll position
-            if (virtualTopRow < 0)
-            {
-                // Scrolled above all data, empty space at top
-                topOffset = -virtualTopRow * RenderConfig.RowHeight;
-                startAskIndex = 0;
-                askRowsToRender = Math.Min(nonEmptyAsks.Length, Math.Max(0, visibleRows + virtualTopRow));
-                startBidIndex = 0;
-                var bidRowsAvailable = Math.Max(0, visibleRows + virtualTopRow - nonEmptyAsks.Length);
-                bidRowsToRender = Math.Min(nonEmptyBids.Length, bidRowsAvailable);
-            }
-            else if (virtualTopRow < nonEmptyAsks.Length)
-            {
-                // Showing some asks at top
-                startAskIndex = virtualTopRow;
-                askRowsToRender = Math.Min(nonEmptyAsks.Length - startAskIndex, visibleRows);
-                startBidIndex = 0;
-                var bidRowsAvailable = visibleRows - askRowsToRender;
-                bidRowsToRender = Math.Min(nonEmptyBids.Length, bidRowsAvailable);
-            }
-            else if (virtualTopRow < totalLevels)
-            {
-                // Past all asks, showing only bids
-                startAskIndex = nonEmptyAsks.Length;
-                askRowsToRender = 0;
-                var bidStartRow = virtualTopRow - nonEmptyAsks.Length;
-                startBidIndex = bidStartRow;
-                bidRowsToRender = Math.Min(nonEmptyBids.Length - startBidIndex, visibleRows);
-            }
-            else
-            {
-                // Scrolled past all data, empty space at bottom
-                startAskIndex = nonEmptyAsks.Length;
-                askRowsToRender = 0;
-                startBidIndex = nonEmptyBids.Length;
-                bidRowsToRender = 0;
-            }
-
-            // Render asks: highest ask at top, lowest ask (closest to mid) at bottom of ask section
-            float currentY = topOffset;
-            for (int i = 0; i < askRowsToRender; i++)
-            {
-                var askIndex = nonEmptyAsks.Length - 1 - startAskIndex - i; // Start from highest remaining ask
-                if (askIndex >= 0 && askIndex < nonEmptyAsks.Length)
-                {
-                    var y = currentY + (i * RenderConfig.RowHeight);
-
-                    // Only render if visible on screen
-                    if (y >= 0 && y < viewport.Height)
-                    {
-                        DrawAskLevel(canvas, nonEmptyAsks[askIndex], viewport, maxVolume, y);
-                    }
-                }
-            }
-
-            // Render bids: highest bid (closest to mid) at top of bid section, going down
-            currentY = topOffset + (askRowsToRender * RenderConfig.RowHeight);
-            for (int i = 0; i < bidRowsToRender; i++)
-            {
-                var bidIndex = nonEmptyBids.Length - 1 - startBidIndex - i; // Start from highest bid
-                if (bidIndex >= 0 && bidIndex < nonEmptyBids.Length)
-                {
-                    var y = currentY + (i * RenderConfig.RowHeight);
-
-                    // Only render if visible on screen
-                    if (y >= 0 && y < viewport.Height)
-                    {
-                        DrawBidLevel(canvas, nonEmptyBids[bidIndex], viewport, maxVolume, y);
-                    }
-                }
-            }
+            RenderFull(targetCanvas, snapshot, viewport, maxVolume, visibleRows, midRow, tickSize, referencePrice);
         }
         else
         {
-            // PRICE-TO-ROW MAPPING MODE: Each price maps to fixed row (shows gaps for empty levels)
-            // Determine reference price (viewport center or mid market)
-            var referencePrice = viewport.CenterPrice != 0
-                ? viewport.CenterPrice
-                : (snapshot.MidPrice ?? 50000m);
-
-            // Step 1: Render all price labels for visible rows (shows gaps)
-            // This matches web version: render all prices first, then overlay data
-            for (int rowIndex = 0; rowIndex <= visibleRows; rowIndex++)
-            {
-                // Calculate what price this row represents
-                var rowOffset = rowIndex - midRow;
-                var price = referencePrice - (rowOffset * tickSize); // Negative because higher rows = higher prices
-
-                // Round to tick size to avoid floating-point precision issues
-                price = Math.Round(price / tickSize) * tickSize;
-
-                var y = rowIndex * RenderConfig.RowHeight;
-                var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
-
-                // Draw price label in center column
-                canvas.DrawText(
-                    price.ToString("F2"),
-                    viewport.PriceColumnX + (viewport.ColumnWidth / 2),
-                    textY,
-                    _textPaint);
-            }
-
-            // Step 2: Overlay quantity data for levels that exist
-            // Render all ask levels, mapping price to screen row
-            foreach (var level in snapshot.Asks)
-            {
-                // Calculate row: higher prices appear at lower row indices (top of screen)
-                var priceDelta = level.Price - referencePrice;
-                var rowOffset = -(int)Math.Round(priceDelta / tickSize);
-                var rowIndex = midRow + rowOffset;
-
-                // Only render if visible on screen
-                if (rowIndex >= 0 && rowIndex <= visibleRows)
-                {
-                    var y = rowIndex * RenderConfig.RowHeight;
-                    DrawAskLevelQuantity(canvas, level, viewport, maxVolume, y);
-                }
-            }
-
-            // Render all bid levels, mapping price to screen row
-            foreach (var level in snapshot.Bids)
-            {
-                // Calculate row: higher prices appear at lower row indices (top of screen)
-                var priceDelta = level.Price - referencePrice;
-                var rowOffset = -(int)Math.Round(priceDelta / tickSize);
-                var rowIndex = midRow + rowOffset;
-
-                // Only render if visible on screen
-                if (rowIndex >= 0 && rowIndex <= visibleRows)
-                {
-                    var y = rowIndex * RenderConfig.RowHeight;
-                    DrawBidLevelQuantity(canvas, level, viewport, maxVolume, y);
-                }
-            }
+            RenderDirty(targetCanvas, snapshot, viewport, maxVolume, visibleRows, midRow, tickSize, referencePrice);
         }
+
+        using var image = _cachedSurface!.Snapshot();
+        canvas.DrawImage(image, 0, 0);
+
+        UpdateLastState(snapshot, viewport, referencePrice);
     }
 
     private void DrawColumnBackgrounds(SKCanvas canvas, ViewportManager viewport)
@@ -303,6 +161,589 @@ public class SkiaRenderer : IDisposable
         }
     }
 
+    private void DrawRowBackgrounds(SKCanvas canvas, ViewportManager viewport, float y)
+    {
+        canvas.DrawRect(0, y, viewport.Width, RenderConfig.RowHeight, _backgroundPaint);
+
+        if (viewport.ShowOrderCount)
+        {
+            canvas.DrawRect(
+                viewport.BidOrderCountColumnX, y,
+                viewport.ColumnWidth, RenderConfig.RowHeight,
+                _orderCountBackgroundPaint);
+        }
+
+        canvas.DrawRect(
+            viewport.BidQtyColumnX, y,
+            viewport.ColumnWidth, RenderConfig.RowHeight,
+            _bidBackgroundPaint);
+
+        canvas.DrawRect(
+            viewport.PriceColumnX, y,
+            viewport.ColumnWidth, RenderConfig.RowHeight,
+            _priceBackgroundPaint);
+
+        canvas.DrawRect(
+            viewport.AskQtyColumnX, y,
+            viewport.ColumnWidth, RenderConfig.RowHeight,
+            _askBackgroundPaint);
+
+        if (viewport.ShowOrderCount)
+        {
+            canvas.DrawRect(
+                viewport.AskOrderCountColumnX, y,
+                viewport.ColumnWidth, RenderConfig.RowHeight,
+                _orderCountBackgroundPaint);
+        }
+    }
+
+    private void DrawRowGridLines(SKCanvas canvas, ViewportManager viewport, float y)
+    {
+        var bottomY = y + RenderConfig.RowHeight;
+        canvas.DrawLine(0, y, viewport.Width, y, _gridLinePaint);
+        if (bottomY <= viewport.Height)
+        {
+            canvas.DrawLine(0, bottomY, viewport.Width, bottomY, _gridLinePaint);
+        }
+    }
+
+    private void EnsureCache(int width, int height)
+    {
+        if (_cachedSurface != null && _cachedWidth == width && _cachedHeight == height)
+        {
+            return;
+        }
+
+        _cachedSurface?.Dispose();
+        _cachedSurface = SKSurface.Create(new SKImageInfo(width, height));
+        _cachedWidth = width;
+        _cachedHeight = height;
+        _needsFullRedraw = true;
+    }
+
+    private bool ShouldFullRedraw(OrderBookSnapshot snapshot, ViewportManager viewport, decimal referencePrice)
+    {
+        if (_needsFullRedraw || snapshot.DirtyChanges == null)
+        {
+            return true;
+        }
+
+        if (_lastRemovalMode != viewport.RemovalMode ||
+            _lastShowOrderCount != viewport.ShowOrderCount ||
+            _lastShowVolumeBars != viewport.ShowVolumeBars ||
+            _lastTickSize != viewport.TickSize)
+        {
+            return true;
+        }
+
+        if (viewport.RemovalMode == LevelRemovalMode.RemoveRow)
+        {
+            if (_lastDensePackingScrollOffset != viewport.DensePackingScrollOffset)
+            {
+                return true;
+            }
+        }
+        else
+        {
+            if (_lastReferencePrice != referencePrice || _lastCenterPrice != viewport.CenterPrice)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void UpdateLastState(OrderBookSnapshot snapshot, ViewportManager viewport, decimal referencePrice)
+    {
+        _needsFullRedraw = false;
+        _lastRemovalMode = viewport.RemovalMode;
+        _lastShowOrderCount = viewport.ShowOrderCount;
+        _lastShowVolumeBars = viewport.ShowVolumeBars;
+        _lastTickSize = viewport.TickSize;
+        _lastReferencePrice = referencePrice;
+        _lastDensePackingScrollOffset = viewport.DensePackingScrollOffset;
+        _lastCenterPrice = viewport.CenterPrice;
+    }
+
+    private void RenderFull(
+        SKCanvas canvas,
+        OrderBookSnapshot snapshot,
+        ViewportManager viewport,
+        long maxVolume,
+        int visibleRows,
+        int midRow,
+        decimal tickSize,
+        decimal referencePrice)
+    {
+        canvas.Clear(_config.BackgroundColor);
+        DrawColumnBackgrounds(canvas, viewport);
+        DrawGridLines(canvas, viewport);
+
+        if (viewport.RemovalMode == LevelRemovalMode.RemoveRow)
+        {
+            var layout = BuildDensePackingLayout(snapshot, viewport, visibleRows, midRow);
+
+            float currentY = layout.TopOffset;
+            for (int i = 0; i < layout.AskRowsToRender; i++)
+            {
+                var askIndex = layout.NonEmptyAsks.Length - 1 - layout.StartAskIndex - i;
+                if (askIndex >= 0 && askIndex < layout.NonEmptyAsks.Length)
+                {
+                    var y = currentY + (i * RenderConfig.RowHeight);
+                    if (y >= 0 && y < viewport.Height)
+                    {
+                        var level = layout.NonEmptyAsks[askIndex];
+                        Order[]? orders = null;
+                        snapshot.AskOrders?.TryGetValue(level.Price, out orders);
+                        DrawAskLevel(canvas, level, viewport, maxVolume, y, orders);
+                    }
+                }
+            }
+
+            currentY = layout.TopOffset + (layout.AskRowsToRender * RenderConfig.RowHeight);
+            for (int i = 0; i < layout.BidRowsToRender; i++)
+            {
+                var bidIndex = layout.NonEmptyBids.Length - 1 - layout.StartBidIndex - i;
+                if (bidIndex >= 0 && bidIndex < layout.NonEmptyBids.Length)
+                {
+                    var y = currentY + (i * RenderConfig.RowHeight);
+                    if (y >= 0 && y < viewport.Height)
+                    {
+                        var level = layout.NonEmptyBids[bidIndex];
+                        Order[]? orders = null;
+                        snapshot.BidOrders?.TryGetValue(level.Price, out orders);
+                        DrawBidLevel(canvas, level, viewport, maxVolume, y, orders);
+                    }
+                }
+            }
+        }
+        else
+        {
+            for (int rowIndex = 0; rowIndex <= visibleRows; rowIndex++)
+            {
+                var rowOffset = rowIndex - midRow;
+                var price = referencePrice - (rowOffset * tickSize);
+                price = Math.Round(price / tickSize) * tickSize;
+
+                var y = rowIndex * RenderConfig.RowHeight;
+                var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
+
+                canvas.DrawText(
+                    price.ToString("F2"),
+                    viewport.PriceColumnX + (viewport.ColumnWidth / 2),
+                    textY,
+                    _textPaint);
+            }
+
+            foreach (var level in snapshot.Asks)
+            {
+                var priceDelta = level.Price - referencePrice;
+                var rowOffset = -(int)Math.Round(priceDelta / tickSize);
+                var rowIndex = midRow + rowOffset;
+
+                if (rowIndex >= 0 && rowIndex <= visibleRows)
+                {
+                    var y = rowIndex * RenderConfig.RowHeight;
+                    Order[]? orders = null;
+                    snapshot.AskOrders?.TryGetValue(level.Price, out orders);
+                    DrawAskLevelQuantity(canvas, level, viewport, maxVolume, y, orders);
+                }
+            }
+
+            foreach (var level in snapshot.Bids)
+            {
+                var priceDelta = level.Price - referencePrice;
+                var rowOffset = -(int)Math.Round(priceDelta / tickSize);
+                var rowIndex = midRow + rowOffset;
+
+                if (rowIndex >= 0 && rowIndex <= visibleRows)
+                {
+                    var y = rowIndex * RenderConfig.RowHeight;
+                    Order[]? orders = null;
+                    snapshot.BidOrders?.TryGetValue(level.Price, out orders);
+                    DrawBidLevelQuantity(canvas, level, viewport, maxVolume, y, orders);
+                }
+            }
+        }
+    }
+
+    private void RenderDirty(
+        SKCanvas canvas,
+        OrderBookSnapshot snapshot,
+        ViewportManager viewport,
+        long maxVolume,
+        int visibleRows,
+        int midRow,
+        decimal tickSize,
+        decimal referencePrice)
+    {
+        if (snapshot.DirtyChanges == null || snapshot.DirtyChanges.Length == 0)
+        {
+            return;
+        }
+
+        var dirtyRows = new HashSet<int>();
+
+        DensePackingLayout? denseLayout = null;
+        if (viewport.RemovalMode == LevelRemovalMode.RemoveRow)
+        {
+            denseLayout = BuildDensePackingLayout(snapshot, viewport, visibleRows, midRow);
+        }
+
+        foreach (var change in snapshot.DirtyChanges)
+        {
+            int? rowIndex = null;
+            if (viewport.RemovalMode == LevelRemovalMode.RemoveRow)
+            {
+                if (denseLayout.HasValue)
+                {
+                    rowIndex = GetDenseRowIndexForChange(change, denseLayout.Value);
+                }
+            }
+            else
+            {
+                rowIndex = PriceToRowIndex(change.Price, referencePrice, tickSize, midRow);
+            }
+
+            if (rowIndex.HasValue)
+            {
+                dirtyRows.Add(rowIndex.Value);
+            }
+        }
+
+        if (viewport.RemovalMode == LevelRemovalMode.RemoveRow && snapshot.StructuralChange && denseLayout.HasValue)
+        {
+            var minRow = visibleRows;
+            var hasRow = false;
+
+            foreach (var change in snapshot.DirtyChanges)
+            {
+                var rowIndex = GetDenseRowIndexForChange(change, denseLayout.Value);
+                if (rowIndex.HasValue)
+                {
+                    minRow = Math.Min(minRow, rowIndex.Value);
+                    hasRow = true;
+                }
+            }
+
+            if (!hasRow)
+            {
+                RenderFull(canvas, snapshot, viewport, maxVolume, visibleRows, midRow, tickSize, referencePrice);
+                return;
+            }
+
+            for (int row = minRow; row <= visibleRows; row++)
+            {
+                dirtyRows.Add(row);
+            }
+        }
+
+        foreach (var rowIndex in dirtyRows)
+        {
+            if (rowIndex < 0 || rowIndex > visibleRows)
+            {
+                continue;
+            }
+
+            var y = rowIndex * RenderConfig.RowHeight;
+            if (y < 0 || y >= viewport.Height)
+            {
+                continue;
+            }
+
+            DrawRowBackgrounds(canvas, viewport, y);
+            DrawRowGridLines(canvas, viewport, y);
+
+            if (viewport.RemovalMode == LevelRemovalMode.RemoveRow)
+            {
+                if (!denseLayout.HasValue)
+                {
+                    continue;
+                }
+
+                if (TryGetDenseLevelForRow(rowIndex, denseLayout.Value, out var level, out var side))
+                {
+                    if (side == Side.ASK)
+                    {
+                        Order[]? orders = null;
+                        snapshot.AskOrders?.TryGetValue(level.Price, out orders);
+                        DrawAskLevel(canvas, level, viewport, maxVolume, y, orders);
+                    }
+                    else
+                    {
+                        Order[]? orders = null;
+                        snapshot.BidOrders?.TryGetValue(level.Price, out orders);
+                        DrawBidLevel(canvas, level, viewport, maxVolume, y, orders);
+                    }
+                }
+            }
+            else
+            {
+                RenderShowEmptyRow(canvas, snapshot, viewport, maxVolume, rowIndex, y, midRow, tickSize, referencePrice);
+            }
+        }
+    }
+
+    private void RenderShowEmptyRow(
+        SKCanvas canvas,
+        OrderBookSnapshot snapshot,
+        ViewportManager viewport,
+        long maxVolume,
+        int rowIndex,
+        float y,
+        int midRow,
+        decimal tickSize,
+        decimal referencePrice)
+    {
+        var rowOffset = rowIndex - midRow;
+        var price = referencePrice - (rowOffset * tickSize);
+        price = Math.Round(price / tickSize) * tickSize;
+
+        var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
+        canvas.DrawText(
+            price.ToString("F2"),
+            viewport.PriceColumnX + (viewport.ColumnWidth / 2),
+            textY,
+            _textPaint);
+
+        if (TryFindLevel(snapshot.Asks, price, out var askLevel))
+        {
+            Order[]? orders = null;
+            snapshot.AskOrders?.TryGetValue(price, out orders);
+            DrawAskLevelQuantity(canvas, askLevel, viewport, maxVolume, y, orders);
+            return;
+        }
+
+        if (TryFindLevel(snapshot.Bids, price, out var bidLevel))
+        {
+            Order[]? orders = null;
+            snapshot.BidOrders?.TryGetValue(price, out orders);
+            DrawBidLevelQuantity(canvas, bidLevel, viewport, maxVolume, y, orders);
+        }
+    }
+
+    private static bool TryFindLevel(ReadOnlySpan<BookLevel> levels, decimal price, out BookLevel level)
+    {
+        for (int i = 0; i < levels.Length; i++)
+        {
+            if (levels[i].Price == price)
+            {
+                level = levels[i];
+                return true;
+            }
+        }
+
+        level = default;
+        return false;
+    }
+
+    private static int PriceToRowIndex(decimal price, decimal referencePrice, decimal tickSize, int midRow)
+    {
+        var priceDelta = price - referencePrice;
+        var rowOffset = -(int)Math.Round(priceDelta / tickSize);
+        return midRow + rowOffset;
+    }
+
+    private readonly struct DensePackingLayout
+    {
+        public readonly BookLevel[] NonEmptyAsks;
+        public readonly BookLevel[] NonEmptyBids;
+        public readonly int StartAskIndex;
+        public readonly int AskRowsToRender;
+        public readonly int StartBidIndex;
+        public readonly int BidRowsToRender;
+        public readonly float TopOffset;
+        public readonly int FirstRowIndex;
+
+        public DensePackingLayout(
+            BookLevel[] nonEmptyAsks,
+            BookLevel[] nonEmptyBids,
+            int startAskIndex,
+            int askRowsToRender,
+            int startBidIndex,
+            int bidRowsToRender,
+            float topOffset,
+            int firstRowIndex)
+        {
+            NonEmptyAsks = nonEmptyAsks;
+            NonEmptyBids = nonEmptyBids;
+            StartAskIndex = startAskIndex;
+            AskRowsToRender = askRowsToRender;
+            StartBidIndex = startBidIndex;
+            BidRowsToRender = bidRowsToRender;
+            TopOffset = topOffset;
+            FirstRowIndex = firstRowIndex;
+        }
+    }
+
+    private DensePackingLayout BuildDensePackingLayout(
+        OrderBookSnapshot snapshot,
+        ViewportManager viewport,
+        int visibleRows,
+        int midRow)
+    {
+        var nonEmptyAsks = snapshot.Asks.Where(l => l.Quantity > 0).ToArray();
+        var nonEmptyBids = snapshot.Bids.Where(l => l.Quantity > 0).ToArray();
+        var scrollOffset = viewport.DensePackingScrollOffset;
+        var totalLevels = nonEmptyAsks.Length + nonEmptyBids.Length;
+
+        var virtualTopRow = nonEmptyAsks.Length - midRow + scrollOffset;
+
+        int startAskIndex, askRowsToRender;
+        int startBidIndex, bidRowsToRender;
+        float topOffset = 0;
+
+        if (virtualTopRow < 0)
+        {
+            topOffset = -virtualTopRow * RenderConfig.RowHeight;
+            startAskIndex = 0;
+            askRowsToRender = Math.Min(nonEmptyAsks.Length, Math.Max(0, visibleRows + virtualTopRow));
+            startBidIndex = 0;
+            var bidRowsAvailable = Math.Max(0, visibleRows + virtualTopRow - nonEmptyAsks.Length);
+            bidRowsToRender = Math.Min(nonEmptyBids.Length, bidRowsAvailable);
+        }
+        else if (virtualTopRow < nonEmptyAsks.Length)
+        {
+            startAskIndex = virtualTopRow;
+            askRowsToRender = Math.Min(nonEmptyAsks.Length - startAskIndex, visibleRows);
+            startBidIndex = 0;
+            var bidRowsAvailable = visibleRows - askRowsToRender;
+            bidRowsToRender = Math.Min(nonEmptyBids.Length, bidRowsAvailable);
+        }
+        else if (virtualTopRow < totalLevels)
+        {
+            startAskIndex = nonEmptyAsks.Length;
+            askRowsToRender = 0;
+            var bidStartRow = virtualTopRow - nonEmptyAsks.Length;
+            startBidIndex = bidStartRow;
+            bidRowsToRender = Math.Min(nonEmptyBids.Length - startBidIndex, visibleRows);
+        }
+        else
+        {
+            startAskIndex = nonEmptyAsks.Length;
+            askRowsToRender = 0;
+            startBidIndex = nonEmptyBids.Length;
+            bidRowsToRender = 0;
+        }
+
+        var firstRowIndex = (int)(topOffset / RenderConfig.RowHeight);
+
+        return new DensePackingLayout(
+            nonEmptyAsks,
+            nonEmptyBids,
+            startAskIndex,
+            askRowsToRender,
+            startBidIndex,
+            bidRowsToRender,
+            topOffset,
+            firstRowIndex);
+    }
+
+    private static int? GetDenseRowIndexForChange(DirtyLevelChange change, DensePackingLayout layout)
+    {
+        if (change.Side == Side.ASK)
+        {
+            var askIndex = IndexOfPrice(layout.NonEmptyAsks, change.Price);
+            if (askIndex < 0)
+            {
+                askIndex = LowerBoundPrice(layout.NonEmptyAsks, change.Price);
+            }
+
+            var rowOffset = (layout.NonEmptyAsks.Length - 1 - layout.StartAskIndex) - askIndex;
+            if (rowOffset >= 0 && rowOffset < layout.AskRowsToRender)
+            {
+                return layout.FirstRowIndex + rowOffset;
+            }
+            return null;
+        }
+
+        var bidIndex = IndexOfPrice(layout.NonEmptyBids, change.Price);
+        if (bidIndex < 0)
+        {
+            bidIndex = LowerBoundPrice(layout.NonEmptyBids, change.Price);
+        }
+
+        var bidRowOffset = (layout.NonEmptyBids.Length - 1 - layout.StartBidIndex) - bidIndex;
+        if (bidRowOffset >= 0 && bidRowOffset < layout.BidRowsToRender)
+        {
+            return layout.FirstRowIndex + layout.AskRowsToRender + bidRowOffset;
+        }
+
+        return null;
+    }
+
+    private static bool TryGetDenseLevelForRow(int rowIndex, DensePackingLayout layout, out BookLevel level, out Side side)
+    {
+        level = default;
+        side = default;
+
+        var relativeRow = rowIndex - layout.FirstRowIndex;
+        if (relativeRow < 0)
+        {
+            return false;
+        }
+
+        if (relativeRow < layout.AskRowsToRender)
+        {
+            var askIndex = layout.NonEmptyAsks.Length - 1 - layout.StartAskIndex - relativeRow;
+            if (askIndex >= 0 && askIndex < layout.NonEmptyAsks.Length)
+            {
+                level = layout.NonEmptyAsks[askIndex];
+                side = Side.ASK;
+                return true;
+            }
+            return false;
+        }
+
+        var bidRow = relativeRow - layout.AskRowsToRender;
+        if (bidRow < layout.BidRowsToRender)
+        {
+            var bidIndex = layout.NonEmptyBids.Length - 1 - layout.StartBidIndex - bidRow;
+            if (bidIndex >= 0 && bidIndex < layout.NonEmptyBids.Length)
+            {
+                level = layout.NonEmptyBids[bidIndex];
+                side = Side.BID;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int IndexOfPrice(BookLevel[] levels, decimal price)
+    {
+        for (int i = 0; i < levels.Length; i++)
+        {
+            if (levels[i].Price == price)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int LowerBoundPrice(BookLevel[] levels, decimal price)
+    {
+        var low = 0;
+        var high = levels.Length;
+        while (low < high)
+        {
+            var mid = (low + high) / 2;
+            if (levels[mid].Price < price)
+            {
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid;
+            }
+        }
+
+        return low;
+    }
+
     private void DrawGridLines(SKCanvas canvas, ViewportManager viewport)
     {
         var visibleRows = viewport.Height / RenderConfig.RowHeight;
@@ -314,7 +755,144 @@ public class SkiaRenderer : IDisposable
         }
     }
 
-    private void DrawBidLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y)
+    /// <summary>
+    /// Draw individual order bars for MBO mode (horizontally adjacent segments within row)
+    /// </summary>
+    private void DrawIndividualOrders(
+        SKCanvas canvas,
+        Order[] orders,
+        Side side,
+        ViewportManager viewport,
+        long maxVolume,
+        float y)
+    {
+        if (orders == null || orders.Length == 0 || !viewport.ShowVolumeBars || !viewport.VolumeBarColumnX.HasValue)
+        {
+            return;
+        }
+
+        var barStartX = viewport.VolumeBarColumnX.Value;
+        var barMaxWidth = viewport.VolumeBarMaxWidth;
+        var barHeight = RenderConfig.RowHeight - 8;  // Same height as single bar (with padding)
+        var paint = side == Side.BID ? _bidVolumePaint : _askVolumePaint;
+
+        long totalOrderQuantity = 0;
+        for (int i = 0; i < orders.Length; i++)
+        {
+            totalOrderQuantity += orders[i].Quantity;
+        }
+
+        if (totalOrderQuantity <= 0)
+        {
+            return;
+        }
+
+        var minSegmentWidth = Math.Max(0f, _config.MinOrderSegmentWidth);
+        var segmentGap = Math.Max(0f, _config.OrderSegmentGap);
+
+        // Calculate the total bar width for this level (proportional to maxVolume)
+        var levelBarWidth = maxVolume > 0
+            ? (float)totalOrderQuantity / maxVolume * barMaxWidth
+            : 0;
+
+        if (minSegmentWidth > 0f)
+        {
+            var minTotalWidth = (orders.Length * minSegmentWidth) +
+                (segmentGap * Math.Max(0, orders.Length - 1));
+            levelBarWidth = Math.Max(levelBarWidth, Math.Min(minTotalWidth, barMaxWidth));
+        }
+
+        if (levelBarWidth <= 0)
+        {
+            return;
+        }
+
+        var gap = 0f;
+        if (orders.Length > 1)
+        {
+            if (minSegmentWidth > 0f)
+            {
+                var maxGap = (levelBarWidth - (minSegmentWidth * orders.Length)) / (orders.Length - 1);
+                gap = Math.Min(segmentGap, Math.Max(0f, maxGap));
+            }
+            else
+            {
+                gap = segmentGap;
+            }
+        }
+
+        var availableWidth = levelBarWidth - gap * (orders.Length - 1);
+        if (availableWidth <= 0f)
+        {
+            gap = 0f;
+            availableWidth = levelBarWidth;
+        }
+
+        var effectiveMinWidth = minSegmentWidth > 0f
+            ? Math.Min(minSegmentWidth, availableWidth / orders.Length)
+            : 0f;
+
+        var deficit = 0f;
+        var surplus = 0f;
+        if (effectiveMinWidth > 0f)
+        {
+            for (int i = 0; i < orders.Length; i++)
+            {
+                var baseWidth = (float)orders[i].Quantity / totalOrderQuantity * availableWidth;
+                if (baseWidth < effectiveMinWidth)
+                {
+                    deficit += effectiveMinWidth - baseWidth;
+                }
+                else if (baseWidth > effectiveMinWidth)
+                {
+                    surplus += baseWidth - effectiveMinWidth;
+                }
+            }
+        }
+
+        var reductionFactor = deficit > 0f && surplus > 0f ? deficit / surplus : 0f;
+        var xOffset = barStartX;  // Start at left edge of volume bar column
+
+        for (int i = 0; i < orders.Length; i++)
+        {
+            var order = orders[i];
+
+            // Calculate segment width as proportion of levelBarWidth (not barMaxWidth)
+            // This ensures all orders at this level fit within the level's total bar
+            var barWidth = (float)order.Quantity / totalOrderQuantity * availableWidth;
+
+            if (effectiveMinWidth > 0f)
+            {
+                if (barWidth < effectiveMinWidth)
+                {
+                    barWidth = effectiveMinWidth;
+                }
+                else if (reductionFactor > 0f)
+                {
+                    barWidth -= (barWidth - effectiveMinWidth) * reductionFactor;
+                }
+            }
+
+            // Draw individual order bar as a segment with gap
+            if (barWidth > 0)
+            {
+                canvas.DrawRect(xOffset, y + 4, barWidth, barHeight, paint);
+            }
+
+            // Move to the right for next bar segment
+            xOffset += barWidth;
+            if (gap > 0f && i < orders.Length - 1)
+            {
+                xOffset += gap;
+            }
+
+            // Stop if we've exceeded the level's total bar width
+            if (xOffset >= barStartX + levelBarWidth)
+                break;
+        }
+    }
+
+    private void DrawBidLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)
     {
         // Calculate text baseline (centered vertically in row)
         var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
@@ -351,21 +929,30 @@ public class SkiaRenderer : IDisposable
             textY,
             _textPaint);
 
-        // Draw volume bar (if enabled and not empty)
+        // Draw volume bars
         if (viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 && !isEmpty)
         {
-            var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
+            if (orders != null && orders.Length > 0)
+            {
+                // MBO mode: Draw individual order bars
+                DrawIndividualOrders(canvas, orders, Side.BID, viewport, maxVolume, y);
+            }
+            else
+            {
+                // PriceLevel mode: Draw single aggregated bar
+                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
 
-            canvas.DrawRect(
-                viewport.VolumeBarColumnX.Value,
-                y + 4,
-                barWidth,
-                RenderConfig.RowHeight - 8,
-                _bidVolumePaint);
+                canvas.DrawRect(
+                    viewport.VolumeBarColumnX.Value,
+                    y + 4,
+                    barWidth,
+                    RenderConfig.RowHeight - 8,
+                    _bidVolumePaint);
+            }
         }
     }
 
-    private void DrawAskLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y)
+    private void DrawAskLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)
     {
         // Calculate text baseline (centered vertically in row)
         var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
@@ -402,21 +989,30 @@ public class SkiaRenderer : IDisposable
                 _textPaint);
         }
 
-        // Draw volume bar (if enabled and not empty)
+        // Draw volume bars
         if (viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 && !isEmpty)
         {
-            var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
+            if (orders != null && orders.Length > 0)
+            {
+                // MBO mode: Draw individual order bars
+                DrawIndividualOrders(canvas, orders, Side.ASK, viewport, maxVolume, y);
+            }
+            else
+            {
+                // PriceLevel mode: Draw single aggregated bar
+                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
 
-            canvas.DrawRect(
-                viewport.VolumeBarColumnX.Value,
-                y + 4,
-                barWidth,
-                RenderConfig.RowHeight - 8,
-                _askVolumePaint);
+                canvas.DrawRect(
+                    viewport.VolumeBarColumnX.Value,
+                    y + 4,
+                    barWidth,
+                    RenderConfig.RowHeight - 8,
+                    _askVolumePaint);
+            }
         }
     }
 
-    private void DrawBidLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y)
+    private void DrawBidLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)
     {
         // Draw only quantity data (price already drawn in Step 1)
         var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
@@ -442,21 +1038,30 @@ public class SkiaRenderer : IDisposable
                 _textPaint);
         }
 
-        // Draw volume bar (if enabled and not empty)
+        // Draw volume bars
         if (viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 && !isEmpty)
         {
-            var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
+            if (orders != null && orders.Length > 0)
+            {
+                // MBO mode: Draw individual order bars
+                DrawIndividualOrders(canvas, orders, Side.BID, viewport, maxVolume, y);
+            }
+            else
+            {
+                // PriceLevel mode: Draw single aggregated bar
+                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
 
-            canvas.DrawRect(
-                viewport.VolumeBarColumnX.Value,
-                y + 4,
-                barWidth,
-                RenderConfig.RowHeight - 8,
-                _bidVolumePaint);
+                canvas.DrawRect(
+                    viewport.VolumeBarColumnX.Value,
+                    y + 4,
+                    barWidth,
+                    RenderConfig.RowHeight - 8,
+                    _bidVolumePaint);
+            }
         }
     }
 
-    private void DrawAskLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y)
+    private void DrawAskLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)
     {
         // Draw only quantity data (price already drawn in Step 1)
         var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
@@ -482,17 +1087,26 @@ public class SkiaRenderer : IDisposable
                 _textPaint);
         }
 
-        // Draw volume bar (if enabled and not empty)
+        // Draw volume bars
         if (viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 && !isEmpty)
         {
-            var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
+            if (orders != null && orders.Length > 0)
+            {
+                // MBO mode: Draw individual order bars
+                DrawIndividualOrders(canvas, orders, Side.ASK, viewport, maxVolume, y);
+            }
+            else
+            {
+                // PriceLevel mode: Draw single aggregated bar
+                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
 
-            canvas.DrawRect(
-                viewport.VolumeBarColumnX.Value,
-                y + 4,
-                barWidth,
-                RenderConfig.RowHeight - 8,
-                _askVolumePaint);
+                canvas.DrawRect(
+                    viewport.VolumeBarColumnX.Value,
+                    y + 4,
+                    barWidth,
+                    RenderConfig.RowHeight - 8,
+                    _askVolumePaint);
+            }
         }
     }
 
@@ -514,10 +1128,12 @@ public class SkiaRenderer : IDisposable
         _askBackgroundPaint?.Dispose();
         _priceBackgroundPaint?.Dispose();
         _orderCountBackgroundPaint?.Dispose();
+        _backgroundPaint?.Dispose();
         _textPaint?.Dispose();
         _bidVolumePaint?.Dispose();
         _askVolumePaint?.Dispose();
         _gridLinePaint?.Dispose();
         _highlightPaint?.Dispose();
+        _cachedSurface?.Dispose();
     }
 }

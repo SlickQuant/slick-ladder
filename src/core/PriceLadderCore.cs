@@ -13,6 +13,8 @@ public class PriceLadderCore
     private readonly OrderBook _orderBook;
     private readonly UpdateBatcher _batcher;
     private readonly PriceLevelManager _priceLevelManager;
+    private readonly MBOManager _mboManager;
+    private IMarketDataMode _currentManager;
     private DataMode _currentMode;
 
     /// <summary>Current data mode (PriceLevel or MBO)</summary>
@@ -42,6 +44,8 @@ public class PriceLadderCore
         _orderBook = new OrderBook(maxLevels, tickSize);
         _batcher = new UpdateBatcher(_orderBook, queueCapacity);
         _priceLevelManager = new PriceLevelManager(_orderBook);
+        _mboManager = new MBOManager(_orderBook);
+        _currentManager = _priceLevelManager;
         _currentMode = DataMode.PriceLevel;
 
         // Forward batch flush events
@@ -113,6 +117,34 @@ public class PriceLadderCore
     }
 
     /// <summary>
+    /// Process an OrderUpdate in MBO mode.
+    /// Queue for micro-batching to achieve <1ms latency.
+    /// </summary>
+    public bool ProcessOrderUpdate(OrderUpdate update, OrderUpdateType type)
+    {
+        if (_currentMode != DataMode.MBO)
+        {
+            throw new InvalidOperationException("Not in MBO mode");
+        }
+
+        return _batcher.QueueOrderUpdate(update, type);
+    }
+
+    /// <summary>
+    /// Process an OrderUpdate without auto-flushing.
+    /// Use when processing batches - call Flush() manually after all updates.
+    /// </summary>
+    public bool ProcessOrderUpdateNoFlush(OrderUpdate update, OrderUpdateType type)
+    {
+        if (_currentMode != DataMode.MBO)
+        {
+            throw new InvalidOperationException("Not in MBO mode");
+        }
+
+        return _batcher.QueueOrderUpdateNoFlush(update, type);
+    }
+
+    /// <summary>
     /// Force flush all pending updates immediately.
     /// Use this to ensure updates are processed before rendering.
     /// </summary>
@@ -122,26 +154,46 @@ public class PriceLadderCore
     }
 
     /// <summary>
+    /// Clear any queued updates without flushing.
+    /// Use when stopping a data feed to drop in-flight updates.
+    /// </summary>
+    public void ClearPendingUpdates()
+    {
+        _batcher.ClearPending();
+    }
+
+    /// <summary>
     /// Switch data mode (PriceLevel vs MBO)
     /// </summary>
     public void SetDataMode(DataMode mode)
     {
+        System.Diagnostics.Debug.WriteLine($"PriceLadderCore.SetDataMode CALLED: mode={mode}, _currentMode={_currentMode}");
+
         if (_currentMode == mode)
         {
+            System.Diagnostics.Debug.WriteLine($"PriceLadderCore.SetDataMode: EARLY RETURN - already in {mode} mode");
             return;
         }
 
         // Pause batching
+        System.Diagnostics.Debug.WriteLine("PriceLadderCore.SetDataMode: Pausing batcher");
         _batcher.Pause();
 
         // Clear order book
+        System.Diagnostics.Debug.WriteLine("PriceLadderCore.SetDataMode: Clearing order book");
         _orderBook.Clear();
 
-        // Switch mode
+        // Switch mode and manager
         _currentMode = mode;
+        _currentManager = mode == DataMode.MBO ? _mboManager : _priceLevelManager;
+        System.Diagnostics.Debug.WriteLine($"PriceLadderCore.SetDataMode: Switched to {mode}, _currentManager={_currentManager?.GetType().Name}, calling batcher.SetDataMode");
+        _batcher.SetDataMode(mode, _mboManager);
 
         // Resume batching
+        System.Diagnostics.Debug.WriteLine("PriceLadderCore.SetDataMode: Resuming batcher");
         _batcher.Resume();
+
+        System.Diagnostics.Debug.WriteLine("PriceLadderCore.SetDataMode: DONE");
     }
 
     /// <summary>

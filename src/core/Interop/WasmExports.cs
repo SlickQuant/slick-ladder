@@ -96,6 +96,66 @@ public partial class WasmExports
     }
 
     /// <summary>
+    /// Set data mode (0 = PriceLevel, 1 = MBO)
+    /// </summary>
+    [JSExport]
+    public static void SetDataMode(int mode)
+    {
+        if (_ladder == null) return;
+        _ladder.SetDataMode((DataMode)mode);
+    }
+
+    /// <summary>
+    /// Process an order update in MBO mode
+    /// </summary>
+    [JSExport]
+    public static void ProcessOrderUpdate(
+        int orderId,
+        int side,
+        double price,
+        int quantity,
+        int priority,
+        int updateType)
+    {
+        if (_ladder == null) return;
+
+        var update = new OrderUpdate(
+            orderId,
+            (Side)side,
+            (decimal)price,
+            quantity,
+            priority
+        );
+
+        _ladder.ProcessOrderUpdate(update, (OrderUpdateType)updateType);
+    }
+
+    /// <summary>
+    /// Process an order update in MBO mode without auto-flushing
+    /// </summary>
+    [JSExport]
+    public static void ProcessOrderUpdateNoFlush(
+        int orderId,
+        int side,
+        double price,
+        int quantity,
+        int priority,
+        int updateType)
+    {
+        if (_ladder == null) return;
+
+        var update = new OrderUpdate(
+            orderId,
+            (Side)side,
+            (decimal)price,
+            quantity,
+            priority
+        );
+
+        _ladder.ProcessOrderUpdateNoFlush(update, (OrderUpdateType)updateType);
+    }
+
+    /// <summary>
     /// Get best bid price
     /// </summary>
     [JSExport]
