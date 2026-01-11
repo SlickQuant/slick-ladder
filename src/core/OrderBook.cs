@@ -65,6 +65,8 @@ public class OrderBook
         level.IsDirty = true;
 
         bool existed;
+        bool isAddition = false;
+        bool isRemoval = false;
         if (side == Side.BID)
         {
             existed = _bids.TryGetValue(price, out _);
@@ -74,6 +76,7 @@ public class OrderBook
                 if (!existed)
                 {
                     _hasStructuralChange = true;
+                    isAddition = true;
                 }
             }
             else
@@ -82,6 +85,7 @@ public class OrderBook
                 if (existed && _bids.Remove(price))
                 {
                     _hasStructuralChange = true;
+                    isRemoval = true;
                 }
             }
         }
@@ -94,6 +98,7 @@ public class OrderBook
                 if (!existed)
                 {
                     _hasStructuralChange = true;
+                    isAddition = true;
                 }
             }
             else
@@ -101,13 +106,14 @@ public class OrderBook
                 if (existed && _asks.Remove(price))
                 {
                     _hasStructuralChange = true;
+                    isRemoval = true;
                 }
             }
         }
 
         if (quantity > 0 || existed)
         {
-            _dirtyChanges.Add(new DirtyLevelChange(price, side, quantity <= 0 && existed));
+            _dirtyChanges.Add(new DirtyLevelChange(price, side, isRemoval, isAddition));
         }
 
         MarkDirty(price, side);
@@ -440,11 +446,15 @@ public readonly struct DirtyLevelChange
     public readonly decimal Price;
     public readonly Side Side;
     public readonly bool IsRemoval;
+    public readonly bool IsAddition;
 
-    public DirtyLevelChange(decimal price, Side side, bool isRemoval)
+    public DirtyLevelChange(decimal price, Side side, bool isRemoval, bool isAddition)
     {
         Price = price;
         Side = side;
         IsRemoval = isRemoval;
+        IsAddition = isAddition;
     }
+
+    public bool IsStructural => IsRemoval || IsAddition;
 }

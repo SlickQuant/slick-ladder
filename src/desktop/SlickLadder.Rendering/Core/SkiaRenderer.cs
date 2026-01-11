@@ -419,6 +419,11 @@ public class SkiaRenderer : IDisposable
 
             foreach (var change in snapshot.DirtyChanges)
             {
+                if (!change.IsStructural)
+                {
+                    continue;
+                }
+
                 var rowIndex = GetDenseRowIndexForChange(change, denseLayout.Value);
                 if (rowIndex.HasValue)
                 {
