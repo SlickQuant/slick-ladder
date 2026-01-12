@@ -26,6 +26,9 @@ public class SkiaRenderer : IDisposable
     private readonly SKPaint _askVolumePaint;
     private readonly SKPaint _gridLinePaint;
     private readonly SKPaint _highlightPaint;
+    private readonly SKPaint _dirtyRowPaint;
+    private readonly HashSet<int> _debugDirtyRows = new HashSet<int>();
+    private bool _debugOverlayAllRows;
 
     private readonly RenderConfig _config;
     private SKSurface? _cachedSurface;
@@ -76,6 +79,12 @@ public class SkiaRenderer : IDisposable
             Color = new SKColor(255, 255, 255, 30), // Semi-transparent white
             Style = SKPaintStyle.Fill
         };
+
+        _dirtyRowPaint = new SKPaint
+        {
+            Color = _config.DirtyRowOverlayColor,
+            Style = SKPaintStyle.Fill
+        };
     }
 
     /// <summary>
@@ -104,6 +113,12 @@ public class SkiaRenderer : IDisposable
             ? viewport.CenterPrice
             : (snapshot.MidPrice ?? 50000m);
 
+        if (_config.DebugDirtyRows)
+        {
+            _debugDirtyRows.Clear();
+            _debugOverlayAllRows = false;
+        }
+
         var fullRedraw = ShouldFullRedraw(snapshot, viewport, referencePrice);
         if (fullRedraw)
         {
@@ -116,6 +131,18 @@ public class SkiaRenderer : IDisposable
 
         using var image = _cachedSurface!.Snapshot();
         canvas.DrawImage(image, 0, 0);
+
+        if (_config.DebugDirtyRows)
+        {
+            if (_debugOverlayAllRows)
+            {
+                DrawDirtyRowOverlayAll(canvas, viewport, visibleRows);
+            }
+            else
+            {
+                DrawDirtyRowOverlay(canvas, viewport, _debugDirtyRows, visibleRows);
+            }
+        }
 
         UpdateLastState(snapshot, viewport, referencePrice);
     }
@@ -366,6 +393,10 @@ public class SkiaRenderer : IDisposable
                 }
             }
         }
+        if (_config.DebugDirtyRows)
+        {
+            _debugOverlayAllRows = true;
+        }
     }
 
     private void RenderDirty(
@@ -383,7 +414,16 @@ public class SkiaRenderer : IDisposable
             return;
         }
 
-        var dirtyRows = new HashSet<int>();
+        HashSet<int> dirtyRows;
+        if (_config.DebugDirtyRows)
+        {
+            dirtyRows = _debugDirtyRows;
+            dirtyRows.Clear();
+        }
+        else
+        {
+            dirtyRows = new HashSet<int>();
+        }
 
         DensePackingLayout? denseLayout = null;
         if (viewport.RemovalMode == LevelRemovalMode.RemoveRow)
@@ -487,6 +527,43 @@ public class SkiaRenderer : IDisposable
             {
                 RenderShowEmptyRow(canvas, snapshot, viewport, maxVolume, rowIndex, y, midRow, tickSize, referencePrice);
             }
+        }
+    }
+
+    private void DrawDirtyRowOverlayAll(SKCanvas canvas, ViewportManager viewport, int visibleRows)
+    {
+        for (int rowIndex = 0; rowIndex <= visibleRows; rowIndex++)
+        {
+            var y = rowIndex * RenderConfig.RowHeight;
+            if (y < 0 || y >= viewport.Height)
+            {
+                continue;
+            }
+
+            canvas.DrawRect(0, y, viewport.Width, RenderConfig.RowHeight, _dirtyRowPaint);
+        }
+    }
+
+    private void DrawDirtyRowOverlay(
+        SKCanvas canvas,
+        ViewportManager viewport,
+        HashSet<int> dirtyRows,
+        int visibleRows)
+    {
+        foreach (var rowIndex in dirtyRows)
+        {
+            if (rowIndex < 0 || rowIndex > visibleRows)
+            {
+                continue;
+            }
+
+            var y = rowIndex * RenderConfig.RowHeight;
+            if (y < 0 || y >= viewport.Height)
+            {
+                continue;
+            }
+
+            canvas.DrawRect(0, y, viewport.Width, RenderConfig.RowHeight, _dirtyRowPaint);
         }
     }
 
@@ -1139,6 +1216,7 @@ public class SkiaRenderer : IDisposable
         _askVolumePaint?.Dispose();
         _gridLinePaint?.Dispose();
         _highlightPaint?.Dispose();
+        _dirtyRowPaint?.Dispose();
         _cachedSurface?.Dispose();
     }
 }

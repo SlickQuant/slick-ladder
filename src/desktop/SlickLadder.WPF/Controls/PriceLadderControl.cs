@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using SkiaSharp;
 using SkiaSharp.Views.Desktop;
 using SkiaSharp.Views.WPF;
 using SlickLadder.Rendering.Core;
@@ -28,6 +29,10 @@ public partial class PriceLadderControl : UserControl
 
         _metrics = new RenderMetrics();
         _renderer = new SkiaRenderer(new RenderConfig());
+        // _renderer = new SkiaRenderer(new RenderConfig { 
+        //     DebugDirtyRows = true,
+        //     DirtyRowOverlayColor = new SKColor(255, 255, 0, 80)
+        //  });
         _viewport = new ViewportManager();
 
         // 60 FPS rendering via CompositionTarget

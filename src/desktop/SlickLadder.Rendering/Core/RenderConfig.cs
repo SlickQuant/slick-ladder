@@ -25,6 +25,10 @@ public class RenderConfig
     public SKColor BidVolumeBar { get; } = new SKColor(76, 175, 80);        // #4caf50 (green)
     public SKColor AskVolumeBar { get; } = new SKColor(244, 67, 54);        // #f44336 (red)
 
+    // Debug overlay for dirty rows
+    public bool DebugDirtyRows { get; set; } = false;
+    public SKColor DirtyRowOverlayColor { get; set; } = new SKColor(255, 255, 255, 20); // ~8% white
+
     // Font settings
     public string FontFamily { get; } = "Consolas";
     public float FontSize { get; } = 12.0f;
