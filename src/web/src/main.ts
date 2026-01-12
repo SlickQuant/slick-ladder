@@ -6,8 +6,14 @@ import {
     PriceLevel,
     BookLevel,
     Side,
-    DEFAULT_COLORS
+    OrderUpdate,
+    OrderUpdateType,
+    DEFAULT_COLORS,
+    COL_WIDTH,
+    VOLUME_BAR_WIDTH_MULTIPLIER,
+    DirtyLevelChange
 } from './types';
+import { MBOManager } from './mbo-manager';
 
 /**
  * Main Price Ladder component for web.
@@ -20,12 +26,16 @@ export class PriceLadder {
     private renderer: CanvasRenderer;
     private interactionHandler: InteractionHandler;
     private config: Required<PriceLadderConfig>;
+    private dataMode: 'PriceLevel' | 'MBO';
 
     // Simulated order book (will be replaced by WASM)
     private bids: Map<number, BookLevel> = new Map();
     private asks: Map<number, BookLevel> = new Map();
+    private mboManager: MBOManager = new MBOManager();
     private updateCount: number = 0;
     private lastRenderTime: number = 0;
+    private dirtyChanges: DirtyLevelChange[] = [];
+    private hasStructuralChange: boolean = false;
 
     // Animation frame request
     private rafId: number = 0;
@@ -33,22 +43,30 @@ export class PriceLadder {
     constructor(config: PriceLadderConfig) {
         this.container = config.container;
 
+        const showVolumeBars = config.showVolumeBars !== undefined ? config.showVolumeBars : true;
+        const showOrderCount = config.showOrderCount !== undefined ? config.showOrderCount : true;
+        const defaultWidth = Math.round(
+            (showOrderCount ? 5 : 3) * COL_WIDTH +
+            (showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0)
+        );
+
         // Apply defaults
         this.config = {
             container: config.container,
-            width: config.width || 400,
+            width: config.width || defaultWidth,
             height: config.height || 600,
             rowHeight: config.rowHeight || 24,
             visibleLevels: config.visibleLevels || 50,
             tickSize: config.tickSize || 0.01,
             mode: config.mode || 'PriceLevel',
             readOnly: config.readOnly || false,
-            showVolumeBars: config.showVolumeBars !== undefined ? config.showVolumeBars : true,
-            showOrderCount: config.showOrderCount !== undefined ? config.showOrderCount : true,
+            showVolumeBars,
+            showOrderCount,
             colors: config.colors || DEFAULT_COLORS,
             onTrade: config.onTrade || (() => {}),
             onPriceHover: config.onPriceHover || (() => {})
         };
+        this.dataMode = this.config.mode;
 
         // Create canvas
         this.canvas = document.createElement('canvas');
@@ -97,6 +115,15 @@ export class PriceLadder {
      * Process a price level update
      */
     public processUpdate(update: PriceLevel): void {
+        if (this.dataMode !== 'PriceLevel') {
+            return;
+        }
+
+        const map = update.side === Side.BID ? this.bids : this.asks;
+        const existed = map.has(update.price);
+        let isAddition = false;
+        let isRemoval = false;
+
         const level: BookLevel = {
             price: update.price,
             quantity: update.quantity,
@@ -106,18 +133,25 @@ export class PriceLadder {
             hasOwnOrders: false
         };
 
-        if (update.side === Side.BID) {
-            if (update.quantity > 0) {
-                this.bids.set(update.price, level);
-            } else {
-                this.bids.delete(update.price);
+        if (update.quantity > 0) {
+            map.set(update.price, level);
+            if (!existed) {
+                isAddition = true;
+                this.hasStructuralChange = true;
             }
-        } else {
-            if (update.quantity > 0) {
-                this.asks.set(update.price, level);
-            } else {
-                this.asks.delete(update.price);
-            }
+        } else if (existed) {
+            map.delete(update.price);
+            isRemoval = true;
+            this.hasStructuralChange = true;
+        }
+
+        if (update.quantity > 0 || existed) {
+            this.dirtyChanges.push({
+                price: update.price,
+                side: update.side,
+                isRemoval,
+                isAddition
+            });
         }
 
         this.updateCount++;
@@ -127,6 +161,10 @@ export class PriceLadder {
      * Process multiple updates in batch
      */
     public processBatch(updates: PriceLevel[]): void {
+        if (this.dataMode !== 'PriceLevel') {
+            return;
+        }
+
         for (const update of updates) {
             this.processUpdate(update);
         }
@@ -142,9 +180,47 @@ export class PriceLadder {
     }
 
     /**
+     * Process a single order update (MBO mode)
+     */
+    public processOrderUpdate(update: OrderUpdate, type: OrderUpdateType): void {
+        if (this.dataMode !== 'MBO') {
+            return;
+        }
+
+        const roundedUpdate: OrderUpdate = {
+            ...update,
+            price: this.roundToTick(update.price)
+        };
+        this.mboManager.processOrderUpdate(roundedUpdate, type);
+        this.updateCount++;
+    }
+
+    /**
+     * Process multiple order updates in batch (MBO mode)
+     */
+    public processOrderBatch(updates: Array<{ update: OrderUpdate; type: OrderUpdateType }>): void {
+        if (this.dataMode !== 'MBO') {
+            return;
+        }
+
+        for (const item of updates) {
+            const roundedUpdate: OrderUpdate = {
+                ...item.update,
+                price: this.roundToTick(item.update.price)
+            };
+            this.mboManager.processOrderUpdate(roundedUpdate, item.type);
+            this.updateCount++;
+        }
+    }
+
+    /**
      * Mark a price level as having own orders
      */
     public markOwnOrder(price: number, side: Side, hasOwnOrder: boolean = true): void {
+        if (this.dataMode !== 'PriceLevel') {
+            return;
+        }
+
         const map = side === Side.BID ? this.bids : this.asks;
         const level = map.get(price);
 
@@ -158,6 +234,30 @@ export class PriceLadder {
      * Get current snapshot
      */
     private getSnapshot(): OrderBookSnapshot {
+        if (this.dataMode === 'MBO') {
+            const bids = this.mboManager.getBidLevels();
+            const asks = this.mboManager.getAskLevels();
+            const bestBid = bids.length > 0 ? bids[bids.length - 1].price : null;
+            const bestAsk = asks.length > 0 ? asks[0].price : null;
+            const midPrice = bestBid !== null && bestAsk !== null
+                ? (bestBid + bestAsk) / 2
+                : null;
+            const dirtyState = this.mboManager.consumeDirtyState();
+
+            return {
+                bestBid,
+                bestAsk,
+                midPrice,
+                bids,
+                asks,
+                timestamp: Date.now(),
+                bidOrders: this.mboManager.getBidOrders(),
+                askOrders: this.mboManager.getAskOrders(),
+                dirtyChanges: dirtyState.dirtyChanges,
+                structuralChange: dirtyState.structuralChange
+            };
+        }
+
         const sortedBids = Array.from(this.bids.values())
             .sort((a, b) => a.price - b.price);
 
@@ -171,13 +271,20 @@ export class PriceLadder {
             ? (bestBid + bestAsk) / 2
             : null;
 
+        const dirtyChanges = this.dirtyChanges;
+        const structuralChange = this.hasStructuralChange;
+        this.dirtyChanges = [];
+        this.hasStructuralChange = false;
+
         return {
             bestBid,
             bestAsk,
             midPrice,
             bids: sortedBids,
             asks: sortedAsks,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            dirtyChanges,
+            structuralChange
         };
     }
 
@@ -203,6 +310,11 @@ export class PriceLadder {
      * Get best bid
      */
     public getBestBid(): number | null {
+        if (this.dataMode === 'MBO') {
+            const bids = this.mboManager.getBidLevels();
+            return bids.length > 0 ? bids[bids.length - 1].price : null;
+        }
+
         const sortedBids = Array.from(this.bids.values())
             .sort((a, b) => a.price - b.price);
         return sortedBids.length > 0 ? sortedBids[sortedBids.length - 1].price : null;
@@ -212,6 +324,11 @@ export class PriceLadder {
      * Get best ask
      */
     public getBestAsk(): number | null {
+        if (this.dataMode === 'MBO') {
+            const asks = this.mboManager.getAskLevels();
+            return asks.length > 0 ? asks[0].price : null;
+        }
+
         const sortedAsks = Array.from(this.asks.values())
             .sort((a, b) => a.price - b.price);
         return sortedAsks.length > 0 ? sortedAsks[0].price : null;
@@ -239,6 +356,15 @@ export class PriceLadder {
      * Get render metrics
      */
     public getMetrics() {
+        if (this.dataMode === 'MBO') {
+            return {
+                ...this.renderer.getMetrics(),
+                updateCount: this.updateCount,
+                bidLevels: this.mboManager.getBidLevels().length,
+                askLevels: this.mboManager.getAskLevels().length
+            };
+        }
+
         return {
             ...this.renderer.getMetrics(),
             updateCount: this.updateCount,
@@ -271,20 +397,9 @@ export class PriceLadder {
      * Remove columns when features are disabled
      */
     private calculateWidth(): number {
-        const COL_WIDTH = 66.7; // ~400px / 6 columns
-        let columnCount = 6;
-
-        // Remove order count columns (columns 0 and 4) when disabled
-        if (!this.config.showOrderCount) {
-            columnCount -= 2; // Remove both bid_orders and ask_orders
-        }
-
-        // Remove bars column (column 5) when disabled
-        if (!this.config.showVolumeBars) {
-            columnCount -= 1; // Remove bars
-        }
-
-        return Math.round(COL_WIDTH * columnCount);
+        const dataColumns = this.config.showOrderCount ? 5 : 3;
+        const barWidth = this.config.showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
+        return Math.round((dataColumns * COL_WIDTH) + barWidth);
     }
 
     /**
@@ -346,14 +461,38 @@ export class PriceLadder {
     }
 
     /**
+     * Set data mode (PriceLevel or MBO)
+     */
+    public setDataMode(mode: 'PriceLevel' | 'MBO'): void {
+        if (this.dataMode === mode) {
+            return;
+        }
+
+        this.dataMode = mode;
+        this.config.mode = mode;
+        this.clear();
+
+        const snapshot = this.getSnapshot();
+        this.renderer.render(snapshot);
+    }
+
+    /**
      * Clear all data
      */
     public clear(): void {
         this.bids.clear();
         this.asks.clear();
+        this.mboManager.reset();
         this.updateCount = 0;
+        this.dirtyChanges = [];
+        this.hasStructuralChange = false;
         // Reset renderer's centerPrice for Show Empty Rows mode
         this.renderer.resetCenterPrice();
+    }
+
+    private roundToTick(price: number): number {
+        const tickSize = this.config.tickSize || 0.01;
+        return Math.round(price / tickSize) * tickSize;
     }
 
     /**

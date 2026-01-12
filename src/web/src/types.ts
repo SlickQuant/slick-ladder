@@ -54,6 +54,17 @@ export interface OrderBookSnapshot {
     // MBO mode: Individual orders per price level (null in PriceLevel mode)
     bidOrders?: Map<number, Order[]> | null;
     askOrders?: Map<number, Order[]> | null;
+
+    // Dirty row tracking (mirrors desktop DirtyLevelChange)
+    dirtyChanges?: DirtyLevelChange[];
+    structuralChange?: boolean;
+}
+
+export interface DirtyLevelChange {
+    price: number;
+    side: Side;
+    isRemoval: boolean;
+    isAddition: boolean;
 }
 
 export interface PriceLadderConfig {
@@ -105,6 +116,11 @@ export interface CanvasColors {
     ownOrderBorder: string;     // Border color for own orders
     hoverBackground: string;    // Hover overlay color
 }
+
+export const COL_WIDTH = 66.7;
+export const VOLUME_BAR_WIDTH_MULTIPLIER = 2.5;
+export const ORDER_SEGMENT_GAP = 2;
+export const MIN_ORDER_SEGMENT_WIDTH = 2;
 
 export const DEFAULT_COLORS: CanvasColors = {
     background: '#1e1e1e',

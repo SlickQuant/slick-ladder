@@ -178,10 +178,12 @@ public class PriceLadderCore
         // Pause batching
         System.Diagnostics.Debug.WriteLine("PriceLadderCore.SetDataMode: Pausing batcher");
         _batcher.Pause();
+        _batcher.ClearPending();
 
-        // Clear order book
+        // Clear order book + MBO state to avoid stale orders after mode switches
         System.Diagnostics.Debug.WriteLine("PriceLadderCore.SetDataMode: Clearing order book");
         _orderBook.Clear();
+        _mboManager.Reset();
 
         // Switch mode and manager
         _currentMode = mode;
@@ -245,7 +247,9 @@ public class PriceLadderCore
     public void Reset()
     {
         _batcher.Pause();
+        _batcher.ClearPending();
         _orderBook.Clear();
+        _mboManager.Reset();
         _batcher.ResetStatistics();
         _batcher.Resume();
     }

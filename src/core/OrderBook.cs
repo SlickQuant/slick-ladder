@@ -26,10 +26,24 @@ public class OrderBook
     public int AskCount => _asks.Count;
 
     /// <summary>Best bid price (highest)</summary>
-    public decimal? BestBid => _bids.Count > 0 ? _bids.GetKeyByIndex(_bids.Count - 1) : null;
+    public decimal? BestBid
+    {
+        get
+        {
+            var keys = _bids.Keys;
+            return keys.Length > 0 ? keys[keys.Length - 1] : null;
+        }
+    }
 
     /// <summary>Best ask price (lowest)</summary>
-    public decimal? BestAsk => _asks.Count > 0 ? _asks.GetKeyByIndex(0) : null;
+    public decimal? BestAsk
+    {
+        get
+        {
+            var keys = _asks.Keys;
+            return keys.Length > 0 ? keys[0] : null;
+        }
+    }
 
     /// <summary>Mid price (average of best bid and ask)</summary>
     public decimal? MidPrice
@@ -171,7 +185,7 @@ public class OrderBook
     /// <param name="count">Maximum number of levels to return</param>
     public ReadOnlySpan<BookLevel> GetTopBids(int count)
     {
-        if (_bids.Count == 0) return ReadOnlySpan<BookLevel>.Empty;
+        if (count <= 0 || _bids.Count == 0) return ReadOnlySpan<BookLevel>.Empty;
 
         // Bids are sorted low to high, we want highest first
         var startIndex = Math.Max(0, _bids.Count - count);
@@ -186,7 +200,7 @@ public class OrderBook
     /// <param name="count">Maximum number of levels to return</param>
     public ReadOnlySpan<BookLevel> GetTopAsks(int count)
     {
-        if (_asks.Count == 0) return ReadOnlySpan<BookLevel>.Empty;
+        if (count <= 0 || _asks.Count == 0) return ReadOnlySpan<BookLevel>.Empty;
 
         var actualCount = Math.Min(count, _asks.Count);
         return _asks.GetRange(0, actualCount);
@@ -197,6 +211,9 @@ public class OrderBook
     /// </summary>
     public ReadOnlySpan<BookLevel> GetBidsInRange(decimal minPrice, decimal maxPrice)
     {
+        if (minPrice > maxPrice)
+            return ReadOnlySpan<BookLevel>.Empty;
+
         if (_bids.Count == 0) return ReadOnlySpan<BookLevel>.Empty;
 
         var startIdx = _bids.LowerBound(minPrice);
@@ -214,6 +231,9 @@ public class OrderBook
     /// </summary>
     public ReadOnlySpan<BookLevel> GetAsksInRange(decimal minPrice, decimal maxPrice)
     {
+        if (minPrice > maxPrice)
+            return ReadOnlySpan<BookLevel>.Empty;
+
         if (_asks.Count == 0) return ReadOnlySpan<BookLevel>.Empty;
 
         var startIdx = _asks.LowerBound(minPrice);
@@ -242,9 +262,10 @@ public class OrderBook
 
     private void ClearDirtyFlagsInternal(SortedArray<decimal, BookLevel> levels)
     {
-        for (int i = 0; i < levels.Count; i++)
+        var values = levels.Values;
+        for (int i = 0; i < values.Length; i++)
         {
-            var level = levels.GetByIndex(i);
+            var level = values[i];
             if (level.IsDirty)
             {
                 level.IsDirty = false;
@@ -261,9 +282,10 @@ public class OrderBook
         var dirtyLevels = new List<BookLevel>();
 
         // Check dirty bids
-        for (int i = 0; i < _bids.Count; i++)
+        var bidValues = _bids.Values;
+        for (int i = 0; i < bidValues.Length; i++)
         {
-            var level = _bids.GetByIndex(i);
+            var level = bidValues[i];
             if (level.IsDirty)
             {
                 dirtyLevels.Add(level);
@@ -271,9 +293,10 @@ public class OrderBook
         }
 
         // Check dirty asks
-        for (int i = 0; i < _asks.Count; i++)
+        var askValues = _asks.Values;
+        for (int i = 0; i < askValues.Length; i++)
         {
-            var level = _asks.GetByIndex(i);
+            var level = askValues[i];
             if (level.IsDirty)
             {
                 dirtyLevels.Add(level);
@@ -316,6 +339,19 @@ public class OrderBook
     /// </summary>
     public OrderBookSnapshot GetSnapshot(decimal centerPrice, int visibleLevels, bool fillEmptyLevels = false)
     {
+        if (visibleLevels <= 0)
+        {
+            return new OrderBookSnapshot
+            {
+                BestBid = BestBid,
+                BestAsk = BestAsk,
+                MidPrice = MidPrice,
+                Bids = Array.Empty<BookLevel>(),
+                Asks = Array.Empty<BookLevel>(),
+                Timestamp = DateTime.UtcNow
+            };
+        }
+
         var halfLevels = visibleLevels / 2;
 
         // Get bids at or below center price (inclusive)

@@ -1,4 +1,4 @@
-import { Side, PriceLevel, OrderBookSnapshot } from './types';
+import { Side, PriceLevel, OrderBookSnapshot, Order, OrderUpdate, OrderUpdateType, DirtyLevelChange } from './types';
 import type { WorkerRequest, WorkerResponse } from './wasm-types';
 
 /**
@@ -11,8 +11,15 @@ export class WasmPriceLadder {
     private readyPromise: Promise<void>;
     private snapshotCallback?: (snapshot: OrderBookSnapshot) => void;
     private updateCount: number = 0;
+    private tickSize: number;
+    private generation: number = 0;
+    private priceBatchInFlight: boolean = false;
+    private orderBatchInFlight: boolean = false;
+    private priceBatchQueue: PriceLevel[][] = [];
+    private orderBatchQueue: Array<Array<{ update: OrderUpdate; type: OrderUpdateType }>> = [];
 
     constructor(maxLevels: number = 200, tickSize: number = 0.01) {
+        this.tickSize = tickSize;
         // Create the Web Worker as a module worker
         // This allows it to import the .NET WASM runtime as an ES module
         this.worker = new Worker(new URL('./wasm-worker-module.ts', import.meta.url), {
@@ -73,7 +80,8 @@ export class WasmPriceLadder {
             side: update.side,
             price: update.price,
             quantity: update.quantity,
-            numOrders: update.numOrders
+            numOrders: update.numOrders,
+            generation: this.generation
         });
     }
 
@@ -86,16 +94,54 @@ export class WasmPriceLadder {
             return;
         }
 
-        this.updateCount += updates.length;
+        this.enqueuePriceBatch(updates);
+    }
+
+    /**
+     * Set data mode (PriceLevel or MBO)
+     */
+    public setDataMode(mode: 'PriceLevel' | 'MBO'): void {
+        if (!this.isReady) {
+            console.warn('WASM not ready, mode change ignored');
+            return;
+        }
+
+        const modeValue = mode === 'MBO' ? 1 : 0;
+        this.postMessage({ type: 'setDataMode', mode: modeValue });
+    }
+
+    /**
+     * Process a single order update (MBO mode)
+     */
+    public processOrderUpdate(update: OrderUpdate, type: OrderUpdateType): void {
+        if (!this.isReady) {
+            console.warn('WASM not ready, order update ignored');
+            return;
+        }
+
+        this.updateCount++;
         this.postMessage({
-            type: 'batch',
-            updates: updates.map(u => ({
-                side: u.side,
-                price: u.price,
-                quantity: u.quantity,
-                numOrders: u.numOrders
-            }))
+            type: 'orderUpdate',
+            orderId: update.orderId,
+            side: update.side,
+            price: this.roundToTick(update.price),
+            quantity: update.quantity,
+            priority: update.priority,
+            updateType: type,
+            generation: this.generation
         });
+    }
+
+    /**
+     * Process multiple order updates in batch (MBO mode)
+     */
+    public processOrderBatch(updates: Array<{ update: OrderUpdate; type: OrderUpdateType }>): void {
+        if (!this.isReady) {
+            console.warn('WASM not ready, order batch ignored');
+            return;
+        }
+
+        this.enqueueOrderBatch(updates);
     }
 
     /**
@@ -103,7 +149,7 @@ export class WasmPriceLadder {
      */
     public flush(): void {
         if (this.isReady) {
-            this.postMessage({ type: 'flush' });
+            this.postMessage({ type: 'flush', generation: this.generation });
         }
     }
 
@@ -113,8 +159,23 @@ export class WasmPriceLadder {
     public clear(): void {
         if (this.isReady) {
             this.updateCount = 0;
+            this.bumpGeneration();
             this.postMessage({ type: 'clear' });
         }
+    }
+
+    public dropPendingUpdates(): void {
+        if (this.isReady) {
+            this.bumpGeneration();
+            this.postMessage({ type: 'clearPending' });
+        }
+    }
+
+    public isBackpressured(): boolean {
+        return this.priceBatchInFlight
+            || this.orderBatchInFlight
+            || this.priceBatchQueue.length > 0
+            || this.orderBatchQueue.length > 0;
     }
 
     /**
@@ -157,6 +218,15 @@ export class WasmPriceLadder {
         this.worker.postMessage(message);
     }
 
+    private bumpGeneration(): void {
+        this.generation += 1;
+        this.priceBatchInFlight = false;
+        this.orderBatchInFlight = false;
+        this.priceBatchQueue = [];
+        this.orderBatchQueue = [];
+        this.postMessage({ type: 'setGeneration', generation: this.generation });
+    }
+
     private handleWorkerMessage(e: MessageEvent<WorkerResponse>): void {
         const response = e.data;
 
@@ -164,12 +234,25 @@ export class WasmPriceLadder {
             case 'snapshot':
                 if (this.snapshotCallback) {
                     const data = JSON.parse(response.data);
+                    const bidOrders = this.parseOrderMap(data.bidOrders);
+                    const askOrders = this.parseOrderMap(data.askOrders);
+                    const dirtyChanges: DirtyLevelChange[] | undefined = Array.isArray(data.dirtyChanges)
+                        ? data.dirtyChanges.map((change: any) => ({
+                            price: this.roundToTick(change.price),
+                            side: change.side as Side,
+                            isRemoval: !!change.isRemoval,
+                            isAddition: !!change.isAddition
+                        }))
+                        : undefined;
+                    const structuralChange = typeof data.structuralChange === 'boolean'
+                        ? data.structuralChange
+                        : undefined;
                     const snapshot: OrderBookSnapshot = {
                         bestBid: data.bestBid,
                         bestAsk: data.bestAsk,
                         midPrice: data.midPrice,
                         bids: data.bids.map((b: any) => ({
-                            price: b.price,
+                            price: this.roundToTick(b.price),
                             quantity: b.quantity,
                             numOrders: b.numOrders,
                             side: b.side as Side,
@@ -177,16 +260,33 @@ export class WasmPriceLadder {
                             hasOwnOrders: false
                         })),
                         asks: data.asks.map((a: any) => ({
-                            price: a.price,
+                            price: this.roundToTick(a.price),
                             quantity: a.quantity,
                             numOrders: a.numOrders,
                             side: a.side as Side,
                             isDirty: true,
                             hasOwnOrders: false
                         })),
-                        timestamp: new Date(data.timestamp / 10000).getTime()
+                        timestamp: new Date(data.timestamp / 10000).getTime(),
+                        bidOrders,
+                        askOrders,
+                        dirtyChanges,
+                        structuralChange
                     };
                     this.snapshotCallback(snapshot);
+                }
+                break;
+
+            case 'batchProcessed':
+                if (response.generation !== this.generation) {
+                    break;
+                }
+                if (response.kind === 'price') {
+                    this.priceBatchInFlight = false;
+                    this.sendNextPriceBatch();
+                } else {
+                    this.orderBatchInFlight = false;
+                    this.sendNextOrderBatch();
                 }
                 break;
 
@@ -198,5 +298,105 @@ export class WasmPriceLadder {
 
     private handleWorkerError(error: ErrorEvent): void {
         console.error('WASM worker error event:', error.message);
+    }
+
+    private parseOrderMap(source: any): Map<number, Order[]> | null {
+        if (!source) {
+            return null;
+        }
+
+        const map = new Map<number, Order[]>();
+        for (const key of Object.keys(source)) {
+            const price = Number(key);
+            if (!Number.isFinite(price)) {
+                continue;
+            }
+
+            const roundedPrice = this.roundToTick(price);
+            const orders = (source[key] as any[]).map((order) => ({
+                orderId: order.orderId,
+                quantity: order.quantity,
+                priority: order.priority
+            }));
+            map.set(roundedPrice, orders);
+        }
+
+        return map;
+    }
+
+    private roundToTick(price: number): number {
+        return Math.round(price / this.tickSize) * this.tickSize;
+    }
+
+    private enqueuePriceBatch(updates: PriceLevel[]): void {
+        if (updates.length === 0) {
+            return;
+        }
+
+        this.updateCount += updates.length;
+        this.priceBatchQueue.push(updates);
+        if (!this.priceBatchInFlight) {
+            this.sendNextPriceBatch();
+        }
+    }
+
+    private sendNextPriceBatch(): void {
+        if (this.priceBatchInFlight) {
+            return;
+        }
+
+        const updates = this.priceBatchQueue.shift();
+        if (!updates) {
+            return;
+        }
+
+        this.priceBatchInFlight = true;
+        this.postMessage({
+            type: 'batch',
+            updates: updates.map(u => ({
+                side: u.side,
+                price: u.price,
+                quantity: u.quantity,
+                numOrders: u.numOrders
+            })),
+            generation: this.generation
+        });
+    }
+
+    private enqueueOrderBatch(updates: Array<{ update: OrderUpdate; type: OrderUpdateType }>): void {
+        if (updates.length === 0) {
+            return;
+        }
+
+        this.updateCount += updates.length;
+        this.orderBatchQueue.push(updates);
+        if (!this.orderBatchInFlight) {
+            this.sendNextOrderBatch();
+        }
+    }
+
+    private sendNextOrderBatch(): void {
+        if (this.orderBatchInFlight) {
+            return;
+        }
+
+        const updates = this.orderBatchQueue.shift();
+        if (!updates) {
+            return;
+        }
+
+        this.orderBatchInFlight = true;
+        this.postMessage({
+            type: 'orderBatch',
+            updates: updates.map(item => ({
+                orderId: item.update.orderId,
+                side: item.update.side,
+                price: this.roundToTick(item.update.price),
+                quantity: item.update.quantity,
+                priority: item.update.priority,
+                updateType: item.type
+            })),
+            generation: this.generation
+        });
     }
 }

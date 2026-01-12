@@ -1,5 +1,6 @@
 using SlickLadder.Core.DataStructures;
 using SlickLadder.Core.Models;
+using System;
 using System.Runtime.InteropServices;
 
 namespace SlickLadder.Core.Managers;
@@ -219,12 +220,13 @@ public class MBOManager : IMarketDataMode
     {
         if (_bidOrdersDirty || _cachedBidOrders == null)
         {
-            _cachedBidOrders = new Dictionary<decimal, Order[]>(_bidLevels.Count);
-            for (int i = 0; i < _bidLevels.Count; i++)
+            var prices = _bidLevels.Keys;
+            var levels = _bidLevels.Values;
+            var count = Math.Min(prices.Length, levels.Length);
+            _cachedBidOrders = new Dictionary<decimal, Order[]>(count);
+            for (int i = 0; i < count; i++)
             {
-                var level = _bidLevels.GetByIndex(i);
-                var price = _bidLevels.GetKeyByIndex(i);
-                _cachedBidOrders[price] = level.GetOrdersArray();
+                _cachedBidOrders[prices[i]] = levels[i].GetOrdersArray();
             }
             _bidOrdersDirty = false;
         }
@@ -239,12 +241,13 @@ public class MBOManager : IMarketDataMode
     {
         if (_askOrdersDirty || _cachedAskOrders == null)
         {
-            _cachedAskOrders = new Dictionary<decimal, Order[]>(_askLevels.Count);
-            for (int i = 0; i < _askLevels.Count; i++)
+            var prices = _askLevels.Keys;
+            var levels = _askLevels.Values;
+            var count = Math.Min(prices.Length, levels.Length);
+            _cachedAskOrders = new Dictionary<decimal, Order[]>(count);
+            for (int i = 0; i < count; i++)
             {
-                var level = _askLevels.GetByIndex(i);
-                var price = _askLevels.GetKeyByIndex(i);
-                _cachedAskOrders[price] = level.GetOrdersArray();
+                _cachedAskOrders[prices[i]] = levels[i].GetOrdersArray();
             }
             _askOrdersDirty = false;
         }
@@ -310,11 +313,15 @@ public class OrderLevel
     {
         if (_arrayDirty || _cachedOrderArray == null)
         {
-            var count = Orders.Count;
-            _cachedOrderArray = new Order[count];
-            for (int i = 0; i < count; i++)
+            var values = Orders.Values;
+            if (values.Length == 0)
             {
-                _cachedOrderArray[i] = Orders.GetByIndex(i);
+                _cachedOrderArray = Array.Empty<Order>();
+            }
+            else
+            {
+                _cachedOrderArray = new Order[values.Length];
+                values.CopyTo(_cachedOrderArray);
             }
             _arrayDirty = false;
         }

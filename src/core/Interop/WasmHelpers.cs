@@ -98,6 +98,28 @@ public static class WasmHelpers
             sb.Append("},");
         }
 
+        // dirtyChanges (incremental render hints)
+        if (snapshot.DirtyChanges != null)
+        {
+            sb.Append("\"dirtyChanges\":[");
+            for (int i = 0; i < snapshot.DirtyChanges.Length; i++)
+            {
+                if (i > 0) sb.Append(",");
+                var change = snapshot.DirtyChanges[i];
+                sb.Append("{");
+                sb.Append($"\"price\":{(double)change.Price:G17},");
+                sb.Append($"\"side\":{(int)change.Side},");
+                sb.Append($"\"isRemoval\":{(change.IsRemoval ? "true" : "false")},");
+                sb.Append($"\"isAddition\":{(change.IsAddition ? "true" : "false")}");
+                sb.Append("}");
+            }
+            sb.Append("],");
+        }
+
+        sb.Append("\"structuralChange\":");
+        sb.Append(snapshot.StructuralChange ? "true" : "false");
+        sb.Append(",");
+
         // timestamp
         sb.Append($"\"timestamp\":{snapshot.Timestamp.Ticks}");
 

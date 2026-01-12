@@ -34,8 +34,8 @@ public class RenderConfig
     public float FontSize { get; } = 12.0f;
 
     // Order segment gap (MBO volume bars)
-    public float OrderSegmentGap { get; } = 1.0f;
-    public float MinOrderSegmentWidth { get; } = 1.0f;
+    public float OrderSegmentGap { get; } = 2.0f;
+    public float MinOrderSegmentWidth { get; } = 2.0f;
 
     // Layout constants (must match web version exactly)
     public const int RowHeight = 24;

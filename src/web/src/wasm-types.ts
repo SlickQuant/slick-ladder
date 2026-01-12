@@ -8,6 +8,9 @@ export interface WasmExports {
     GetLatestSnapshot(): string;
     ProcessPriceLevelUpdate(side: number, price: number, quantity: number, numOrders: number): void;
     ProcessPriceLevelUpdateNoFlush(side: number, price: number, quantity: number, numOrders: number): void;
+    SetDataMode(mode: number): void;
+    ProcessOrderUpdate(orderId: number, side: number, price: number, quantity: number, priority: number, updateType: number): void;
+    ProcessOrderUpdateNoFlush(orderId: number, side: number, price: number, quantity: number, priority: number, updateType: number): void;
     Flush(): void;
     GetBestBid(): number;
     GetBestAsk(): number;
@@ -16,6 +19,7 @@ export interface WasmExports {
     GetBidCount(): number;
     GetAskCount(): number;
     Clear(): void;
+    ClearPendingUpdates(): void;
     GetMetrics(): string;
 }
 
@@ -36,10 +40,15 @@ export interface WasmModule {
  */
 export type WorkerRequest =
     | { type: 'init'; maxLevels: number; tickSize: number }
-    | { type: 'update'; side: number; price: number; quantity: number; numOrders: number }
-    | { type: 'batch'; updates: Array<{ side: number; price: number; quantity: number; numOrders: number }> }
-    | { type: 'flush' }
+    | { type: 'update'; side: number; price: number; quantity: number; numOrders: number; generation: number }
+    | { type: 'batch'; updates: Array<{ side: number; price: number; quantity: number; numOrders: number }>; generation: number }
+    | { type: 'setDataMode'; mode: number }
+    | { type: 'orderUpdate'; orderId: number; side: number; price: number; quantity: number; priority: number; updateType: number; generation: number }
+    | { type: 'orderBatch'; updates: Array<{ orderId: number; side: number; price: number; quantity: number; priority: number; updateType: number }>; generation: number }
+    | { type: 'flush'; generation: number }
     | { type: 'clear' }
+    | { type: 'clearPending' }
+    | { type: 'setGeneration'; generation: number }
     | { type: 'getMetrics' };
 
 /**
@@ -48,5 +57,6 @@ export type WorkerRequest =
 export type WorkerResponse =
     | { type: 'ready' }
     | { type: 'snapshot'; data: string }
+    | { type: 'batchProcessed'; kind: 'price' | 'order'; durationMs: number; generation: number }
     | { type: 'metrics'; data: string }
     | { type: 'error'; message: string };

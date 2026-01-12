@@ -119,7 +119,9 @@ public class SortedArray<TKey, TValue> where TKey : IComparable<TKey>
     public TValue GetByIndex(int index)
     {
         if (index < 0 || index >= _count)
-            throw new ArgumentOutOfRangeException(nameof(index));
+        {
+            return default!;
+        }
 
         return _values[index];
     }
@@ -131,7 +133,9 @@ public class SortedArray<TKey, TValue> where TKey : IComparable<TKey>
     public TKey GetKeyByIndex(int index)
     {
         if (index < 0 || index >= _count)
-            throw new ArgumentOutOfRangeException(nameof(index));
+        {
+            return default!;
+        }
 
         return _keys[index];
     }
@@ -142,8 +146,8 @@ public class SortedArray<TKey, TValue> where TKey : IComparable<TKey>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Span<TValue> GetRange(int startIndex, int count)
     {
-        if (startIndex < 0 || startIndex >= _count)
-            throw new ArgumentOutOfRangeException(nameof(startIndex));
+        if (startIndex < 0 || startIndex >= _count || count <= 0)
+            return Span<TValue>.Empty;
 
         count = Math.Min(count, _count - startIndex);
         return new Span<TValue>(_values, startIndex, count);
@@ -201,12 +205,46 @@ public class SortedArray<TKey, TValue> where TKey : IComparable<TKey>
     /// <summary>
     /// Get all keys as a span (sorted order). O(1).
     /// </summary>
-    public ReadOnlySpan<TKey> Keys => new ReadOnlySpan<TKey>(_keys, 0, _count);
+    public ReadOnlySpan<TKey> Keys
+    {
+        get
+        {
+            if (_count <= 0)
+            {
+                return ReadOnlySpan<TKey>.Empty;
+            }
+
+            var length = _count;
+            if (length > _keys.Length)
+            {
+                length = _keys.Length;
+            }
+
+            return new ReadOnlySpan<TKey>(_keys, 0, length);
+        }
+    }
 
     /// <summary>
     /// Get all values as a span (sorted by key). O(1).
     /// </summary>
-    public ReadOnlySpan<TValue> Values => new ReadOnlySpan<TValue>(_values, 0, _count);
+    public ReadOnlySpan<TValue> Values
+    {
+        get
+        {
+            if (_count <= 0)
+            {
+                return ReadOnlySpan<TValue>.Empty;
+            }
+
+            var length = _count;
+            if (length > _values.Length)
+            {
+                length = _values.Length;
+            }
+
+            return new ReadOnlySpan<TValue>(_values, 0, length);
+        }
+    }
 
     /// <summary>
     /// Double the capacity

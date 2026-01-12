@@ -7,6 +7,9 @@ import type { WorkerRequest, WorkerResponse, WasmExports } from './wasm-types';
 
 let wasmExports: WasmExports | null = null;
 let isInitialized = false;
+let currentGeneration = 0;
+const SLOW_BATCH_MS = 16;
+let lastSlowBatchLogMs = 0;
 
 // Filter out known harmless .NET runtime diagnostic messages
 const originalConsoleError = console.error;
@@ -32,6 +35,9 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
                 break;
 
             case 'update':
+                if (request.generation !== currentGeneration) {
+                    break;
+                }
                 if (wasmExports) {
                     wasmExports.ProcessPriceLevelUpdate(
                         request.side,
@@ -43,8 +49,10 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
                 break;
 
             case 'batch':
+                if (request.generation !== currentGeneration) {
+                    break;
+                }
                 if (wasmExports) {
-                    console.log(`[WASM Worker] Processing batch of ${request.updates.length} updates`);
                     const startTime = performance.now();
                     for (const update of request.updates) {
                         wasmExports.ProcessPriceLevelUpdateNoFlush(
@@ -56,12 +64,87 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
                     }
                     wasmExports.Flush();
                     const endTime = performance.now();
-                    console.log(`[WASM Worker] Batch processed in ${(endTime - startTime).toFixed(3)}ms`);
+                    const durationMs = endTime - startTime;
+                    const now = performance.now();
+                    if (durationMs >= SLOW_BATCH_MS && now - lastSlowBatchLogMs > 1000) {
+                        console.log(`[WASM Worker] Batch processed in ${durationMs.toFixed(3)}ms`);
+                        lastSlowBatchLogMs = now;
+                    }
+                    postMessage({
+                        type: 'batchProcessed',
+                        kind: 'price',
+                        durationMs,
+                        generation: currentGeneration
+                    } as WorkerResponse);
+                }
+                break;
+
+            case 'setDataMode':
+                wasmExports?.SetDataMode(request.mode);
+                break;
+
+            case 'orderUpdate':
+                if (request.generation !== currentGeneration) {
+                    break;
+                }
+                if (wasmExports) {
+                    wasmExports.ProcessOrderUpdate(
+                        request.orderId,
+                        request.side,
+                        request.price,
+                        request.quantity,
+                        request.priority,
+                        request.updateType
+                    );
+                }
+                break;
+
+            case 'orderBatch':
+                if (request.generation !== currentGeneration) {
+                    break;
+                }
+                if (wasmExports) {
+                    const startTime = performance.now();
+                    for (const update of request.updates) {
+                        wasmExports.ProcessOrderUpdateNoFlush(
+                            update.orderId,
+                            update.side,
+                            update.price,
+                            update.quantity,
+                            update.priority,
+                            update.updateType
+                        );
+                    }
+                    wasmExports.Flush();
+                    const endTime = performance.now();
+                    const durationMs = endTime - startTime;
+                    const now = performance.now();
+                    if (durationMs >= SLOW_BATCH_MS && now - lastSlowBatchLogMs > 1000) {
+                        console.log(`[WASM Worker] Order batch processed in ${durationMs.toFixed(3)}ms`);
+                        lastSlowBatchLogMs = now;
+                    }
+                    postMessage({
+                        type: 'batchProcessed',
+                        kind: 'order',
+                        durationMs,
+                        generation: currentGeneration
+                    } as WorkerResponse);
                 }
                 break;
 
             case 'flush':
+                if (request.generation !== currentGeneration) {
+                    break;
+                }
                 wasmExports?.Flush();
+                break;
+
+            case 'clearPending':
+                wasmExports?.ClearPendingUpdates();
+                break;
+
+            case 'setGeneration':
+                currentGeneration = request.generation;
                 break;
 
             case 'clear':
@@ -76,9 +159,12 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
                 break;
         }
     } catch (error) {
+        const details = error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error);
         postMessage({
             type: 'error',
-            message: error instanceof Error ? error.message : String(error)
+            message: `[${request.type}] ${details}`
         } as WorkerResponse);
     }
 };

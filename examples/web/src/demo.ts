@@ -1,7 +1,7 @@
 import { PriceLadder } from 'slick-ladder/main';
 import { WasmPriceLadder } from 'slick-ladder/wasm-adapter';
 import { CanvasRenderer } from 'slick-ladder/canvas-renderer';
-import { Side, PriceLevel } from 'slick-ladder/types';
+import { Side, PriceLevel, OrderUpdate, OrderUpdateType, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER } from 'slick-ladder/types';
 
 /**
  * Demo application showing SlickUI price ladder in action
@@ -18,6 +18,19 @@ let processingTimes: number[] = [];
 let actualUpdateRate = 0;
 let lastUpdateCount = 0;
 let lastUpdateTime = Date.now();
+
+// MBO simulation state
+const MBO_TARGET_TOTAL_ORDERS = 1500;
+const MBO_MAX_ORDERS_PER_LEVEL = 25;
+const MBO_LEVEL_REMOVAL_CHANCE = 0.04;
+const MBO_MIN_ORDER_QTY = 50;
+const MBO_MID_ORDER_QTY = 500;
+const MBO_MAX_ORDER_QTY = 20000;
+
+const mboOrdersByPrice = new Map<number, number[]>();
+const mboOrderIndex = new Map<number, { price: number; side: Side }>();
+let mboNextOrderId = 1;
+let mboTotalOrders = 0;
 
 // Initialize on DOM ready
 if (document.readyState === 'loading') {
@@ -78,12 +91,14 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const tickSizeSelect = document.getElementById('tick-size') as HTMLSelectElement;
             const tickSize = parseFloat(tickSizeSelect?.value ?? '0.01');
 
+            // Get current data mode
+            const dataModeSelect = document.getElementById('data-mode') as HTMLSelectElement;
+            const dataMode = (dataModeSelect?.value as 'PriceLevel' | 'MBO') ?? 'PriceLevel';
+
             // Calculate initial canvas width based on display settings
-            const COL_WIDTH = 66.7;
-            let columnCount = 6;
-            if (!showOrderCount) columnCount -= 2;
-            if (!showVolumeBars) columnCount -= 1;
-            const canvasWidth = Math.round(COL_WIDTH * columnCount);
+            const dataColumns = showOrderCount ? 5 : 3;
+            const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
+            const canvasWidth = Math.round((dataColumns * COL_WIDTH) + barWidth);
 
             // Create canvas for rendering
             const canvas = document.createElement('canvas');
@@ -96,6 +111,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
 
             // Wait for WASM to be ready
             await wasmLadder.waitForReady();
+            wasmLadder.setDataMode(dataMode);
 
             // Create renderer with current display settings
             renderer = new CanvasRenderer(canvas, canvasWidth, 600, 24, undefined, showVolumeBars, showOrderCount, tickSize);
@@ -215,12 +231,14 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         const tickSizeSelect = document.getElementById('tick-size') as HTMLSelectElement;
         const tickSize = parseFloat(tickSizeSelect?.value ?? '0.01');
 
+        // Get current data mode
+        const dataModeSelect = document.getElementById('data-mode') as HTMLSelectElement;
+        const dataMode = (dataModeSelect?.value as 'PriceLevel' | 'MBO') ?? 'PriceLevel';
+
         // Calculate initial width based on display settings
-        const COL_WIDTH = 66.7;
-        let columnCount = 6;
-        if (!showOrderCount) columnCount -= 2;
-        if (!showVolumeBars) columnCount -= 1;
-        const initialWidth = Math.round(COL_WIDTH * columnCount);
+        const dataColumns = showOrderCount ? 5 : 3;
+        const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
+        const initialWidth = Math.round((dataColumns * COL_WIDTH) + barWidth);
 
         // Create TypeScript ladder
         ladder = new PriceLadder({
@@ -229,6 +247,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             height: 600,
             rowHeight: 24,
             tickSize,
+            mode: dataMode,
             readOnly: false,
             showVolumeBars,
             showOrderCount,
@@ -265,6 +284,8 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
 function initializeOrderBook() {
     if (!ladder) return;
 
+    const dataMode = getSelectedDataMode();
+
     // Get current tick size from the renderer
     let tickSize = 0.01;
     if (ladder instanceof PriceLadder) {
@@ -274,6 +295,14 @@ function initializeOrderBook() {
         }
     } else if (renderer) {
         tickSize = renderer.getTickSize();
+    }
+
+    if (dataMode === 'MBO') {
+        resetMboState();
+        const seedUpdates = seedMboOrders(tickSize);
+        applyMboUpdates(seedUpdates);
+        console.log(`MBO order book initialized with ${mboTotalOrders} orders (tickSize: ${tickSize})`);
+        return;
     }
 
     const basePrice = 100;
@@ -310,6 +339,262 @@ function initializeOrderBook() {
     console.log(`Order book initialized with sample data (tickSize: ${tickSize})`);
 }
 
+function getSelectedDataMode(): 'PriceLevel' | 'MBO' {
+    const dataModeSelect = document.getElementById('data-mode') as HTMLSelectElement;
+    return (dataModeSelect?.value as 'PriceLevel' | 'MBO') ?? 'PriceLevel';
+}
+
+function resetMboState(): void {
+    mboOrdersByPrice.clear();
+    mboOrderIndex.clear();
+    mboNextOrderId = 1;
+    mboTotalOrders = 0;
+}
+
+function seedMboOrders(tickSize: number): Array<{ update: OrderUpdate; type: OrderUpdateType }> {
+    const updates: Array<{ update: OrderUpdate; type: OrderUpdateType }> = [];
+    const basePrice = 100;
+    const levelsPerSide = 30;
+
+    for (let levelOffset = 1; levelOffset <= levelsPerSide; levelOffset++) {
+        const price = roundToTick(basePrice + tickSize * levelOffset, tickSize);
+        const ordersPerLevel = randomInt(6, 14);
+        for (let i = 0; i < ordersPerLevel; i++) {
+            updates.push(createMboAddUpdate(Side.ASK, price));
+        }
+    }
+
+    for (let levelOffset = 0; levelOffset < levelsPerSide; levelOffset++) {
+        const price = roundToTick(basePrice - tickSize * levelOffset, tickSize);
+        const ordersPerLevel = randomInt(6, 14);
+        for (let i = 0; i < ordersPerLevel; i++) {
+            updates.push(createMboAddUpdate(Side.BID, price));
+        }
+    }
+
+    return updates;
+}
+
+function applyMboUpdates(updates: Array<{ update: OrderUpdate; type: OrderUpdateType }>): void {
+    if (!ladder || updates.length === 0) return;
+
+    if (ladder instanceof WasmPriceLadder) {
+        ladder.processOrderBatch(updates);
+        return;
+    }
+
+    if (ladder instanceof PriceLadder) {
+        if (typeof (ladder as any).processOrderBatch === 'function') {
+            (ladder as any).processOrderBatch(updates);
+        } else {
+            for (const item of updates) {
+                ladder.processOrderUpdate(item.update, item.type);
+            }
+        }
+    }
+}
+
+function createMboAddUpdate(side: Side, price: number): { update: OrderUpdate; type: OrderUpdateType } {
+    const orderId = mboNextOrderId++;
+    const update: OrderUpdate = {
+        orderId,
+        side,
+        price,
+        quantity: nextMboOrderQuantity(),
+        priority: orderId
+    };
+
+    trackMboOrder(orderId, price, side);
+    return { update, type: OrderUpdateType.Add };
+}
+
+function createMboModifyUpdate(orderId: number, side: Side, price: number): { update: OrderUpdate; type: OrderUpdateType } {
+    const update: OrderUpdate = {
+        orderId,
+        side,
+        price,
+        quantity: nextMboOrderQuantity(),
+        priority: 0
+    };
+
+    return { update, type: OrderUpdateType.Modify };
+}
+
+function createMboDeleteUpdate(orderId: number, side: Side, price: number): { update: OrderUpdate; type: OrderUpdateType } {
+    const update: OrderUpdate = {
+        orderId,
+        side,
+        price,
+        quantity: 0,
+        priority: 0
+    };
+
+    untrackMboOrder(orderId, price);
+    return { update, type: OrderUpdateType.Delete };
+}
+
+function trackMboOrder(orderId: number, price: number, side: Side): void {
+    const orders = mboOrdersByPrice.get(price) ?? [];
+    if (!mboOrdersByPrice.has(price)) {
+        mboOrdersByPrice.set(price, orders);
+    }
+    orders.push(orderId);
+    mboOrderIndex.set(orderId, { price, side });
+    mboTotalOrders++;
+}
+
+function untrackMboOrder(orderId: number, price: number): void {
+    const orders = mboOrdersByPrice.get(price);
+    if (orders) {
+        const index = orders.indexOf(orderId);
+        if (index >= 0) {
+            orders.splice(index, 1);
+            mboTotalOrders = Math.max(0, mboTotalOrders - 1);
+        }
+        if (orders.length === 0) {
+            mboOrdersByPrice.delete(price);
+        }
+    }
+    mboOrderIndex.delete(orderId);
+}
+
+function getRandomOrder(): { orderId: number; price: number; side: Side } | null {
+    if (mboOrderIndex.size === 0) return null;
+    const ids = Array.from(mboOrderIndex.keys());
+    const orderId = ids[Math.floor(Math.random() * ids.length)];
+    const info = mboOrderIndex.get(orderId);
+    if (!info) return null;
+    return { orderId, price: info.price, side: info.side };
+}
+
+function generateMboUpdates(tickSize: number): Array<{ update: OrderUpdate; type: OrderUpdateType }> {
+    const updates: Array<{ update: OrderUpdate; type: OrderUpdateType }> = [];
+    const action = chooseMboAction();
+
+    if (action === 'Add') {
+        const update = addRandomMboOrder(tickSize);
+        if (update) updates.push(update);
+    } else if (action === 'Modify') {
+        const update = modifyRandomMboOrder();
+        if (update) updates.push(update);
+    } else {
+        updates.push(...deleteRandomMboOrder());
+    }
+
+    return updates;
+}
+
+function chooseMboAction(): 'Add' | 'Modify' | 'Delete' {
+    const upperBound = MBO_TARGET_TOTAL_ORDERS + Math.floor(MBO_TARGET_TOTAL_ORDERS / 5);
+    const lowerBound = MBO_TARGET_TOTAL_ORDERS - Math.floor(MBO_TARGET_TOTAL_ORDERS / 5);
+
+    if (mboTotalOrders >= upperBound) {
+        return Math.random() < 0.7 ? 'Delete' : 'Modify';
+    }
+
+    if (mboTotalOrders <= lowerBound) {
+        return Math.random() < 0.7 ? 'Add' : 'Modify';
+    }
+
+    const roll = Math.random();
+    if (roll < 0.4) return 'Add';
+    if (roll < 0.75) return 'Modify';
+    return 'Delete';
+}
+
+function addRandomMboOrder(tickSize: number): { update: OrderUpdate; type: OrderUpdateType } | null {
+    if (mboTotalOrders >= MBO_TARGET_TOTAL_ORDERS + Math.floor(MBO_TARGET_TOTAL_ORDERS / 2)) {
+        return modifyRandomMboOrder();
+    }
+
+    const side = Math.random() < 0.5 ? Side.BID : Side.ASK;
+    const price = findPriceWithCapacity(side, tickSize);
+    if (price === null) {
+        return modifyRandomMboOrder();
+    }
+
+    return createMboAddUpdate(side, price);
+}
+
+function modifyRandomMboOrder(): { update: OrderUpdate; type: OrderUpdateType } | null {
+    const order = getRandomOrder();
+    if (!order) return null;
+    return createMboModifyUpdate(order.orderId, order.side, order.price);
+}
+
+function deleteRandomMboOrder(): Array<{ update: OrderUpdate; type: OrderUpdateType }> {
+    const order = getRandomOrder();
+    if (!order) return [];
+
+    const ordersAtPrice = mboOrdersByPrice.get(order.price) ?? [];
+    if (ordersAtPrice.length <= 1 || Math.random() < MBO_LEVEL_REMOVAL_CHANCE) {
+        const updates: Array<{ update: OrderUpdate; type: OrderUpdateType }> = [];
+        const snapshot = [...ordersAtPrice];
+        for (const orderId of snapshot) {
+            const info = mboOrderIndex.get(orderId);
+            if (!info) continue;
+            updates.push(createMboDeleteUpdate(orderId, info.side, info.price));
+        }
+        return updates;
+    }
+
+    return [createMboDeleteUpdate(order.orderId, order.side, order.price)];
+}
+
+function findPriceWithCapacity(side: Side, tickSize: number): number | null {
+    for (let attempt = 0; attempt < 6; attempt++) {
+        const price = generateMboPrice(side, tickSize);
+        const orders = mboOrdersByPrice.get(price);
+        if (!orders || orders.length < MBO_MAX_ORDERS_PER_LEVEL) {
+            return price;
+        }
+    }
+
+    for (const [price, orders] of mboOrdersByPrice.entries()) {
+        if (orders.length >= MBO_MAX_ORDERS_PER_LEVEL) {
+            continue;
+        }
+        if (side === Side.BID && price <= 100) return price;
+        if (side === Side.ASK && price >= 100) return price;
+    }
+
+    return null;
+}
+
+function generateMboPrice(side: Side, tickSize: number): number {
+    const referencePrice = 100;
+    let price: number;
+
+    if (side === Side.BID) {
+        const ticksBelow = Math.floor(Math.random() * 51);
+        price = referencePrice - tickSize / 2 - ticksBelow * tickSize;
+    } else {
+        const ticksAbove = Math.floor(Math.random() * 51);
+        price = referencePrice + tickSize / 2 + ticksAbove * tickSize;
+    }
+
+    return roundToTick(price, tickSize);
+}
+
+function nextMboOrderQuantity(): number {
+    const roll = Math.random();
+    if (roll < 0.6) {
+        return randomInt(MBO_MIN_ORDER_QTY, MBO_MID_ORDER_QTY);
+    }
+    if (roll < 0.9) {
+        return randomInt(MBO_MID_ORDER_QTY, 5000);
+    }
+    return randomInt(5000, MBO_MAX_ORDER_QTY);
+}
+
+function randomInt(min: number, max: number): number {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function roundToTick(price: number, tickSize: number): number {
+    return Math.round(price / tickSize) * tickSize;
+}
+
 function setupControls() {
     const startButton = document.getElementById('start-updates');
     const stopButton = document.getElementById('stop-updates');
@@ -318,6 +603,7 @@ function setupControls() {
     const toggleBarsCheckbox = document.getElementById('toggle-bars') as HTMLInputElement;
     const toggleOrdersCheckbox = document.getElementById('toggle-orders') as HTMLInputElement;
     const backendSelect = document.getElementById('backend-select') as HTMLSelectElement;
+    const dataModeSelect = document.getElementById('data-mode') as HTMLSelectElement;
 
     // Backend selection
     backendSelect?.addEventListener('change', async (e) => {
@@ -325,6 +611,30 @@ function setupControls() {
         const container = document.getElementById('ladder-container');
         if (container) {
             await initializeBackend(backend, container);
+        }
+    });
+
+    dataModeSelect?.addEventListener('change', () => {
+        if (!ladder) return;
+
+        const mode = dataModeSelect.value as 'PriceLevel' | 'MBO';
+        const wasRunning = updateInterval !== null;
+        stopMarketUpdates();
+
+        if (ladder instanceof WasmPriceLadder) {
+            ladder.setDataMode(mode);
+        } else if (ladder instanceof PriceLadder) {
+            ladder.setDataMode(mode);
+        }
+
+        resetMboState();
+        ladder.clear();
+        wasCleared = false;
+        initializeOrderBook();
+
+        if (wasRunning) {
+            const rate = parseInt(updateRateSelect.value);
+            startMarketUpdates(rate);
         }
     });
 
@@ -430,72 +740,99 @@ function startMarketUpdates(rate: number) {
     console.log(`  Interval: ${intervalMs}ms (${(1000 / intervalMs).toFixed(1)} batches/sec)`);
     console.log(`  Expected rate: ${(batchSize * 1000 / intervalMs).toFixed(0)} updates/sec`);
 
+    const dataMode = getSelectedDataMode();
+
     updateInterval = window.setInterval(() => {
         if (!ladder) return;
 
         const startTime = performance.now();
 
-        // For WASM, collect updates into a batch array
         const isWasm = ladder instanceof WasmPriceLadder;
-        const batchUpdates: PriceLevel[] = [];
+        const isMbo = dataMode === 'MBO';
 
-        // Generate a batch of updates
-        for (let i = 0; i < batchSize; i++) {
-            // Generate random update
-            const side = Math.random() < 0.5 ? Side.BID : Side.ASK;
-
-            // Get current tick size from the renderer
-            let tickSize = 0.01;
-            if (ladder instanceof PriceLadder) {
-                const internalRenderer = (ladder as any).renderer;
-                if (internalRenderer && typeof internalRenderer.getTickSize === 'function') {
-                    tickSize = internalRenderer.getTickSize();
-                }
-            } else if (renderer) {
-                tickSize = renderer.getTickSize();
+        // Get current tick size from the renderer
+        let tickSize = 0.01;
+        if (ladder instanceof PriceLadder) {
+            const internalRenderer = (ladder as any).renderer;
+            if (internalRenderer && typeof internalRenderer.getTickSize === 'function') {
+                tickSize = internalRenderer.getTickSize();
             }
-
-            // Generate price based on side to maintain order book integrity
-            // Use a fixed reference price (100) to prevent drift
-            const referencePrice = 100;
-            let price: number;
-
-            if (side === Side.BID) {
-                // Generate bids around reference price - tickSize/2, going down
-                // Pick a level from 0 to 20 ticks below reference
-                const ticksBelow = Math.floor(Math.random() * 20);
-                price = Math.round((referencePrice - tickSize / 2 - ticksBelow * tickSize) / tickSize) * tickSize;
-            } else {
-                // Generate asks around reference price + tickSize/2, going up
-                // Pick a level from 0 to 20 ticks above reference
-                const ticksAbove = Math.floor(Math.random() * 20);
-                price = Math.round((referencePrice + tickSize / 2 + ticksAbove * tickSize) / tickSize) * tickSize;
-            }
-
-            // 10% chance to remove a level (quantity = 0)
-            const shouldRemove = Math.random() < 0.1;
-            const qty = shouldRemove ? 0 : Math.floor(100 + Math.random() * 10000);
-            const numOrders = shouldRemove ? 0 : Math.floor(1 + Math.random() * 30);
-
-            const update: PriceLevel = {
-                side,
-                price,
-                quantity: qty,
-                numOrders
-            };
-
-            if (isWasm) {
-                // Collect for batch sending
-                batchUpdates.push(update);
-            } else {
-                // TypeScript engine: process immediately
-                ladder.processUpdate(update);
-            }
+        } else if (renderer) {
+            tickSize = renderer.getTickSize();
         }
 
-        // Send batch to WASM worker in one message
-        if (isWasm && batchUpdates.length > 0) {
-            (ladder as WasmPriceLadder).processBatch(batchUpdates);
+        if (isMbo) {
+            const orderUpdates: Array<{ update: OrderUpdate; type: OrderUpdateType }> = [];
+
+            for (let i = 0; i < batchSize; i++) {
+                const updates = generateMboUpdates(tickSize);
+                if (updates.length === 0) {
+                    continue;
+                }
+
+                if (isWasm) {
+                    orderUpdates.push(...updates);
+                } else if (ladder instanceof PriceLadder) {
+                    for (const update of updates) {
+                        ladder.processOrderUpdate(update.update, update.type);
+                    }
+                }
+            }
+
+            if (isWasm && orderUpdates.length > 0) {
+                (ladder as WasmPriceLadder).processOrderBatch(orderUpdates);
+            }
+        } else {
+            // For WASM, collect updates into a batch array
+            const batchUpdates: PriceLevel[] = [];
+
+            // Generate a batch of updates
+            for (let i = 0; i < batchSize; i++) {
+                // Generate random update
+                const side = Math.random() < 0.5 ? Side.BID : Side.ASK;
+
+                // Generate price based on side to maintain order book integrity
+                // Use a fixed reference price (100) to prevent drift
+                const referencePrice = 100;
+                let price: number;
+
+                if (side === Side.BID) {
+                    // Generate bids around reference price - tickSize/2, going down
+                    // Pick a level from 0 to 20 ticks below reference
+                    const ticksBelow = Math.floor(Math.random() * 20);
+                    price = Math.round((referencePrice - tickSize / 2 - ticksBelow * tickSize) / tickSize) * tickSize;
+                } else {
+                    // Generate asks around reference price + tickSize/2, going up
+                    // Pick a level from 0 to 20 ticks above reference
+                    const ticksAbove = Math.floor(Math.random() * 20);
+                    price = Math.round((referencePrice + tickSize / 2 + ticksAbove * tickSize) / tickSize) * tickSize;
+                }
+
+                // 10% chance to remove a level (quantity = 0)
+                const shouldRemove = Math.random() < 0.1;
+                const qty = shouldRemove ? 0 : Math.floor(100 + Math.random() * 10000);
+                const numOrders = shouldRemove ? 0 : Math.floor(1 + Math.random() * 30);
+
+                const update: PriceLevel = {
+                    side,
+                    price,
+                    quantity: qty,
+                    numOrders
+                };
+
+                if (isWasm) {
+                    // Collect for batch sending
+                    batchUpdates.push(update);
+                } else {
+                    // TypeScript engine: process immediately
+                    ladder.processUpdate(update);
+                }
+            }
+
+            // Send batch to WASM worker in one message
+            if (isWasm && batchUpdates.length > 0) {
+                (ladder as WasmPriceLadder).processBatch(batchUpdates);
+            }
         }
 
         const endTime = performance.now();
@@ -515,11 +852,16 @@ function stopMarketUpdates() {
         updateInterval = null;
         console.log('Market updates stopped');
     }
+
+    if (ladder instanceof WasmPriceLadder) {
+        ladder.dropPendingUpdates();
+    }
 }
 
 function clearOrderBook() {
     if (ladder) {
         ladder.clear();
+        resetMboState();
         wasCleared = true; // Mark that we need to reinitialize on next start
         console.log('Order book cleared');
     }

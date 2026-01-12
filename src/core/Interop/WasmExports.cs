@@ -15,20 +15,49 @@ public partial class WasmExports
     private static string? _latestSnapshot;
     private static bool _hasNewSnapshot;
 
+    private static void ExecuteSafely(string name, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WASM] {name} threw: {ex}");
+            throw;
+        }
+    }
+
+    private static T ExecuteSafely<T>(string name, Func<T> action)
+    {
+        try
+        {
+            return action();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[WASM] {name} threw: {ex}");
+            throw;
+        }
+    }
+
     /// <summary>
     /// Initialize the price ladder
     /// </summary>
     [JSExport]
     public static void Initialize(int maxLevels, double tickSize)
     {
-        _ladder = new PriceLadderCore(maxLevels, 4096, (decimal)tickSize);
-
-        // Subscribe to snapshot events
-        _ladder.OnSnapshotReady += snapshot =>
+        ExecuteSafely(nameof(Initialize), () =>
         {
-            _latestSnapshot = WasmHelpers.SerializeSnapshot(snapshot);
-            _hasNewSnapshot = true;
-        };
+            _ladder = new PriceLadderCore(maxLevels, 4096, (decimal)tickSize);
+
+            // Subscribe to snapshot events
+            _ladder.OnSnapshotReady += snapshot =>
+            {
+                _latestSnapshot = WasmHelpers.SerializeSnapshot(snapshot);
+                _hasNewSnapshot = true;
+            };
+        });
     }
 
     /// <summary>
@@ -37,7 +66,7 @@ public partial class WasmExports
     [JSExport]
     public static bool HasNewSnapshot()
     {
-        return _hasNewSnapshot;
+        return ExecuteSafely(nameof(HasNewSnapshot), () => _hasNewSnapshot);
     }
 
     /// <summary>
@@ -46,8 +75,11 @@ public partial class WasmExports
     [JSExport]
     public static string GetLatestSnapshot()
     {
-        _hasNewSnapshot = false;
-        return _latestSnapshot ?? "{}";
+        return ExecuteSafely(nameof(GetLatestSnapshot), () =>
+        {
+            _hasNewSnapshot = false;
+            return _latestSnapshot ?? "{}";
+        });
     }
 
     /// <summary>
@@ -56,16 +88,19 @@ public partial class WasmExports
     [JSExport]
     public static void ProcessPriceLevelUpdate(int side, double price, int quantity, int numOrders)
     {
-        if (_ladder == null) return;
+        ExecuteSafely(nameof(ProcessPriceLevelUpdate), () =>
+        {
+            if (_ladder == null) return;
 
-        var update = new PriceLevel(
-            (Side)side,
-            (decimal)price,
-            quantity,
-            numOrders
-        );
+            var update = new PriceLevel(
+                (Side)side,
+                (decimal)price,
+                quantity,
+                numOrders
+            );
 
-        _ladder.ProcessPriceLevelUpdate(update);
+            _ladder.ProcessPriceLevelUpdate(update);
+        });
     }
 
     /// <summary>
@@ -74,16 +109,19 @@ public partial class WasmExports
     [JSExport]
     public static void ProcessPriceLevelUpdateNoFlush(int side, double price, int quantity, int numOrders)
     {
-        if (_ladder == null) return;
+        ExecuteSafely(nameof(ProcessPriceLevelUpdateNoFlush), () =>
+        {
+            if (_ladder == null) return;
 
-        var update = new PriceLevel(
-            (Side)side,
-            (decimal)price,
-            quantity,
-            numOrders
-        );
+            var update = new PriceLevel(
+                (Side)side,
+                (decimal)price,
+                quantity,
+                numOrders
+            );
 
-        _ladder.ProcessPriceLevelUpdateNoFlush(update);
+            _ladder.ProcessPriceLevelUpdateNoFlush(update);
+        });
     }
 
     /// <summary>
@@ -92,7 +130,10 @@ public partial class WasmExports
     [JSExport]
     public static void Flush()
     {
-        _ladder?.Flush();
+        ExecuteSafely(nameof(Flush), () =>
+        {
+            _ladder?.Flush();
+        });
     }
 
     /// <summary>
@@ -101,8 +142,11 @@ public partial class WasmExports
     [JSExport]
     public static void SetDataMode(int mode)
     {
-        if (_ladder == null) return;
-        _ladder.SetDataMode((DataMode)mode);
+        ExecuteSafely(nameof(SetDataMode), () =>
+        {
+            if (_ladder == null) return;
+            _ladder.SetDataMode((DataMode)mode);
+        });
     }
 
     /// <summary>
@@ -117,17 +161,20 @@ public partial class WasmExports
         int priority,
         int updateType)
     {
-        if (_ladder == null) return;
+        ExecuteSafely(nameof(ProcessOrderUpdate), () =>
+        {
+            if (_ladder == null) return;
 
-        var update = new OrderUpdate(
-            orderId,
-            (Side)side,
-            (decimal)price,
-            quantity,
-            priority
-        );
+            var update = new OrderUpdate(
+                orderId,
+                (Side)side,
+                (decimal)price,
+                quantity,
+                priority
+            );
 
-        _ladder.ProcessOrderUpdate(update, (OrderUpdateType)updateType);
+            _ladder.ProcessOrderUpdate(update, (OrderUpdateType)updateType);
+        });
     }
 
     /// <summary>
@@ -142,17 +189,20 @@ public partial class WasmExports
         int priority,
         int updateType)
     {
-        if (_ladder == null) return;
+        ExecuteSafely(nameof(ProcessOrderUpdateNoFlush), () =>
+        {
+            if (_ladder == null) return;
 
-        var update = new OrderUpdate(
-            orderId,
-            (Side)side,
-            (decimal)price,
-            quantity,
-            priority
-        );
+            var update = new OrderUpdate(
+                orderId,
+                (Side)side,
+                (decimal)price,
+                quantity,
+                priority
+            );
 
-        _ladder.ProcessOrderUpdateNoFlush(update, (OrderUpdateType)updateType);
+            _ladder.ProcessOrderUpdateNoFlush(update, (OrderUpdateType)updateType);
+        });
     }
 
     /// <summary>
@@ -161,8 +211,11 @@ public partial class WasmExports
     [JSExport]
     public static double GetBestBid()
     {
-        var bid = _ladder?.GetBestBid();
-        return bid.HasValue ? (double)bid.Value : 0.0;
+        return ExecuteSafely(nameof(GetBestBid), () =>
+        {
+            var bid = _ladder?.GetBestBid();
+            return bid.HasValue ? (double)bid.Value : 0.0;
+        });
     }
 
     /// <summary>
@@ -171,8 +224,11 @@ public partial class WasmExports
     [JSExport]
     public static double GetBestAsk()
     {
-        var ask = _ladder?.GetBestAsk();
-        return ask.HasValue ? (double)ask.Value : 0.0;
+        return ExecuteSafely(nameof(GetBestAsk), () =>
+        {
+            var ask = _ladder?.GetBestAsk();
+            return ask.HasValue ? (double)ask.Value : 0.0;
+        });
     }
 
     /// <summary>
@@ -181,8 +237,11 @@ public partial class WasmExports
     [JSExport]
     public static double GetMidPrice()
     {
-        var mid = _ladder?.GetMidPrice();
-        return mid.HasValue ? (double)mid.Value : 0;
+        return ExecuteSafely(nameof(GetMidPrice), () =>
+        {
+            var mid = _ladder?.GetMidPrice();
+            return mid.HasValue ? (double)mid.Value : 0;
+        });
     }
 
     /// <summary>
@@ -191,8 +250,11 @@ public partial class WasmExports
     [JSExport]
     public static double GetSpread()
     {
-        var spread = _ladder?.GetSpread();
-        return spread.HasValue ? (double)spread.Value : 0;
+        return ExecuteSafely(nameof(GetSpread), () =>
+        {
+            var spread = _ladder?.GetSpread();
+            return spread.HasValue ? (double)spread.Value : 0;
+        });
     }
 
     /// <summary>
@@ -201,7 +263,7 @@ public partial class WasmExports
     [JSExport]
     public static int GetBidCount()
     {
-        return _ladder?.OrderBook.BidCount ?? 0;
+        return ExecuteSafely(nameof(GetBidCount), () => _ladder?.OrderBook.BidCount ?? 0);
     }
 
     /// <summary>
@@ -210,7 +272,7 @@ public partial class WasmExports
     [JSExport]
     public static int GetAskCount()
     {
-        return _ladder?.OrderBook.AskCount ?? 0;
+        return ExecuteSafely(nameof(GetAskCount), () => _ladder?.OrderBook.AskCount ?? 0);
     }
 
     /// <summary>
@@ -219,17 +281,32 @@ public partial class WasmExports
     [JSExport]
     public static void Clear()
     {
-        if (_ladder == null) return;
+        ExecuteSafely(nameof(Clear), () =>
+        {
+            if (_ladder == null) return;
 
-        Console.WriteLine("[WASM] Clear() called - resetting ladder");
-        _ladder.Reset();
+            Console.WriteLine("[WASM] Clear() called - resetting ladder");
+            _ladder.Reset();
 
-        // Trigger a snapshot with empty data so the UI updates
-        var emptySnapshot = _ladder.GetSnapshot(0, 0);
-        Console.WriteLine($"[WASM] Empty snapshot: bids={emptySnapshot.Bids.Length}, asks={emptySnapshot.Asks.Length}");
-        _latestSnapshot = WasmHelpers.SerializeSnapshot(emptySnapshot);
-        _hasNewSnapshot = true;
-        Console.WriteLine("[WASM] Snapshot flagged as ready");
+            // Trigger a snapshot with empty data so the UI updates
+            var emptySnapshot = _ladder.GetSnapshot(0, 0);
+            Console.WriteLine($"[WASM] Empty snapshot: bids={emptySnapshot.Bids.Length}, asks={emptySnapshot.Asks.Length}");
+            _latestSnapshot = WasmHelpers.SerializeSnapshot(emptySnapshot);
+            _hasNewSnapshot = true;
+            Console.WriteLine("[WASM] Snapshot flagged as ready");
+        });
+    }
+
+    /// <summary>
+    /// Clear queued updates without changing order book state
+    /// </summary>
+    [JSExport]
+    public static void ClearPendingUpdates()
+    {
+        ExecuteSafely(nameof(ClearPendingUpdates), () =>
+        {
+            _ladder?.ClearPendingUpdates();
+        });
     }
 
     /// <summary>
@@ -238,37 +315,40 @@ public partial class WasmExports
     [JSExport]
     public static string GetMetrics()
     {
-        if (_ladder == null) return "{}";
+        return ExecuteSafely(nameof(GetMetrics), () =>
+        {
+            if (_ladder == null) return "{}";
 
-        // Manual JSON serialization to avoid reflection
-        var sb = new System.Text.StringBuilder();
-        sb.Append("{");
+            // Manual JSON serialization to avoid reflection
+            var sb = new System.Text.StringBuilder();
+            sb.Append("{");
 
-        sb.Append($"\"bidLevels\":{_ladder.OrderBook.BidCount},");
-        sb.Append($"\"askLevels\":{_ladder.OrderBook.AskCount},");
+            sb.Append($"\"bidLevels\":{_ladder.OrderBook.BidCount},");
+            sb.Append($"\"askLevels\":{_ladder.OrderBook.AskCount},");
 
-        var bestBid = _ladder.GetBestBid();
-        sb.Append("\"bestBid\":");
-        sb.Append(bestBid.HasValue ? ((double)bestBid.Value).ToString("G17") : "0");
-        sb.Append(",");
+            var bestBid = _ladder.GetBestBid();
+            sb.Append("\"bestBid\":");
+            sb.Append(bestBid.HasValue ? ((double)bestBid.Value).ToString("G17") : "0");
+            sb.Append(",");
 
-        var bestAsk = _ladder.GetBestAsk();
-        sb.Append("\"bestAsk\":");
-        sb.Append(bestAsk.HasValue ? ((double)bestAsk.Value).ToString("G17") : "0");
-        sb.Append(",");
+            var bestAsk = _ladder.GetBestAsk();
+            sb.Append("\"bestAsk\":");
+            sb.Append(bestAsk.HasValue ? ((double)bestAsk.Value).ToString("G17") : "0");
+            sb.Append(",");
 
-        var midPrice = _ladder.GetMidPrice();
-        sb.Append("\"midPrice\":");
-        sb.Append(midPrice.HasValue ? ((double)midPrice.Value).ToString("G17") : "null");
-        sb.Append(",");
+            var midPrice = _ladder.GetMidPrice();
+            sb.Append("\"midPrice\":");
+            sb.Append(midPrice.HasValue ? ((double)midPrice.Value).ToString("G17") : "null");
+            sb.Append(",");
 
-        var spread = _ladder.GetSpread();
-        sb.Append("\"spread\":");
-        sb.Append(spread.HasValue ? ((double)spread.Value).ToString("G17") : "null");
+            var spread = _ladder.GetSpread();
+            sb.Append("\"spread\":");
+            sb.Append(spread.HasValue ? ((double)spread.Value).ToString("G17") : "null");
 
-        sb.Append("}");
+            sb.Append("}");
 
-        return sb.ToString();
+            return sb.ToString();
+        });
     }
 
     /// <summary>

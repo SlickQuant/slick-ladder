@@ -1,4 +1,4 @@
-import { Side, Order, OrderUpdate, OrderUpdateType, BookLevel, OrderBookSnapshot } from './types';
+import { Side, Order, OrderUpdate, OrderUpdateType, BookLevel, OrderBookSnapshot, DirtyLevelChange } from './types';
 
 /**
  * OrderLevel: Represents all individual orders at a specific price level.
@@ -45,6 +45,9 @@ export class MBOManager {
     private askLevels: Map<number, OrderLevel>;
     private orderIndex: Map<number, { price: number; side: Side }>; // OrderId → location
 
+    private dirtyChanges: DirtyLevelChange[] = [];
+    private hasStructuralChange: boolean = false;
+
     constructor() {
         this.bidLevels = new Map();
         this.askLevels = new Map();
@@ -56,13 +59,16 @@ export class MBOManager {
      * Creates new OrderLevel if price doesn't exist, adds order to level, updates aggregate.
      */
     processOrderAdd(update: OrderUpdate): BookLevel {
-        const levels = update.side === Side.BID ? this.bidLevels : this.askLevels;
+        const price = update.price;
+        const side = update.side;
+        const levels = side === Side.BID ? this.bidLevels : this.askLevels;
 
         // Find or create OrderLevel at price
-        let level = levels.get(update.price);
+        let level = levels.get(price);
+        const existed = !!level;
         if (!level) {
-            level = new OrderLevel(update.price, update.side);
-            levels.set(update.price, level);
+            level = new OrderLevel(price, side);
+            levels.set(price, level);
         }
 
         // Add order to level
@@ -79,14 +85,16 @@ export class MBOManager {
         level.isDirty = true;
 
         // Index for fast lookup
-        this.orderIndex.set(update.orderId, { price: update.price, side: update.side });
+        this.orderIndex.set(update.orderId, { price, side });
+
+        this.recordDirtyChange(price, side, false, !existed);
 
         // Return aggregated BookLevel
         return {
-            price: update.price,
+            price,
             quantity: level.totalQuantity,
             numOrders: level.orderCount,
-            side: update.side,
+            side,
             isDirty: true,
             hasOwnOrders: false
         };
@@ -177,9 +185,12 @@ export class MBOManager {
         level.orders.delete(update.orderId);
         level.isDirty = true;
 
+        const isRemoval = level.orderCount === 0;
+
         // If level empty, remove from book
-        if (level.orderCount === 0) {
+        if (isRemoval) {
             levels.delete(location.price);
+            this.recordDirtyChange(location.price, location.side, true, false);
             // Return BookLevel with qty=0 to signal removal
             return {
                 price: location.price,
@@ -190,6 +201,7 @@ export class MBOManager {
                 hasOwnOrders: false
             };
         } else {
+            this.recordDirtyChange(location.price, location.side, false, false);
             // Return updated BookLevel
             return {
                 price: location.price,
@@ -257,8 +269,8 @@ export class MBOManager {
                 hasOwnOrders: false
             });
         }
-        // Sort by price descending (highest first)
-        return levels.sort((a, b) => b.price - a.price);
+        // Sort by price ascending to match OrderBook snapshot ordering
+        return levels.sort((a, b) => a.price - b.price);
     }
 
     /**
@@ -291,6 +303,8 @@ export class MBOManager {
         const bestAsk = asks.length > 0 ? asks[0].price : null;
         const midPrice = (bestBid !== null && bestAsk !== null) ? (bestBid + bestAsk) / 2 : null;
 
+        const dirtyState = this.consumeDirtyState();
+
         return {
             bestBid,
             bestAsk,
@@ -299,7 +313,9 @@ export class MBOManager {
             asks,
             timestamp: Date.now(),
             bidOrders: this.getBidOrders(),
-            askOrders: this.getAskOrders()
+            askOrders: this.getAskOrders(),
+            dirtyChanges: dirtyState.dirtyChanges,
+            structuralChange: dirtyState.structuralChange
         };
     }
 
@@ -310,6 +326,8 @@ export class MBOManager {
         this.bidLevels.clear();
         this.askLevels.clear();
         this.orderIndex.clear();
+        this.dirtyChanges = [];
+        this.hasStructuralChange = false;
     }
 
     /**
@@ -324,5 +342,26 @@ export class MBOManager {
      */
     getLevelCount(): number {
         return this.bidLevels.size + this.askLevels.size;
+    }
+
+    consumeDirtyState(): { dirtyChanges: DirtyLevelChange[]; structuralChange: boolean } {
+        const dirtyChanges = this.dirtyChanges;
+        const structuralChange = this.hasStructuralChange;
+        this.dirtyChanges = [];
+        this.hasStructuralChange = false;
+        return { dirtyChanges, structuralChange };
+    }
+
+    private recordDirtyChange(price: number, side: Side, isRemoval: boolean, isAddition: boolean): void {
+        if (isRemoval || isAddition) {
+            this.hasStructuralChange = true;
+        }
+
+        this.dirtyChanges.push({
+            price,
+            side,
+            isRemoval,
+            isAddition
+        });
     }
 }
