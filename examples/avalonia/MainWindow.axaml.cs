@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using SlickLadder.Core;
 using SlickLadder.Rendering.Core;
 using SlickLadder.Rendering.Simulation;
 using SlickLadder.Rendering.ViewModels;
@@ -26,6 +27,7 @@ public partial class MainWindow : Window
     private ComboBox? _updateRateCombo;
     private CheckBox? _showVolumeBarsCheckbox;
     private CheckBox? _showOrderCountCheckbox;
+    private ComboBox? _dataModeCombo;
     private ComboBox? _removalModeCombo;
     private ComboBox? _tickSizeCombo;
 
@@ -49,6 +51,7 @@ public partial class MainWindow : Window
         _updateRateCombo = this.FindControl<ComboBox>("UpdateRateCombo");
         _showVolumeBarsCheckbox = this.FindControl<CheckBox>("ShowVolumeBarsCheckbox");
         _showOrderCountCheckbox = this.FindControl<CheckBox>("ShowOrderCountCheckbox");
+        _dataModeCombo = this.FindControl<ComboBox>("DataModeCombo");
         _removalModeCombo = this.FindControl<ComboBox>("RemovalModeCombo");
         _tickSizeCombo = this.FindControl<ComboBox>("TickSizeCombo");
 
@@ -159,6 +162,33 @@ public partial class MainWindow : Window
         }
     }
 
+    private void DataModeCombo_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_viewModel == null || _dataModeCombo?.SelectedItem == null || _simulator == null) return;
+
+        var selectedItem = (ComboBoxItem)_dataModeCombo.SelectedItem;
+        if (selectedItem.Tag is not string mode) return;
+
+        bool wasRunning = _simulator.IsRunning;
+        if (wasRunning)
+        {
+            _simulator.Stop();
+        }
+
+        var dataMode = mode == "MBO" ? DataMode.MBO : DataMode.PriceLevel;
+        _viewModel.Core.SetDataMode(dataMode);
+        _simulator.UseMBOMode = mode == "MBO";
+
+        _viewModel.Core.Reset();
+
+        if (wasRunning)
+        {
+            _simulator.Start();
+            if (_startButton != null) _startButton.IsEnabled = false;
+            if (_stopButton != null) _stopButton.IsEnabled = true;
+        }
+    }
+
     private void RemovalModeCombo_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (_viewModel == null || _removalModeCombo?.SelectedItem == null) return;
@@ -205,6 +235,13 @@ public partial class MainWindow : Window
         {
             var tickSize = decimal.Parse(tickSizeStr, CultureInfo.InvariantCulture);
 
+            var currentMode = "PriceLevel";
+            if (_dataModeCombo?.SelectedItem is ComboBoxItem modeItem && modeItem.Tag is string modeTag)
+            {
+                currentMode = modeTag;
+            }
+            var isMBOMode = currentMode == "MBO";
+
             // Stop market data if running
             bool wasRunning = _simulator?.IsRunning ?? false;
             if (wasRunning)
@@ -223,6 +260,8 @@ public partial class MainWindow : Window
                 priceLadder.DataContext = _viewModel;
             }
 
+            _viewModel.Core.SetDataMode(isMBOMode ? DataMode.MBO : DataMode.PriceLevel);
+
             // Recreate simulator with new tick size
             var updateRate = 1000;
             if (_updateRateCombo?.SelectedItem is ComboBoxItem rateItem && rateItem.Tag is string rateTag)
@@ -233,7 +272,8 @@ public partial class MainWindow : Window
             _simulator = new MarketDataSimulator(_viewModel.Core, tickSize)
             {
                 UpdatesPerSecond = updateRate,
-                BasePrice = 50000.00m
+                BasePrice = 50000.00m,
+                UseMBOMode = isMBOMode
             };
 
             // Update viewport tick size

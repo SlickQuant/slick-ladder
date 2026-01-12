@@ -111,6 +111,17 @@
                                  IsChecked="False"
                                  Margin="0,0,0,10"/>
 
+                        <TextBlock Text="Data Mode:" Foreground="White" Margin="0,0,0,5"/>
+                        <ComboBox x:Name="DataModeCombo"
+                                 Background="White"
+                                 Foreground="#000000"
+                                 FontSize="13"
+                                 SelectedIndex="0"
+                                 SelectionChanged="DataModeCombo_SelectionChanged">
+                            <ComboBoxItem Content="Price Level (Aggregated)" Tag="PriceLevel"/>
+                            <ComboBoxItem Content="MBO (Market By Order)" Tag="MBO"/>
+                        </ComboBox>
+
                         <TextBlock Text="Level Removal Mode:" Foreground="White" Margin="0,0,0,5"/>
                         <ComboBox x:Name="RemovalModeCombo"
                                  Background="White"
