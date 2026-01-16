@@ -14,14 +14,16 @@ public struct OrderUpdate
     public decimal Price;
     public long Quantity;
     public long Priority;
+    public bool IsOwnOrder;
 
-    public OrderUpdate(long orderId, Side side, decimal price, long quantity, long priority)
+    public OrderUpdate(long orderId, Side side, decimal price, long quantity, long priority, bool isOwnOrder = false)
     {
         OrderId = orderId;
         Side = side;
         Price = price;
         Quantity = quantity;
         Priority = priority;
+        IsOwnOrder = isOwnOrder;
     }
 }
 

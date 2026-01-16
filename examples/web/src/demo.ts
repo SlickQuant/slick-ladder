@@ -360,7 +360,8 @@ function seedMboOrders(tickSize: number): Array<{ update: OrderUpdate; type: Ord
         const price = roundToTick(basePrice + tickSize * levelOffset, tickSize);
         const ordersPerLevel = randomInt(6, 14);
         for (let i = 0; i < ordersPerLevel; i++) {
-            updates.push(createMboAddUpdate(Side.ASK, price));
+            const isOwnOrder = Math.random() < 0.05;  // 5% chance of being own order
+            updates.push(createMboAddUpdate(Side.ASK, price, isOwnOrder));
         }
     }
 
@@ -368,7 +369,8 @@ function seedMboOrders(tickSize: number): Array<{ update: OrderUpdate; type: Ord
         const price = roundToTick(basePrice - tickSize * levelOffset, tickSize);
         const ordersPerLevel = randomInt(6, 14);
         for (let i = 0; i < ordersPerLevel; i++) {
-            updates.push(createMboAddUpdate(Side.BID, price));
+            const isOwnOrder = Math.random() < 0.05;  // 5% chance of being own order
+            updates.push(createMboAddUpdate(Side.BID, price, isOwnOrder));
         }
     }
 
@@ -394,14 +396,15 @@ function applyMboUpdates(updates: Array<{ update: OrderUpdate; type: OrderUpdate
     }
 }
 
-function createMboAddUpdate(side: Side, price: number): { update: OrderUpdate; type: OrderUpdateType } {
+function createMboAddUpdate(side: Side, price: number, isOwnOrder: boolean = false): { update: OrderUpdate; type: OrderUpdateType } {
     const orderId = mboNextOrderId++;
     const update: OrderUpdate = {
         orderId,
         side,
         price,
         quantity: nextMboOrderQuantity(),
-        priority: orderId
+        priority: orderId,
+        isOwnOrder
     };
 
     trackMboOrder(orderId, price, side);
@@ -513,7 +516,8 @@ function addRandomMboOrder(tickSize: number): { update: OrderUpdate; type: Order
         return modifyRandomMboOrder();
     }
 
-    return createMboAddUpdate(side, price);
+    const isOwnOrder = Math.random() < 0.05;  // 5% chance of being own order
+    return createMboAddUpdate(side, price, isOwnOrder);
 }
 
 function modifyRandomMboOrder(): { update: OrderUpdate; type: OrderUpdateType } | null {

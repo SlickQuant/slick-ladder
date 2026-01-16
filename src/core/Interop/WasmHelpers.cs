@@ -69,7 +69,7 @@ public static class WasmHelpers
                 {
                     if (i > 0) sb.Append(",");
                     var order = kvp.Value[i];
-                    sb.Append($"{{\"orderId\":{order.OrderId},\"quantity\":{order.Quantity},\"priority\":{order.Priority}}}");
+                    sb.Append($"{{\"orderId\":{order.OrderId},\"quantity\":{order.Quantity},\"priority\":{order.Priority},\"isOwnOrder\":{(order.IsOwnOrder ? "true" : "false")}}}");
                 }
                 sb.Append("]");
             }
@@ -91,7 +91,7 @@ public static class WasmHelpers
                 {
                     if (i > 0) sb.Append(",");
                     var order = kvp.Value[i];
-                    sb.Append($"{{\"orderId\":{order.OrderId},\"quantity\":{order.Quantity},\"priority\":{order.Priority}}}");
+                    sb.Append($"{{\"orderId\":{order.OrderId},\"quantity\":{order.Quantity},\"priority\":{order.Priority},\"isOwnOrder\":{(order.IsOwnOrder ? "true" : "false")}}}");
                 }
                 sb.Append("]");
             }

@@ -9,8 +9,8 @@ export interface WasmExports {
     ProcessPriceLevelUpdate(side: number, price: number, quantity: number, numOrders: number): void;
     ProcessPriceLevelUpdateNoFlush(side: number, price: number, quantity: number, numOrders: number): void;
     SetDataMode(mode: number): void;
-    ProcessOrderUpdate(orderId: number, side: number, price: number, quantity: number, priority: number, updateType: number): void;
-    ProcessOrderUpdateNoFlush(orderId: number, side: number, price: number, quantity: number, priority: number, updateType: number): void;
+    ProcessOrderUpdate(orderId: number, side: number, price: number, quantity: number, priority: number, updateType: number, isOwnOrder: number): void;
+    ProcessOrderUpdateNoFlush(orderId: number, side: number, price: number, quantity: number, priority: number, updateType: number, isOwnOrder: number): void;
     Flush(): void;
     GetBestBid(): number;
     GetBestAsk(): number;
@@ -43,8 +43,8 @@ export type WorkerRequest =
     | { type: 'update'; side: number; price: number; quantity: number; numOrders: number; generation: number }
     | { type: 'batch'; updates: Array<{ side: number; price: number; quantity: number; numOrders: number }>; generation: number }
     | { type: 'setDataMode'; mode: number }
-    | { type: 'orderUpdate'; orderId: number; side: number; price: number; quantity: number; priority: number; updateType: number; generation: number }
-    | { type: 'orderBatch'; updates: Array<{ orderId: number; side: number; price: number; quantity: number; priority: number; updateType: number }>; generation: number }
+    | { type: 'orderUpdate'; orderId: number; side: number; price: number; quantity: number; priority: number; updateType: number; isOwnOrder: number; generation: number }
+    | { type: 'orderBatch'; updates: Array<{ orderId: number; side: number; price: number; quantity: number; priority: number; updateType: number; isOwnOrder: number }>; generation: number }
     | { type: 'flush'; generation: number }
     | { type: 'clear' }
     | { type: 'clearPending' }

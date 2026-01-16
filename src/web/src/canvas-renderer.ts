@@ -735,7 +735,7 @@ export class CanvasRenderer {
             if (this.showVolumeBars) {
                 if (orders && orders.length > 0) {
                     // MBO mode: Draw individual order bars
-                    this.drawIndividualOrders(orders, Side.BID, maxQty, y, level.quantity);
+                    this.drawIndividualOrders(orders, Side.BID, maxQty, y);
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.bidBar;
@@ -760,7 +760,7 @@ export class CanvasRenderer {
             if (this.showVolumeBars) {
                 if (orders && orders.length > 0) {
                     // MBO mode: Draw individual order bars
-                    this.drawIndividualOrders(orders, Side.ASK, maxQty, y, level.quantity);
+                    this.drawIndividualOrders(orders, Side.ASK, maxQty, y);
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.askBar;
@@ -769,12 +769,7 @@ export class CanvasRenderer {
             }
         }
 
-        // Own order indicator
-        if (level.hasOwnOrders) {
-            this.offscreenCtx.strokeStyle = this.colors.ownOrderBorder;
-            this.offscreenCtx.lineWidth = 2;
-            this.offscreenCtx.strokeRect(0, y + 1, this.width, this.rowHeight - 2);
-        }
+        // Own order indicator removed - now drawn on individual segments in drawIndividualOrders
     }
 
     private drawRowBackground(rowIndex: number): void {
@@ -879,7 +874,7 @@ export class CanvasRenderer {
             if (this.showVolumeBars) {
                 if (orders && orders.length > 0) {
                     // MBO mode: Draw individual order bars
-                    this.drawIndividualOrders(orders, Side.BID, maxQty, y, level.quantity);
+                    this.drawIndividualOrders(orders, Side.BID, maxQty, y);
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.bidBar;
@@ -901,7 +896,7 @@ export class CanvasRenderer {
             if (this.showVolumeBars) {
                 if (orders && orders.length > 0) {
                     // MBO mode: Draw individual order bars
-                    this.drawIndividualOrders(orders, Side.ASK, maxQty, y, level.quantity);
+                    this.drawIndividualOrders(orders, Side.ASK, maxQty, y);
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.askBar;
@@ -910,12 +905,7 @@ export class CanvasRenderer {
             }
         }
 
-        // Own order indicator
-        if (level.hasOwnOrders) {
-            this.offscreenCtx.strokeStyle = this.colors.ownOrderBorder;
-            this.offscreenCtx.lineWidth = 2;
-            this.offscreenCtx.strokeRect(0, y + 1, this.width, this.rowHeight - 2);
-        }
+        // Own order indicator removed - now drawn on individual segments in drawIndividualOrders
     }
 
     /**
@@ -926,8 +916,7 @@ export class CanvasRenderer {
         orders: Order[],
         side: Side,
         maxQty: number,
-        y: number,
-        levelTotalQuantity: number
+        y: number
     ): void {
         if (!orders || orders.length === 0 || !this.showVolumeBars) return;
 
@@ -961,17 +950,10 @@ export class CanvasRenderer {
             return;
         }
 
-        let gap = 0;
-        if (orders.length > 1) {
-            const maxGap = (levelBarWidth - (minSegmentWidth * orders.length)) / (orders.length - 1);
-            gap = Math.min(segmentGap, Math.max(0, maxGap));
-        }
-
-        let availableWidth = levelBarWidth - gap * (orders.length - 1);
-        if (availableWidth <= 0) {
-            gap = 0;
-            availableWidth = levelBarWidth;
-        }
+        // Always use consistent gap between segments
+        const gap = orders.length > 1 ? segmentGap : 0;
+        const totalGapWidth = gap * (orders.length - 1);
+        const availableWidth = Math.max(0, levelBarWidth - totalGapWidth);
 
         const effectiveMinWidth = Math.min(minSegmentWidth, availableWidth / orders.length);
         let deficit = 0;
@@ -1004,6 +986,24 @@ export class CanvasRenderer {
             if (barWidth > 0) {
                 this.offscreenCtx.fillStyle = fillColor;
                 this.offscreenCtx.fillRect(xOffset, y + 4, barWidth, barHeight);
+
+                // Draw order quantity text centered in segment
+                const qtyText = this.formatQuantity(order.quantity);
+                this.offscreenCtx.font = '10px monospace';
+                const textWidth = this.offscreenCtx.measureText(qtyText).width;
+                if (textWidth < barWidth - 4) {  // Only draw if text fits
+                    this.offscreenCtx.fillStyle = this.colors.text;
+                    this.offscreenCtx.textAlign = 'center';
+                    this.offscreenCtx.textBaseline = 'middle';
+                    this.offscreenCtx.fillText(qtyText, xOffset + barWidth / 2, y + 4 + barHeight / 2);
+                }
+
+                // Draw gold border if this is an own order
+                if (order.isOwnOrder) {
+                    this.offscreenCtx.strokeStyle = this.colors.ownOrderBorder;
+                    this.offscreenCtx.lineWidth = 2;
+                    this.offscreenCtx.strokeRect(xOffset, y + 4, barWidth, barHeight);
+                }
             }
 
             // Move to the right for next bar segment
@@ -1017,6 +1017,15 @@ export class CanvasRenderer {
                 break;
             }
         }
+    }
+
+    /**
+     * Format quantity for display in segment (e.g., "500", "1K", "2M")
+     */
+    private formatQuantity(quantity: number): string {
+        if (quantity >= 1000000) return `${Math.floor(quantity / 1000000)}M`;
+        if (quantity >= 1000) return `${Math.floor(quantity / 1000)}K`;
+        return quantity.toString();
     }
 
     private calculateMaxQuantity(): number {

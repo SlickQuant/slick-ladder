@@ -128,6 +128,7 @@ export class WasmPriceLadder {
             quantity: update.quantity,
             priority: update.priority,
             updateType: type,
+            isOwnOrder: update.isOwnOrder ? 1 : 0,
             generation: this.generation
         });
     }
@@ -316,7 +317,8 @@ export class WasmPriceLadder {
             const orders = (source[key] as any[]).map((order) => ({
                 orderId: order.orderId,
                 quantity: order.quantity,
-                priority: order.priority
+                priority: order.priority,
+                isOwnOrder: order.isOwnOrder ?? false
             }));
             map.set(roundedPrice, orders);
         }
@@ -394,7 +396,8 @@ export class WasmPriceLadder {
                 price: this.roundToTick(item.update.price),
                 quantity: item.update.quantity,
                 priority: item.update.priority,
-                updateType: item.type
+                updateType: item.type,
+                isOwnOrder: item.update.isOwnOrder ? 1 : 0
             })),
             generation: this.generation
         });

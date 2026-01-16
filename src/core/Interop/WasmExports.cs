@@ -159,7 +159,8 @@ public partial class WasmExports
         double price,
         int quantity,
         int priority,
-        int updateType)
+        int updateType,
+        int isOwnOrder)
     {
         ExecuteSafely(nameof(ProcessOrderUpdate), () =>
         {
@@ -170,7 +171,8 @@ public partial class WasmExports
                 (Side)side,
                 (decimal)price,
                 quantity,
-                priority
+                priority,
+                isOwnOrder != 0
             );
 
             _ladder.ProcessOrderUpdate(update, (OrderUpdateType)updateType);
@@ -187,7 +189,8 @@ public partial class WasmExports
         double price,
         int quantity,
         int priority,
-        int updateType)
+        int updateType,
+        int isOwnOrder)
     {
         ExecuteSafely(nameof(ProcessOrderUpdateNoFlush), () =>
         {
@@ -198,7 +201,8 @@ public partial class WasmExports
                 (Side)side,
                 (decimal)price,
                 quantity,
-                priority
+                priority,
+                isOwnOrder != 0
             );
 
             _ladder.ProcessOrderUpdateNoFlush(update, (OrderUpdateType)updateType);

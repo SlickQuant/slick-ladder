@@ -47,7 +47,7 @@ public class MBOManager : IMarketDataMode
         }
 
         // Add order to level
-        var order = new Order(update.OrderId, update.Quantity, update.Priority);
+        var order = new Order(update.OrderId, update.Quantity, update.Priority, update.IsOwnOrder);
         level.Orders.AddOrUpdate(update.OrderId, order);
 
         // Update cached aggregates
@@ -110,8 +110,8 @@ public class MBOManager : IMarketDataMode
         else
             _askOrdersDirty = true;
 
-        // Update order
-        var modifiedOrder = new Order(update.OrderId, update.Quantity, existingOrder.Priority);
+        // Update order (preserve IsOwnOrder from existing order)
+        var modifiedOrder = new Order(update.OrderId, update.Quantity, existingOrder.Priority, existingOrder.IsOwnOrder);
         level.Orders.AddOrUpdate(update.OrderId, modifiedOrder);
 
         // Update OrderBook
@@ -338,11 +338,13 @@ public struct Order
     public long OrderId;
     public long Quantity;
     public long Priority;
+    public bool IsOwnOrder;
 
-    public Order(long orderId, long quantity, long priority)
+    public Order(long orderId, long quantity, long priority, bool isOwnOrder = false)
     {
         OrderId = orderId;
         Quantity = quantity;
         Priority = priority;
+        IsOwnOrder = isOwnOrder;
     }
 }

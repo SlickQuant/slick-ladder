@@ -1,5 +1,5 @@
 {
-  "name": "slick-ladder-monorepo",
+  "name": "slick-ladder",
   "version": "0.1.0",
   "description": "SlickLadder - Ultra-low latency price ladder component",
   "private": true,

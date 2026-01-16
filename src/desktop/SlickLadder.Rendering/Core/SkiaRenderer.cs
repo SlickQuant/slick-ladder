@@ -27,6 +27,8 @@ public class SkiaRenderer : IDisposable
     private readonly SKPaint _gridLinePaint;
     private readonly SKPaint _highlightPaint;
     private readonly SKPaint _dirtyRowPaint;
+    private readonly SKPaint _ownOrderBorderPaint;
+    private readonly SKPaint _segmentTextPaint;
     private readonly HashSet<int> _debugDirtyRows = new HashSet<int>();
     private bool _debugOverlayAllRows;
 
@@ -84,6 +86,23 @@ public class SkiaRenderer : IDisposable
         {
             Color = _config.DirtyRowOverlayColor,
             Style = SKPaintStyle.Fill
+        };
+
+        _ownOrderBorderPaint = new SKPaint
+        {
+            Color = _config.OwnOrderBorderColor,
+            StrokeWidth = 2,
+            Style = SKPaintStyle.Stroke,
+            IsAntialias = true
+        };
+
+        _segmentTextPaint = new SKPaint
+        {
+            Color = SKColors.White,
+            TextSize = 10,  // Smaller font for segments
+            IsAntialias = true,
+            Typeface = SKTypeface.FromFamilyName(_config.FontFamily),
+            TextAlign = SKTextAlign.Center
         };
     }
 
@@ -889,26 +908,10 @@ public class SkiaRenderer : IDisposable
             return;
         }
 
-        var gap = 0f;
-        if (orders.Length > 1)
-        {
-            if (minSegmentWidth > 0f)
-            {
-                var maxGap = (levelBarWidth - (minSegmentWidth * orders.Length)) / (orders.Length - 1);
-                gap = Math.Min(segmentGap, Math.Max(0f, maxGap));
-            }
-            else
-            {
-                gap = segmentGap;
-            }
-        }
-
-        var availableWidth = levelBarWidth - gap * (orders.Length - 1);
-        if (availableWidth <= 0f)
-        {
-            gap = 0f;
-            availableWidth = levelBarWidth;
-        }
+        // Always use consistent gap between segments
+        var gap = orders.Length > 1 ? segmentGap : 0f;
+        var totalGapWidth = gap * (orders.Length - 1);
+        var availableWidth = Math.Max(0f, levelBarWidth - totalGapWidth);
 
         var effectiveMinWidth = minSegmentWidth > 0f
             ? Math.Min(minSegmentWidth, availableWidth / orders.Length)
@@ -959,6 +962,22 @@ public class SkiaRenderer : IDisposable
             if (barWidth > 0)
             {
                 canvas.DrawRect(xOffset, y + 4, barWidth, barHeight, paint);
+
+                // Draw order quantity text centered in segment
+                var qtyText = FormatQuantity(order.Quantity);
+                var textWidth = _segmentTextPaint.MeasureText(qtyText);
+                if (textWidth < barWidth - 4)  // Only draw if text fits
+                {
+                    var textX = xOffset + barWidth / 2;
+                    var textY = y + 4 + barHeight / 2 + 3;  // Vertically centered
+                    canvas.DrawText(qtyText, textX, textY, _segmentTextPaint);
+                }
+
+                // Draw gold border if this is an own order
+                if (order.IsOwnOrder)
+                {
+                    canvas.DrawRect(xOffset, y + 4, barWidth, barHeight, _ownOrderBorderPaint);
+                }
             }
 
             // Move to the right for next bar segment
@@ -972,6 +991,16 @@ public class SkiaRenderer : IDisposable
             if (xOffset >= barStartX + levelBarWidth)
                 break;
         }
+    }
+
+    /// <summary>
+    /// Format quantity for display in segment (e.g., "500", "1K", "2M")
+    /// </summary>
+    private static string FormatQuantity(long quantity)
+    {
+        if (quantity >= 1000000) return $"{quantity / 1000000}M";
+        if (quantity >= 1000) return $"{quantity / 1000}K";
+        return quantity.ToString();
     }
 
     private void DrawBidLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)

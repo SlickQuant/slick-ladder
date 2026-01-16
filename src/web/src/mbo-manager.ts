@@ -75,7 +75,8 @@ export class MBOManager {
         const order: Order = {
             orderId: update.orderId,
             quantity: update.quantity,
-            priority: update.priority
+            priority: update.priority,
+            isOwnOrder: update.isOwnOrder ?? false
         };
         level.orders.set(update.orderId, order);
 
@@ -133,11 +134,12 @@ export class MBOManager {
         level.totalQuantity += quantityDelta;
         level.isDirty = true;
 
-        // Update order
+        // Update order (preserve isOwnOrder from existing order)
         const modifiedOrder: Order = {
             orderId: update.orderId,
             quantity: update.quantity,
-            priority: existingOrder.priority
+            priority: existingOrder.priority,
+            isOwnOrder: existingOrder.isOwnOrder
         };
         level.orders.set(update.orderId, modifiedOrder);
 

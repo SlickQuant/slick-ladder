@@ -364,9 +364,10 @@ public class MarketDataSimulator : IDisposable
                 var orderId = _nextOrderId++;
                 var quantity = NextOrderQuantity();
                 var priority = DateTime.UtcNow.Ticks + i;
+                var isOwnOrder = _random.Next(100) < 5;  // 5% chance
 
                 _core.ProcessOrderUpdateNoFlush(
-                    new OrderUpdate(orderId, Side.ASK, price, quantity, priority),
+                    new OrderUpdate(orderId, Side.ASK, price, quantity, priority, isOwnOrder),
                     OrderUpdateType.Add
                 );
 
@@ -385,9 +386,10 @@ public class MarketDataSimulator : IDisposable
                 var orderId = _nextOrderId++;
                 var quantity = NextOrderQuantity();
                 var priority = DateTime.UtcNow.Ticks + i;
+                var isOwnOrder = _random.Next(100) < 5;  // 5% chance
 
                 _core.ProcessOrderUpdateNoFlush(
-                    new OrderUpdate(orderId, Side.BID, price, quantity, priority),
+                    new OrderUpdate(orderId, Side.BID, price, quantity, priority, isOwnOrder),
                     OrderUpdateType.Add
                 );
 
@@ -474,9 +476,10 @@ public class MarketDataSimulator : IDisposable
         var orderId = _nextOrderId++;
         var quantity = NextOrderQuantity();
         var priority = DateTime.UtcNow.Ticks;
+        var isOwnOrder = _random.Next(100) < 5;  // 5% chance
 
         _core.ProcessOrderUpdateNoFlush(
-            new OrderUpdate(orderId, side, price.Value, quantity, priority),
+            new OrderUpdate(orderId, side, price.Value, quantity, priority, isOwnOrder),
             OrderUpdateType.Add
         );
 

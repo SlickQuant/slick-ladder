@@ -94,7 +94,8 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
                         request.price,
                         request.quantity,
                         request.priority,
-                        request.updateType
+                        request.updateType,
+                        request.isOwnOrder
                     );
                 }
                 break;
@@ -112,7 +113,8 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
                             update.price,
                             update.quantity,
                             update.priority,
-                            update.updateType
+                            update.updateType,
+                            update.isOwnOrder
                         );
                     }
                     wasmExports.Flush();

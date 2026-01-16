@@ -27,6 +27,7 @@ export interface Order {
     orderId: number;
     quantity: number;
     priority: number;
+    isOwnOrder?: boolean;
 }
 
 export enum OrderUpdateType {
@@ -41,6 +42,7 @@ export interface OrderUpdate {
     price: number;
     quantity: number;
     priority: number;
+    isOwnOrder?: boolean;
 }
 
 export interface OrderBookSnapshot {
@@ -120,7 +122,7 @@ export interface CanvasColors {
 export const COL_WIDTH = 66.7;
 export const VOLUME_BAR_WIDTH_MULTIPLIER = 2.5;
 export const ORDER_SEGMENT_GAP = 2;
-export const MIN_ORDER_SEGMENT_WIDTH = 2;
+export const MIN_ORDER_SEGMENT_WIDTH = 30;  // Increased from 2 for better visibility and quantity text
 
 export const DEFAULT_COLORS: CanvasColors = {
     background: '#1e1e1e',
