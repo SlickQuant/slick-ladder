@@ -9,10 +9,11 @@ This directory contains example applications demonstrating SlickLadder usage acr
 Demonstrates the web component with TypeScript/WASM hybrid rendering.
 
 ### To run:
-1. Build WASM module (from root): `./build-wasm.bat` (Windows) or `./build-wasm.sh` (Linux/Mac)
-2. Install dependencies: `cd examples/web && npm install`
-3. Start dev server: `npm run serve`
-4. Open browser to http://localhost:9000
+1. Install dependencies (from root): `npm install`
+2. Build WASM module (optional): `npm run build:wasm`
+3. Build TypeScript library: `npm run build:lib`
+4. Start dev server: `npm run serve:demo`
+5. Open browser to http://localhost:9000
 
 ### Features:
 - TypeScript and WASM engine selection
