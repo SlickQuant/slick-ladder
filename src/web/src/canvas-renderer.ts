@@ -997,6 +997,10 @@ export class CanvasRenderer {
                     this.offscreenCtx.textBaseline = 'middle';
                     this.offscreenCtx.fillText(qtyText, xOffset + barWidth / 2, y + 4 + barHeight / 2);
                 }
+                // Restore font for subsequent text rendering
+                this.offscreenCtx.font = '14px monospace';
+                this.offscreenCtx.textAlign = 'left';
+                this.offscreenCtx.textBaseline = 'middle';
 
                 // Draw gold border if this is an own order
                 if (order.isOwnOrder) {
