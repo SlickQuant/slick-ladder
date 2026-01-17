@@ -157,29 +157,6 @@ public class OrderBook
     }
 
     /// <summary>
-    /// Mark a price level as having user's own orders
-    /// </summary>
-    public void MarkOwnOrder(decimal price, Side side, bool hasOwnOrder)
-    {
-        if (TryGetLevel(price, side, out var level))
-        {
-            level.HasOwnOrders = hasOwnOrder;
-            level.IsDirty = true;
-
-            if (side == Side.BID)
-            {
-                _bids.AddOrUpdate(price, level);
-            }
-            else
-            {
-                _asks.AddOrUpdate(price, level);
-            }
-
-            MarkDirty(price, side);
-        }
-    }
-
-    /// <summary>
     /// Get a range of bid levels (highest to lowest)
     /// </summary>
     /// <param name="count">Maximum number of levels to return</param>

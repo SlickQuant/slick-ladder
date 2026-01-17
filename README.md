@@ -391,7 +391,6 @@ const DEFAULT_COLORS = {
 | `processBatch` | `PriceLevel[]` | `void` | Process multiple price level updates |
 | `processOrderUpdate` | `OrderUpdate, OrderUpdateType` | `void` | Process a single MBO update |
 | `processOrderBatch` | `Array<{update, type}>` | `void` | Process multiple MBO updates |
-| `markOwnOrder` | `price, side, hasOwnOrder` | `void` | Mark a level as having own orders |
 | `setDataMode` | `'PriceLevel' \| 'MBO'` | `void` | Switch data mode |
 | `setShowVolumeBars` | `boolean` | `void` | Toggle volume bars |
 | `setShowOrderCount` | `boolean` | `void` | Toggle order count columns |

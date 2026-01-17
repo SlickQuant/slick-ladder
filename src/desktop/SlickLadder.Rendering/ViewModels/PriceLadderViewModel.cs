@@ -96,9 +96,6 @@ public class PriceLadderViewModel : ReactiveObject
     /// </summary>
     public void HandlePriceClick(decimal price, Side side)
     {
-        // Mark as own order for visual feedback
-        _core.MarkOwnOrder(price, side);
-
         // Fire the trade event
         OnTrade?.Invoke(new TradeRequest(price, side));
     }

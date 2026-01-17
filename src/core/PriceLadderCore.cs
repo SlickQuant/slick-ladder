@@ -207,14 +207,6 @@ public class PriceLadderCore
     }
 
     /// <summary>
-    /// Mark a price level as having user's own orders
-    /// </summary>
-    public void MarkOwnOrder(decimal price, Side side, bool hasOwnOrder = true)
-    {
-        _orderBook.MarkOwnOrder(price, side, hasOwnOrder);
-    }
-
-    /// <summary>
     /// Get best bid price
     /// </summary>
     public decimal? GetBestBid() => _orderBook.BestBid;

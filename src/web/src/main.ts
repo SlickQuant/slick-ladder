@@ -214,23 +214,6 @@ export class PriceLadder {
     }
 
     /**
-     * Mark a price level as having own orders
-     */
-    public markOwnOrder(price: number, side: Side, hasOwnOrder: boolean = true): void {
-        if (this.dataMode !== 'PriceLevel') {
-            return;
-        }
-
-        const map = side === Side.BID ? this.bids : this.asks;
-        const level = map.get(price);
-
-        if (level) {
-            level.hasOwnOrders = hasOwnOrder;
-            level.isDirty = true;
-        }
-    }
-
-    /**
      * Get current snapshot
      */
     private getSnapshot(): OrderBookSnapshot {
