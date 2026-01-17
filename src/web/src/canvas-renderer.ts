@@ -1178,25 +1178,76 @@ export class CanvasRenderer {
      * Convert row index to price
      */
     public rowToPrice(rowIndex: number): number | null {
+        const levelInfo = this.rowToLevelInfo(rowIndex);
+        return levelInfo?.price ?? null;
+    }
+
+    /**
+     * Convert row index to level info (price and quantity)
+     */
+    public rowToLevelInfo(rowIndex: number): { price: number; quantity: number; side: Side } | null {
         if (!this.currentSnapshot) return null;
 
-        const midRow = Math.floor(this.visibleRows / 2);
+        if (this.removalMode === 'removeRow') {
+            // Dense packing mode: use the same layout logic as rendering
+            const layout = this.buildDensePackingLayout(this.currentSnapshot);
 
-        if (rowIndex < midRow) {
-            // Ask side
-            const askIndex = midRow - rowIndex - 1;
-            if (askIndex >= 0 && askIndex < this.currentSnapshot.asks.length) {
-                return this.currentSnapshot.asks[askIndex].price;
+            // Convert row to relative row accounting for topOffset
+            const relativeRow = rowIndex - layout.firstRowIndex;
+
+            // console.log(`Dense Click Debug: rowIndex=${rowIndex}, topOffset=${layout.topOffset}, firstRowIndex=${layout.firstRowIndex}, relativeRow=${relativeRow}, askRows=${layout.askRowsToRender}, startAskIdx=${layout.startAskIndex}`);
+
+            if (relativeRow < 0) {
+                return null; // Clicked above visible data
             }
+
+            if (relativeRow < layout.askRowsToRender) {
+                // Clicked on an ask row
+                const askIndex = layout.nonEmptyAsks.length - 1 - layout.startAskIndex - relativeRow;
+                // console.log(`Ask click: askIndex=${askIndex}, nonEmptyAsks.length=${layout.nonEmptyAsks.length}`);
+                if (askIndex >= 0 && askIndex < layout.nonEmptyAsks.length) {
+                    const level = layout.nonEmptyAsks[askIndex];
+                    // console.log(`Selected ask: price=${level.price}, qty=${level.quantity}`);
+                    return { price: level.price, quantity: level.quantity, side: Side.ASK };
+                }
+                return null;
+            }
+
+            // Clicked on a bid row
+            const bidRow = relativeRow - layout.askRowsToRender;
+            if (bidRow >= 0 && bidRow < layout.bidRowsToRender) {
+                const bidIndex = layout.nonEmptyBids.length - 1 - layout.startBidIndex - bidRow;
+                if (bidIndex >= 0 && bidIndex < layout.nonEmptyBids.length) {
+                    const level = layout.nonEmptyBids[bidIndex];
+                    return { price: level.price, quantity: level.quantity, side: Side.BID };
+                }
+            }
+
+            return null;
         } else {
-            // Bid side
-            const bidIndex = this.currentSnapshot.bids.length - (rowIndex - midRow) - 1;
-            if (bidIndex >= 0 && bidIndex < this.currentSnapshot.bids.length) {
-                return this.currentSnapshot.bids[bidIndex].price;
-            }
-        }
+            // ShowEmpty mode: price-to-row mapping
+            const midRow = Math.floor(this.visibleRows / 2);
+            const referencePrice = this.centerPrice !== 0
+                ? this.centerPrice
+                : (this.currentSnapshot.midPrice ?? 50000);
 
-        return null;
+            const rowOffset = rowIndex - midRow;
+            const price = referencePrice - (rowOffset * this.tickSize);
+            const roundedPrice = Math.round(price / this.tickSize) * this.tickSize;
+
+            // Find level at this price
+            const askLevel = this.currentSnapshot.asks.find(a => Math.abs(a.price - roundedPrice) < this.tickSize * 0.5);
+            if (askLevel && askLevel.quantity > 0) {
+                return { price: askLevel.price, quantity: askLevel.quantity, side: Side.ASK };
+            }
+
+            const bidLevel = this.currentSnapshot.bids.find(b => Math.abs(b.price - roundedPrice) < this.tickSize * 0.5);
+            if (bidLevel && bidLevel.quantity > 0) {
+                return { price: bidLevel.price, quantity: bidLevel.quantity, side: Side.BID };
+            }
+
+            return null;
+        }
     }
 
     /**

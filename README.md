@@ -179,7 +179,8 @@ const ladder = new PriceLadder({
     showOrderCount: true,
     colors: customColors,
     onTrade: (price, side) => {
-        console.log(`Trade clicked: ${side === Side.BID ? 'BID' : 'ASK'} @ ${price}`);
+        const action = side === Side.ASK ? 'BUY' : 'SELL';
+        console.log(`${action} @ ${price}`);
     },
     onPriceHover: (price) => {
         if (price !== null) {
@@ -441,14 +442,22 @@ interface RenderMetrics {
 }
 ```
 
-### Events
+### Events (Web/TypeScript)
 
 #### onTrade
-Fired when a price level is clicked (unless `readOnly` is `true`).
+Fired when a quantity column is clicked (unless `readOnly` is `true`).
+
+- Clicking on **BID qty column** triggers a BUY
+- Clicking on **ASK qty column** triggers a SELL
 
 ```typescript
 onTrade: (price: number, side: Side) => void
 ```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `price` | `number` | The price level that was clicked |
+| `side` | `Side` | `Side.ASK` for BUY, `Side.BID` for SELL |
 
 #### onPriceHover
 Fired when the mouse hovers over a price level.
@@ -456,6 +465,26 @@ Fired when the mouse hovers over a price level.
 ```typescript
 onPriceHover: (price: number | null) => void
 ```
+
+### Events (Desktop/C#)
+
+#### OnTrade
+Subscribe to trade click events on the `PriceLadderViewModel`:
+
+```csharp
+viewModel.OnTrade += (TradeRequest trade) =>
+{
+    var action = trade.Side == Side.ASK ? "BUY" : "SELL";
+    Console.WriteLine($"{action} @ {trade.Price}");
+};
+```
+
+**TradeRequest Properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Price` | `decimal` | The price level clicked |
+| `Side` | `Side` | `Side.ASK` for BUY, `Side.BID` for SELL |
 
 ## Architecture
 

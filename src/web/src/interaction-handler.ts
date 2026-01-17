@@ -40,27 +40,27 @@ export class InteractionHandler {
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
 
-        // Convert to price
+        // Convert to price and get level info
         const rowIndex = this.renderer.screenYToRow(y);
-        const price = this.renderer.rowToPrice(rowIndex);
+        const levelInfo = this.renderer.rowToLevelInfo(rowIndex);
 
-        if (price !== null) {
+        if (levelInfo !== null) {
             // Get column indices
             const clickedColumn = this.renderer.screenXToColumn(x);
             const bidQtyColumn = this.renderer.getBidQtyColumn();
             const askQtyColumn = this.renderer.getAskQtyColumn();
 
-            console.log(`Click: column ${clickedColumn}, bidQty=${bidQtyColumn}, askQty=${askQtyColumn}, price ${price}`);
+            // console.log(`Click: column ${clickedColumn}, bidQty=${bidQtyColumn}, askQty=${askQtyColumn}, price ${levelInfo.price}, qty ${levelInfo.quantity}`);
 
             // Only trigger trade if clicking on quantity columns
             if (clickedColumn === bidQtyColumn) {
                 // Click on BID qty column = BUY (you want to buy at this ASK price)
                 console.log('Action: BUY');
-                this.onPriceClick?.(price, Side.ASK);
+                this.onPriceClick?.(levelInfo.price, Side.ASK);
             } else if (clickedColumn === askQtyColumn) {
                 // Click on ASK qty column = SELL (you want to sell at this BID price)
                 console.log('Action: SELL');
-                this.onPriceClick?.(price, Side.BID);
+                this.onPriceClick?.(levelInfo.price, Side.BID);
             } else {
                 console.log('Action: none (clicked outside quantity columns)');
             }

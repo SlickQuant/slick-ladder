@@ -75,6 +75,9 @@ public partial class MainWindow : Window
         _viewModel = new PriceLadderViewModel();
         priceLadder.DataContext = _viewModel;
 
+        // Subscribe to trade events
+        _viewModel.OnTrade += OnTradeExecuted;
+
         // Create market data simulator (pass tick size from ViewModel)
         var tickSize = 0.01m; // Default tick size
         _simulator = new MarketDataSimulator(_viewModel.Core, tickSize)
@@ -90,6 +93,30 @@ public partial class MainWindow : Window
         };
         _metricsTimer.Tick += UpdateMetrics;
         _metricsTimer.Start();
+    }
+
+    private void OnTradeExecuted(TradeRequest trade)
+    {
+        var action = trade.Side == SlickLadder.Core.Models.Side.ASK ? "BUY" : "SELL";
+        System.Diagnostics.Debug.WriteLine($"{action} @ ${trade.Price:F2}");
+
+        // Show message box on UI thread
+        Dispatcher.UIThread.Post(async () =>
+        {
+            var dialog = new Window
+            {
+                Title = "Trade Clicked",
+                Width = 300,
+                Height = 100,
+                Content = new TextBlock
+                {
+                    Text = $"{action} @ ${trade.Price:F2}",
+                    HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Center,
+                    VerticalAlignment = global::Avalonia.Layout.VerticalAlignment.Center
+                }
+            };
+            await dialog.ShowDialog(this);
+        });
     }
 
     private void UpdateMetrics(object? sender, EventArgs e)
@@ -259,6 +286,9 @@ public partial class MainWindow : Window
             {
                 priceLadder.DataContext = _viewModel;
             }
+
+            // Subscribe to trade events on new ViewModel
+            _viewModel.OnTrade += OnTradeExecuted;
 
             _viewModel.Core.SetDataMode(isMBOMode ? DataMode.MBO : DataMode.PriceLevel);
 

@@ -31,6 +31,9 @@ public partial class MainWindow : Window
         _viewModel = new PriceLadderViewModel();
         PriceLadder.DataContext = _viewModel;
 
+        // Subscribe to trade events
+        _viewModel.OnTrade += OnTradeExecuted;
+
         // Create market data simulator (pass tick size from ViewModel)
         var tickSize = 0.01m; // Default tick size
         _simulator = new MarketDataSimulator(_viewModel.Core, tickSize)
@@ -46,6 +49,13 @@ public partial class MainWindow : Window
         };
         _metricsTimer.Tick += UpdateMetrics;
         _metricsTimer.Start();
+    }
+
+    private void OnTradeExecuted(TradeRequest trade)
+    {
+        var action = trade.Side == SlickLadder.Core.Models.Side.ASK ? "BUY" : "SELL";
+        System.Diagnostics.Debug.WriteLine($"{action} @ ${trade.Price:F2}");
+        MessageBox.Show($"{action} @ ${trade.Price:F2}", "Trade Clicked");
     }
 
     private void UpdateMetrics(object? sender, EventArgs e)
@@ -208,6 +218,9 @@ public partial class MainWindow : Window
         // Recreate ViewModel with new tick size
         _viewModel = new PriceLadderViewModel(tickSize);
         PriceLadder.DataContext = _viewModel;
+
+        // Subscribe to trade events on new ViewModel
+        _viewModel.OnTrade += OnTradeExecuted;
 
         // Restore data mode
         _viewModel.Core.SetDataMode(isMBOMode ? DataMode.MBO : DataMode.PriceLevel);

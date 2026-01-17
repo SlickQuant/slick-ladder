@@ -183,53 +183,177 @@ public partial class PriceLadderControl : UserControl
 
             var pos = e.GetPosition(this);
             var snapshot = _parent._viewModel.CurrentSnapshot.Value;
+            var x = (float)pos.X;
 
-            // Convert screen Y to row index
-            var rowIndex = (int)(pos.Y / RenderConfig.RowHeight);
+            // Use viewport's column X positions (respects ShowOrderCount setting)
+            var columnWidth = _parent._viewport.ColumnWidth;
+            var bidQtyColumnX = _parent._viewport.BidQtyColumnX;
+            var askQtyColumnX = _parent._viewport.AskQtyColumnX;
+
+            // Check if click is within bid qty or ask qty column
+            bool clickedBidQty = x >= bidQtyColumnX && x < bidQtyColumnX + columnWidth;
+            bool clickedAskQty = x >= askQtyColumnX && x < askQtyColumnX + columnWidth;
+
+            if (!clickedBidQty && !clickedAskQty)
+            {
+                return; // Clicked outside quantity columns
+            }
+
             var visibleRows = _parent._viewport.Height / RenderConfig.RowHeight;
             var midRow = visibleRows / 2;
 
-            // Determine reference price (viewport center or mid market)
-            var referencePrice = _parent._viewport.CenterPrice != 0
-                ? _parent._viewport.CenterPrice
-                : (snapshot.MidPrice ?? 50000m);
+            // System.Diagnostics.Debug.WriteLine($"Viewport: height={_parent._viewport.Height}, visibleRows={visibleRows}, midRow={midRow}");
 
-            // Convert row to price using price-to-row mapping (reverse calculation)
-            var tickSize = _parent._viewport.TickSize;
-            var rowOffset = rowIndex - midRow;
-            var price = referencePrice - (rowOffset * tickSize); // Negative rowOffset because higher price = lower row
+            decimal clickedPrice;
 
-            // Find the level at this price in the snapshot
-            decimal? clickedPrice = null;
-            SlickLadder.Core.Models.Side side;
-
-            // Check if it's an ask level
-            var askLevel = snapshot.Asks.FirstOrDefault(a => Math.Abs(a.Price - price) < 0.005m);
-            if (askLevel.Price != 0)
+            if (_parent._viewport.RemovalMode == LevelRemovalMode.RemoveRow)
             {
-                clickedPrice = askLevel.Price;
-                side = SlickLadder.Core.Models.Side.ASK;
-            }
-            else
-            {
-                // Check if it's a bid level
-                var bidLevel = snapshot.Bids.FirstOrDefault(b => Math.Abs(b.Price - price) < 0.005m);
-                if (bidLevel.Price != 0)
+                // Dense packing mode: asks and bids are rendered consecutively
+                // Build the same layout the renderer uses
+                var nonEmptyAsks = snapshot.Asks.Where(l => l.Quantity > 0).ToArray();
+                var nonEmptyBids = snapshot.Bids.Where(l => l.Quantity > 0).ToArray();
+                var scrollOffset = _parent._viewport.DensePackingScrollOffset;
+                var totalLevels = nonEmptyAsks.Length + nonEmptyBids.Length;
+
+                var virtualTopRow = nonEmptyAsks.Length - midRow + scrollOffset;
+
+                int startAskIndex, askRowsToRender;
+                int startBidIndex, bidRowsToRender;
+                float topOffset = 0;
+
+                if (virtualTopRow < 0)
                 {
-                    clickedPrice = bidLevel.Price;
-                    side = SlickLadder.Core.Models.Side.BID;
+                    topOffset = -virtualTopRow * RenderConfig.RowHeight;
+                    startAskIndex = 0;
+                    askRowsToRender = Math.Min(nonEmptyAsks.Length, Math.Max(0, visibleRows + virtualTopRow));
+                    startBidIndex = 0;
+                    var bidRowsAvailable = Math.Max(0, visibleRows + virtualTopRow - nonEmptyAsks.Length);
+                    bidRowsToRender = Math.Min(nonEmptyBids.Length, bidRowsAvailable);
+                }
+                else if (virtualTopRow < nonEmptyAsks.Length)
+                {
+                    startAskIndex = virtualTopRow;
+                    askRowsToRender = Math.Min(nonEmptyAsks.Length - startAskIndex, visibleRows);
+                    startBidIndex = 0;
+                    var bidRowsAvailable = visibleRows - askRowsToRender;
+                    bidRowsToRender = Math.Min(nonEmptyBids.Length, bidRowsAvailable);
+                }
+                else if (virtualTopRow < totalLevels)
+                {
+                    startAskIndex = nonEmptyAsks.Length;
+                    askRowsToRender = 0;
+                    var bidStartRow = virtualTopRow - nonEmptyAsks.Length;
+                    startBidIndex = bidStartRow;
+                    bidRowsToRender = Math.Min(nonEmptyBids.Length - startBidIndex, visibleRows);
                 }
                 else
                 {
-                    return; // Clicked on empty row
+                    return; // Scrolled past all data
+                }
+
+                var firstRowIndex = (int)(topOffset / RenderConfig.RowHeight);
+
+                // Debug: calculate which row the best ask (asks[0]) should render at
+                // Formula: askIndex = nonEmptyAsks.Length - 1 - startAskIndex - i
+                // For askIndex=0: i = nonEmptyAsks.Length - 1 - startAskIndex
+                var bestAskLoopIndex = nonEmptyAsks.Length - 1 - startAskIndex;
+                var bestAskRowIndex = bestAskLoopIndex >= 0 && bestAskLoopIndex < askRowsToRender
+                    ? firstRowIndex + bestAskLoopIndex
+                    : -1;
+                var lastAskRow = firstRowIndex + askRowsToRender - 1;
+                var bestAskExpectedY = topOffset + (bestAskLoopIndex * RenderConfig.RowHeight);
+                var bestAskYRange = $"{bestAskExpectedY}-{bestAskExpectedY + RenderConfig.RowHeight - 1}";
+                // System.Diagnostics.Debug.WriteLine($"Layout: bestAsk (asks[0]) should render at i={bestAskLoopIndex}, rowIndex={bestAskRowIndex} (Y={bestAskYRange}, lastAskRow={lastAskRow})");
+
+                // Convert click Y to row index, then to relative row
+                // IMPORTANT: Subtract one row height to correct for coordinate system offset
+                // Empirically, clicks land exactly one row (24px) below the intended target
+                // This may be due to grid line rendering, text baseline positioning, or Avalonia coordinate system
+                var clickY = (float)pos.Y;
+                var adjustedY = Math.Max(0, clickY - RenderConfig.RowHeight);
+                var rowIndex = (int)(adjustedY / RenderConfig.RowHeight);
+                var relativeRow = rowIndex - firstRowIndex;
+
+                // System.Diagnostics.Debug.WriteLine($"Dense Click Debug: clickY={clickY}, topOffset={topOffset}, rowIndex={rowIndex}, firstRowIndex={firstRowIndex}, relativeRow={relativeRow}, askRows={askRowsToRender}, startAskIdx={startAskIndex}");
+
+                if (relativeRow < 0)
+                {
+                    return; // Clicked above visible data
+                }
+
+                if (relativeRow < askRowsToRender)
+                {
+                    // Clicked on an ask row
+                    var askIndex = nonEmptyAsks.Length - 1 - startAskIndex - relativeRow;
+                    var expectedRenderY = topOffset + (relativeRow * RenderConfig.RowHeight);
+                    // System.Diagnostics.Debug.WriteLine($"Ask click: askIndex={askIndex}, nonEmptyAsks.Length={nonEmptyAsks.Length}, expectedRenderY={expectedRenderY}");
+                    if (askIndex < 0 || askIndex >= nonEmptyAsks.Length)
+                    {
+                        return;
+                    }
+                    var level = nonEmptyAsks[askIndex];
+                    // System.Diagnostics.Debug.WriteLine($"Selected ask: price={level.Price}, qty={level.Quantity}");
+                    clickedPrice = level.Price;
+                }
+                else
+                {
+                    // Clicked on a bid row
+                    var bidRow = relativeRow - askRowsToRender;
+                    if (bidRow >= bidRowsToRender)
+                    {
+                        return; // Clicked below visible data
+                    }
+                    var bidIndex = nonEmptyBids.Length - 1 - startBidIndex - bidRow;
+                    if (bidIndex < 0 || bidIndex >= nonEmptyBids.Length)
+                    {
+                        return;
+                    }
+                    var level = nonEmptyBids[bidIndex];
+                    clickedPrice = level.Price;
+                }
+            }
+            else
+            {
+                // ShowEmpty mode: price-to-row mapping
+                var rowIndex = (int)(pos.Y / RenderConfig.RowHeight);
+                var tickSize = _parent._viewport.TickSize;
+                var referencePrice = _parent._viewport.CenterPrice != 0
+                    ? _parent._viewport.CenterPrice
+                    : (snapshot.MidPrice ?? 50000m);
+
+                var rowOffset = rowIndex - midRow;
+                var price = referencePrice - (rowOffset * tickSize);
+                price = Math.Round(price / tickSize) * tickSize;
+
+                // Find the level at this price
+                var askLevel = snapshot.Asks.FirstOrDefault(a => Math.Abs(a.Price - price) < tickSize * 0.5m);
+                if (askLevel.Price != 0 && askLevel.Quantity > 0)
+                {
+                    clickedPrice = askLevel.Price;
+                }
+                else
+                {
+                    var bidLevel = snapshot.Bids.FirstOrDefault(b => Math.Abs(b.Price - price) < tickSize * 0.5m);
+                    if (bidLevel.Price != 0 && bidLevel.Quantity > 0)
+                    {
+                        clickedPrice = bidLevel.Price;
+                    }
+                    else
+                    {
+                        return; // Clicked on empty row
+                    }
                 }
             }
 
-            if (clickedPrice.HasValue)
-            {
-                // Notify ViewModel of click
-                _parent._viewModel.HandlePriceClick(clickedPrice.Value, side);
-            }
+            // Determine trade side based on which column was clicked
+            // Click on BID qty column = BUY (Side.ASK)
+            // Click on ASK qty column = SELL (Side.BID)
+            var tradeSide = clickedBidQty
+                ? SlickLadder.Core.Models.Side.ASK
+                : SlickLadder.Core.Models.Side.BID;
+
+            // Notify ViewModel of click with price, side
+            _parent._viewModel.HandlePriceClick(clickedPrice, tradeSide);
         }
 
         private void OnPointerMoved(object? sender, PointerEventArgs e)

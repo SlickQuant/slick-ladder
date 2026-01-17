@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Reactive.Linq;
 using ReactiveUI;
@@ -7,6 +8,21 @@ using SlickLadder.Core.Models;
 namespace SlickLadder.Rendering.ViewModels;
 
 /// <summary>
+/// Trade request data for click-to-trade functionality
+/// </summary>
+public class TradeRequest
+{
+    public decimal Price { get; }
+    public Side Side { get; }
+
+    public TradeRequest(decimal price, Side side)
+    {
+        Price = price;
+        Side = side;
+    }
+}
+
+/// <summary>
 /// Shared ReactiveUI ViewModel for both WPF and Avalonia PriceLadder controls.
 /// Provides MVVM binding to the core business logic.
 /// </summary>
@@ -14,6 +30,11 @@ public class PriceLadderViewModel : ReactiveObject
 {
     private readonly PriceLadderCore _core;
     private OrderBookSnapshot? _currentSnapshot;
+
+    /// <summary>
+    /// Event fired when user clicks to trade (price, side, quantity)
+    /// </summary>
+    public event Action<TradeRequest>? OnTrade;
 
     public OrderBookSnapshot? CurrentSnapshot
     {
@@ -77,6 +98,9 @@ public class PriceLadderViewModel : ReactiveObject
     {
         // Mark as own order for visual feedback
         _core.MarkOwnOrder(price, side);
+
+        // Fire the trade event
+        OnTrade?.Invoke(new TradeRequest(price, side));
     }
 
     /// <summary>
