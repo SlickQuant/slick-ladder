@@ -31,9 +31,9 @@ module.exports = {
     new CopyWebpackPlugin({
       patterns: [
         {
-          from: 'wasm',
+          from: path.resolve(__dirname, 'wasm'),
           to: 'wasm',
-          noErrorOnMissing: true, // Don't fail if wasm folder doesn't exist yet
+          noErrorOnMissing: false, // Fail if wasm folder doesn't exist (so we catch issues early)
         },
       ],
     }),

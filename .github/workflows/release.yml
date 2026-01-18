@@ -12,6 +12,8 @@ jobs:
   build-npm:
     name: Build NPM Package
     runs-on: ubuntu-latest
+    env:
+      DOTNET_NOLOGO: 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,17 +24,46 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+          dotnet-quality: 'ga'
+
+      - name: List all installed .NET SDKs
+        run: dotnet --list-sdks
+
+      - name: Create global.json to force SDK 8.0
+        run: |
+          cat > global.json << 'EOF'
+          {
+            "sdk": {
+              "version": "8.0.100",
+              "rollForward": "latestFeature"
+            }
+          }
+          EOF
+          cat global.json
+
+      - name: Verify .NET version after global.json
+        run: dotnet --version
+
+      - name: Install .NET WASM workload
+        run: dotnet workload install wasm-tools
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Build WASM
-        run: npm run build:wasm
-
-      - name: Build library
-        run: npm run build:lib
-
       - name: Create NPM package
-        run: npm pack --workspace=src/web
+        run: npm run package
+
+      - name: Verify dist folder after build
+        run: |
+          echo "Contents of src/web/dist:"
+          ls -lah src/web/dist/
+          echo ""
+          echo "WASM files in dist:"
+          ls -lah src/web/dist/wasm/ || echo "No wasm folder in dist"
 
       - name: Upload NPM package artifact
         uses: actions/upload-artifact@v4
@@ -76,14 +107,7 @@ jobs:
         run: dotnet restore examples/avalonia/SlickLadder.Avalonia.Demo.csproj
 
       - name: Publish Avalonia Demo
-        run: |
-          dotnet publish examples/avalonia/SlickLadder.Avalonia.Demo.csproj \
-            -c Release \
-            -r ${{ matrix.runtime }} \
-            --self-contained true \
-            -p:PublishSingleFile=true \
-            -p:IncludeNativeLibrariesForSelfExtract=true \
-            -o publish/${{ matrix.runtime }}
+        run: dotnet publish examples/avalonia/SlickLadder.Avalonia.Demo.csproj -c Release -r ${{ matrix.runtime }} --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish/${{ matrix.runtime }}
 
       - name: Create archive (Windows)
         if: matrix.os == 'windows-latest'
@@ -159,6 +183,9 @@ jobs:
     needs: [build-npm, create-release]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      DOTNET_NOLOGO: 'true'
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -169,16 +196,31 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+          dotnet-quality: 'ga'
+
+      - name: Create global.json to force SDK 8.0
+        run: |
+          cat > global.json << 'EOF'
+          {
+            "sdk": {
+              "version": "8.0.100",
+              "rollForward": "latestFeature"
+            }
+          }
+          EOF
+
+      - name: Verify .NET version
+        run: dotnet --version
+
+      - name: Install .NET WASM workload
+        run: dotnet workload install wasm-tools
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Build WASM
-        run: npm run build:wasm
-
-      - name: Build library
-        run: npm run build:lib
-
       - name: Publish to NPM
-        run: npm publish --access public --workspace=src/web
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm run publish

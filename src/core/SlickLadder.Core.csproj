@@ -21,26 +21,29 @@
   </ItemGroup>
 
   <!-- Post-build event to copy WASM files to web directories -->
-  <Target Name="CopyWasmFilesToWeb" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'browser-wasm'">
+  <Target Name="CopyWasmFilesToWeb" AfterTargets="_WasmGenerateAppBundle" Condition="'$(RuntimeIdentifier)' == 'browser-wasm'">
     <PropertyGroup>
-      <WasmAppBundlePath>$(PublishDir)..\AppBundle\_framework</WasmAppBundlePath>
-      <WebPublicWasmPath>$(MSBuildProjectDirectory)\..\..\examples\web\public\wasm</WebPublicWasmPath>
-      <WebLibWasmPath>$(MSBuildProjectDirectory)\..\..\src\web\wasm</WebLibWasmPath>
+      <!-- Use the WasmAppDir property which points to the AppBundle location -->
+      <WasmAppBundlePath>$(WasmAppDir)_framework</WasmAppBundlePath>
+      <WebPublicWasmPath>$(MSBuildProjectDirectory)/../../examples/web/public/wasm</WebPublicWasmPath>
+      <WebLibWasmPath>$(MSBuildProjectDirectory)/../../src/web/wasm</WebLibWasmPath>
     </PropertyGroup>
 
-    <Message Text="Copying WASM files from $(WasmAppBundlePath) to $(WebPublicWasmPath) and $(WebLibWasmPath)" Importance="high" />
+    <Message Text="=== WASM Copy Diagnostics ===" Importance="high" />
+    <Message Text="WasmAppDir: $(WasmAppDir)" Importance="high" />
+    <Message Text="WasmAppBundlePath: $(WasmAppBundlePath)" Importance="high" />
+    <Message Text="WebLibWasmPath: $(WebLibWasmPath)" Importance="high" />
 
     <!-- Create destination directories if they don't exist -->
-    <MakeDir Directories="$(WebPublicWasmPath)" Condition="!Exists('$(WebPublicWasmPath)')" />
-    <MakeDir Directories="$(WebLibWasmPath)" Condition="!Exists('$(WebLibWasmPath)')" />
+    <MakeDir Directories="$(WebPublicWasmPath)" />
+    <MakeDir Directories="$(WebLibWasmPath)" />
 
-    <!-- Copy all WASM framework files (including subdirectories) -->
-    <ItemGroup>
-      <WasmFrameworkFiles Include="$(WasmAppBundlePath)\**\*" />
-    </ItemGroup>
+    <!-- Use platform-specific commands to copy with better error reporting -->
+    <Exec Command="xcopy /E /I /Y &quot;$(WasmAppBundlePath)&quot; &quot;$(WebPublicWasmPath)&quot;" Condition="'$(OS)' == 'Windows_NT'" />
+    <Exec Command="xcopy /E /I /Y &quot;$(WasmAppBundlePath)&quot; &quot;$(WebLibWasmPath)&quot;" Condition="'$(OS)' == 'Windows_NT'" />
 
-    <Copy SourceFiles="@(WasmFrameworkFiles)" DestinationFolder="$(WebPublicWasmPath)\%(RecursiveDir)" SkipUnchangedFiles="false" />
-    <Copy SourceFiles="@(WasmFrameworkFiles)" DestinationFolder="$(WebLibWasmPath)\%(RecursiveDir)" SkipUnchangedFiles="false" />
+    <Exec Command="cp -r &quot;$(WasmAppBundlePath)/.&quot; &quot;$(WebPublicWasmPath)/&quot;" Condition="'$(OS)' != 'Windows_NT'" />
+    <Exec Command="cp -r &quot;$(WasmAppBundlePath)/.&quot; &quot;$(WebLibWasmPath)/&quot;" Condition="'$(OS)' != 'Windows_NT'" />
 
     <Message Text="WASM files copied successfully!" Importance="high" />
   </Target>

@@ -15,7 +15,8 @@
     "build:all": "npm run build:wasm && npm run build:lib && npm run build:demo",
     "dev:demo": "npm run dev --workspace=examples/web",
     "serve:demo": "npm run serve --workspace=examples/web",
-    "release": "npm pack --workspace=src/web && npm publish --access public --workspace=src/web",
+    "package": "npm run build:lib:full && npm pack --workspace=src/web",
+    "publish": "npm run build:lib:full && npm publish --access public --workspace=src/web",
     "test:npm": "cd tests/npm && npm test",
     "test:npm:browser": "cd tests/npm && npm run serve"
   },

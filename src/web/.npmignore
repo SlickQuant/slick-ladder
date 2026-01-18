@@ -1,4 +1,4 @@
-# Source files (publish only built files)
+# Source files (DO NOT publish, only built files in dist/)
 src/
 *.ts
 !*.d.ts
