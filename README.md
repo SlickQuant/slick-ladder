@@ -1,7 +1,7 @@
 # SlickLadder
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.1.0-green.svg)](package.json)
+[![npm version](https://img.shields.io/npm/v/@slickquant/slick-ladder.svg)](https://www.npmjs.com/package/@slickquant/slick-ladder)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-purple.svg)](https://dotnet.microsoft.com/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 
