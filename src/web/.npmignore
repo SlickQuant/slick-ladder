@@ -1,0 +1,25 @@
+# Source files (publish only built files)
+src/
+*.ts
+!*.d.ts
+
+# Development and build configuration
+webpack.config.js
+tsconfig.json
+.vscode/
+.vs/
+node_modules/
+
+# Development files
+*.log
+*.md
+!README.md
+
+# Git files
+.git/
+.gitignore
+
+# IMPORTANT: Include WASM files in npm package
+# (They are gitignored but needed for the npm package)
+!wasm/
+!dist/wasm/

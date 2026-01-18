@@ -1,0 +1,17 @@
+{
+  "name": "npm-package-test",
+  "version": "0.1.0",
+  "description": "Test installation of @slickquant/slick-ladder npm package",
+  "private": true,
+  "scripts": {
+    "test": "node test.js",
+    "serve": "npx http-server -p 8081 -c-1",
+    "reinstall": "npm uninstall @slickquant/slick-ladder && npm install @slickquant/slick-ladder"
+  },
+  "author": "Slick Quant LLC.",
+  "license": "MIT",
+  "devDependencies": {
+    "@slickquant/slick-ladder": "^0.1.0",
+    "http-server": "^14.1.1"
+  }
+}

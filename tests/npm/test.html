@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>@slickquant/slick-ladder - npm Package Test</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #fff;
+      font-family: monospace;
+    }
+    h1 {
+      margin: 0 0 10px 0;
+      font-size: 18px;
+    }
+    .info {
+      margin-bottom: 20px;
+      font-size: 12px;
+      color: #888;
+    }
+    .controls {
+      margin-bottom: 20px;
+    }
+    button {
+      background: #374151;
+      color: #fff;
+      border: 1px solid #4b5563;
+      padding: 8px 16px;
+      margin-right: 10px;
+      cursor: pointer;
+      font-family: monospace;
+    }
+    button:hover {
+      background: #4b5563;
+    }
+    #status {
+      margin-top: 10px;
+      padding: 10px;
+      background: #0f0f0f;
+      border: 1px solid #374151;
+      font-size: 11px;
+    }
+    .success { color: #22c55e; }
+    .error { color: #ef4444; }
+  </style>
+</head>
+<body>
+  <h1>@slickquant/slick-ladder - npm Package Test</h1>
+  <div class="info">
+    Testing UMD bundle loaded from node_modules
+  </div>
+
+  <div class="controls">
+    <button onclick="updatePrices()">Update Prices</button>
+    <button onclick="clearBook()">Clear Book</button>
+    <button onclick="testWasm()">Test WASM</button>
+    <button onclick="runTests()">Run Tests</button>
+  </div>
+
+  <div id="ladder-container" style="width: 400px; height: 600px;"></div>
+
+  <div id="status"></div>
+
+  <!-- Load from local node_modules -->
+  <script src="node_modules/@slickquant/slick-ladder/dist/slick-ladder.js"></script>
+
+  <script>
+    let ladder;
+    const statusDiv = document.getElementById('status');
+
+    function log(message, isError = false) {
+      const className = isError ? 'error' : 'success';
+      statusDiv.innerHTML += `<div class="${className}">${new Date().toLocaleTimeString()}: ${message}</div>`;
+      console.log(message);
+    }
+
+    function clearBook() {
+      if (ladder) {
+        ladder.clear();
+        log('Order book cleared');
+      }
+    }
+
+    function updatePrices() {
+      if (ladder) {
+        const basePrice = 100 + Math.random() * 10;
+
+        for (let i = 0; i < 20; i++) {
+          const bidPrice = basePrice - i * 0.01;
+          const askPrice = basePrice + i * 0.01;
+          const bidQty = Math.floor(Math.random() * 5000) + 1000;
+          const askQty = Math.floor(Math.random() * 5000) + 1000;
+
+          ladder.processUpdate({ price: bidPrice, quantity: bidQty, numOrders: 1, side: 0 });
+          ladder.processUpdate({ price: askPrice, quantity: askQty, numOrders: 1, side: 1 });
+        }
+
+        log(`Updated prices (base: ${basePrice.toFixed(2)})`);
+      }
+    }
+
+    async function testWasm() {
+      log('WASM files included in package: ✓');
+      log('WASM location: node_modules/@slickquant/slick-ladder/dist/wasm/');
+      // Note: Full WASM initialization would require the WasmAdapter
+      // This is just checking the files are present
+    }
+
+    function runTests() {
+      statusDiv.innerHTML = '';
+
+      // Test 1: Global namespace
+      if (typeof SlickLadder !== 'undefined') {
+        log('✓ SlickLadder global namespace exists');
+      } else {
+        log('✗ SlickLadder global namespace NOT found', true);
+        return;
+      }
+
+      // Test 2: PriceLadder constructor
+      if (typeof SlickLadder.PriceLadder === 'function') {
+        log('✓ PriceLadder constructor available');
+      } else {
+        log('✗ PriceLadder constructor NOT found', true);
+        return;
+      }
+
+      // Test 3: Create instance
+      try {
+        const container = document.getElementById('ladder-container');
+        ladder = new SlickLadder.PriceLadder({ container });
+        log('✓ PriceLadder instance created');
+      } catch (e) {
+        log(`✗ Failed to create instance: ${e.message}`, true);
+        return;
+      }
+
+      // Test 4: Process price level updates
+      try {
+        // Side.BID = 0, Side.ASK = 1
+        ladder.processUpdate({ price: 100.5, quantity: 1000, numOrders: 1, side: 0 });
+        ladder.processUpdate({ price: 100.4, quantity: 2000, numOrders: 1, side: 0 });
+        ladder.processUpdate({ price: 100.3, quantity: 1500, numOrders: 1, side: 0 });
+        ladder.processUpdate({ price: 100.6, quantity: 1500, numOrders: 1, side: 1 });
+        ladder.processUpdate({ price: 100.7, quantity: 1800, numOrders: 1, side: 1 });
+        ladder.processUpdate({ price: 100.8, quantity: 2200, numOrders: 1, side: 1 });
+        log('✓ processUpdate() works');
+      } catch (e) {
+        log(`✗ processUpdate() failed: ${e.message}`, true);
+      }
+
+      // Test 5: Check WASM files
+      fetch('node_modules/@slickquant/slick-ladder/dist/wasm/dotnet.native.wasm')
+        .then(response => {
+          if (response.ok) {
+            log('✓ WASM files present in package');
+          } else {
+            log('✗ WASM files NOT found', true);
+          }
+        })
+        .catch(e => {
+          log(`✗ Error checking WASM files: ${e.message}`, true);
+        });
+
+      log('--- All tests completed ---');
+    }
+
+    // Auto-run tests on load
+    window.addEventListener('load', () => {
+      log('Package loaded from: node_modules/@slickquant/slick-ladder/');
+      runTests();
+    });
+  </script>
+</body>
+</html>

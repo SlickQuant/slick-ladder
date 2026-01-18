@@ -20,17 +20,19 @@
     <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
   </ItemGroup>
 
-  <!-- Post-build event to copy WASM files to web public directory -->
+  <!-- Post-build event to copy WASM files to web directories -->
   <Target Name="CopyWasmFilesToWeb" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'browser-wasm'">
     <PropertyGroup>
       <WasmAppBundlePath>$(PublishDir)..\AppBundle\_framework</WasmAppBundlePath>
       <WebPublicWasmPath>$(MSBuildProjectDirectory)\..\..\examples\web\public\wasm</WebPublicWasmPath>
+      <WebLibWasmPath>$(MSBuildProjectDirectory)\..\..\src\web\wasm</WebLibWasmPath>
     </PropertyGroup>
 
-    <Message Text="Copying WASM files from $(WasmAppBundlePath) to $(WebPublicWasmPath)" Importance="high" />
+    <Message Text="Copying WASM files from $(WasmAppBundlePath) to $(WebPublicWasmPath) and $(WebLibWasmPath)" Importance="high" />
 
-    <!-- Create destination directory if it doesn't exist -->
+    <!-- Create destination directories if they don't exist -->
     <MakeDir Directories="$(WebPublicWasmPath)" Condition="!Exists('$(WebPublicWasmPath)')" />
+    <MakeDir Directories="$(WebLibWasmPath)" Condition="!Exists('$(WebLibWasmPath)')" />
 
     <!-- Copy all WASM framework files (including subdirectories) -->
     <ItemGroup>
@@ -38,6 +40,7 @@
     </ItemGroup>
 
     <Copy SourceFiles="@(WasmFrameworkFiles)" DestinationFolder="$(WebPublicWasmPath)\%(RecursiveDir)" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(WasmFrameworkFiles)" DestinationFolder="$(WebLibWasmPath)\%(RecursiveDir)" SkipUnchangedFiles="false" />
 
     <Message Text="WASM files copied successfully!" Importance="high" />
   </Target>

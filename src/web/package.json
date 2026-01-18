@@ -1,6 +1,6 @@
 {
-  "name": "slick-ladder",
-  "version": "0.1.0",
+  "name": "@slickquant/slick-ladder",
+  "version": "0.1.1",
   "description": "Ultra-low latency price ladder component for web",
   "main": "dist/slick-ladder.js",
   "types": "dist/main.d.ts",
@@ -11,40 +11,59 @@
     },
     "./main": {
       "types": "./dist/main.d.ts",
-      "default": "./src/main.ts"
+      "default": "./dist/main.js"
     },
     "./wasm-adapter": {
       "types": "./dist/wasm-adapter.d.ts",
-      "default": "./src/wasm-adapter.ts"
+      "default": "./dist/wasm-adapter.js"
     },
     "./canvas-renderer": {
       "types": "./dist/canvas-renderer.d.ts",
-      "default": "./src/canvas-renderer.ts"
+      "default": "./dist/canvas-renderer.js"
     },
     "./types": {
       "types": "./dist/types.d.ts",
-      "default": "./src/types.ts"
+      "default": "./dist/types.js"
     },
     "./wasm-types": {
       "types": "./dist/wasm-types.d.ts",
-      "default": "./src/wasm-types.ts"
+      "default": "./dist/wasm-types.js"
     }
   },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "webpack --mode production",
     "dev": "webpack --mode development --watch",
+    "prepublishOnly": "cd ../.. && npm run build:lib:full",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "note": "Demo application is located in ../../examples/web/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SlickQuant/slick-ladder",
+    "directory": "src/web"
+  },
+  "bugs": {
+    "url": "https://github.com/SlickQuant/slick-ladder/issues"
+  },
+  "homepage": "https://github.com/SlickQuant/slick-ladder#readme",
   "keywords": [
     "price-ladder",
     "trading",
     "orderbook",
     "webassembly",
-    "canvas"
+    "canvas",
+    "low-latency",
+    "real-time",
+    "market-data",
+    "dom",
+    "depth-of-market"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "Slick Quant LLC.",
+  "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.10.0",
     "copy-webpack-plugin": "^11.0.0",

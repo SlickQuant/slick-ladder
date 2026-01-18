@@ -1,5 +1,6 @@
 const path = require('path');
 const TerserPlugin = require('terser-webpack-plugin');
+const CopyWebpackPlugin = require('copy-webpack-plugin');
 
 module.exports = {
   entry: {
@@ -26,13 +27,30 @@ module.exports = {
       type: 'umd',
     },
   },
-  plugins: [],
+  plugins: [
+    new CopyWebpackPlugin({
+      patterns: [
+        {
+          from: 'wasm',
+          to: 'wasm',
+          noErrorOnMissing: true, // Don't fail if wasm folder doesn't exist yet
+        },
+      ],
+    }),
+  ],
   optimization: {
     minimizer: [
       new TerserPlugin({
         exclude: /dotnet.*\.js$/, // Don't minify .NET WASM runtime files
       }),
     ],
+  },
+  performance: {
+    hints: false, // Disable performance warnings for WASM assets
+    // Or configure specific limits:
+    // maxAssetSize: 2000000, // 2MB
+    // maxEntrypointSize: 2000000,
+    // assetFilter: (assetFilename) => !assetFilename.endsWith('.wasm'),
   },
   devServer: {
     static: {

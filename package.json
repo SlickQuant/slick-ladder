@@ -1,6 +1,6 @@
 {
-  "name": "slick-ladder",
-  "version": "0.1.0",
+  "name": "@slickquant/slick-ladder",
+  "version": "0.1.1",
   "description": "SlickLadder - Ultra-low latency price ladder component",
   "private": true,
   "workspaces": [
@@ -14,7 +14,10 @@
     "build:demo": "npm run build --workspace=examples/web",
     "build:all": "npm run build:wasm && npm run build:lib && npm run build:demo",
     "dev:demo": "npm run dev --workspace=examples/web",
-    "serve:demo": "npm run serve --workspace=examples/web"
+    "serve:demo": "npm run serve --workspace=examples/web",
+    "release": "cd src/web && npm pack",
+    "test:npm": "cd tests/npm && npm test",
+    "test:npm:browser": "cd tests/npm && npm run serve"
   },
   "repository": {
     "type": "git",
@@ -27,6 +30,6 @@
     "webassembly",
     "canvas"
   ],
-  "author": "",
-  "license": "ISC"
+  "author": "Slick Quant LLC.",
+  "license": "MIT"
 }
