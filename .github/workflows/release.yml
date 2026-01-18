@@ -1,0 +1,184 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags like v0.1.1, v1.0.0, etc.
+
+permissions:
+  contents: write  # Required for creating releases
+
+jobs:
+  build-npm:
+    name: Build NPM Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build WASM
+        run: npm run build:wasm
+
+      - name: Build library
+        run: npm run build:lib
+
+      - name: Create NPM package
+        run: npm pack --workspace=src/web
+
+      - name: Upload NPM package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: '*.tgz'
+          retention-days: 5
+
+  build-desktop:
+    name: Build Desktop Apps
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            runtime: win-x64
+            artifact-name: SlickLadder-win-x64
+            archive-ext: zip
+          - os: ubuntu-latest
+            runtime: linux-x64
+            artifact-name: SlickLadder-linux-x64
+            archive-ext: tar.gz
+          - os: macos-latest
+            runtime: osx-x64
+            artifact-name: SlickLadder-osx-x64
+            archive-ext: tar.gz
+          - os: macos-latest
+            runtime: osx-arm64
+            artifact-name: SlickLadder-osx-arm64
+            archive-ext: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore examples/avalonia/SlickLadder.Avalonia.Demo.csproj
+
+      - name: Publish Avalonia Demo
+        run: |
+          dotnet publish examples/avalonia/SlickLadder.Avalonia.Demo.csproj \
+            -c Release \
+            -r ${{ matrix.runtime }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -o publish/${{ matrix.runtime }}
+
+      - name: Create archive (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd publish/${{ matrix.runtime }}
+          7z a ../../${{ matrix.artifact-name }}.zip *
+
+      - name: Create archive (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd publish/${{ matrix.runtime }}
+          tar -czf ../../${{ matrix.artifact-name }}.tar.gz *
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: '${{ matrix.artifact-name }}.${{ matrix.archive-ext }}'
+          retention-days: 5
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-npm, build-desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display artifact structure
+        run: ls -R artifacts
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          # Extract changelog section for this version
+          VERSION=${{ steps.version.outputs.VERSION }}
+          sed -n "/## \[${VERSION}\]/,/## \[/p" CHANGELOG.md | sed '$d' > release-notes.md
+
+          # If release notes are empty, create a simple message
+          if [ ! -s release-notes.md ]; then
+            echo "Release v${VERSION}" > release-notes.md
+            echo "" >> release-notes.md
+            echo "See [CHANGELOG.md](https://github.com/SlickQuant/slick-ladder/blob/main/CHANGELOG.md) for details." >> release-notes.md
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release v${{ steps.version.outputs.VERSION }}
+          body_path: release-notes.md
+          files: |
+            artifacts/npm-package/*.tgz
+            artifacts/SlickLadder-win-x64/SlickLadder-win-x64.zip
+            artifacts/SlickLadder-linux-x64/SlickLadder-linux-x64.tar.gz
+            artifacts/SlickLadder-osx-x64/SlickLadder-osx-x64.tar.gz
+            artifacts/SlickLadder-osx-arm64/SlickLadder-osx-arm64.tar.gz
+          draft: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-npm:
+    name: Publish to NPM
+    needs: [build-npm, create-release]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build WASM
+        run: npm run build:wasm
+
+      - name: Build library
+        run: npm run build:lib
+
+      - name: Publish to NPM
+        run: npm publish --access public --workspace=src/web
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
