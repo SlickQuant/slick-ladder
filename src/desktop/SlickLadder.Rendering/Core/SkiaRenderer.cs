@@ -889,6 +889,11 @@ public class SkiaRenderer : IDisposable
         var barHeight = RenderConfig.RowHeight - 8;
         var paint = side == Side.BID ? _bidVolumePaint : _askVolumePaint;
 
+        // Clip to bar column so scrolled segments/text don't bleed into qty columns.
+        var clipRect = new SKRect(barStartX, y + 4, barStartX + barColumnWidth, y + 4 + barHeight);
+        canvas.Save();
+        canvas.ClipRect(clipRect);
+
         double xOffset = 0;  // Track position within virtual segment space
         var gap = RenderConfig.SegmentGapPx;
 
@@ -944,6 +949,8 @@ public class SkiaRenderer : IDisposable
             // Move to next segment position
             xOffset += renderWidth + gap;
         }
+
+        canvas.Restore();
     }
 
     private void DrawBidLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)
@@ -1262,12 +1269,31 @@ public class SkiaRenderer : IDisposable
         _segmentState.MaxScrollOffset = Math.Max(0, maxWidth - viewport.VolumeBarMaxWidth);
     }
 
+    private double CalculateDynamicSegmentScaleStep()
+    {
+        var baseStep = RenderConfig.SegmentScaleStep;
+        var basePixelsPerUnit = _segmentState.BasePixelsPerUnit;
+
+        if (basePixelsPerUnit <= 0)
+        {
+            return baseStep;
+        }
+
+        var maxOrderQtyEstimate = RenderConfig.TargetMaxSegmentWidth / basePixelsPerUnit;
+        var qtyRatio = Math.Max(1.0, maxOrderQtyEstimate / 100.0);
+        var qtyBoost = Math.Min(4.0, 1.0 + Math.Log10(qtyRatio));
+        var zoomBoost = Math.Min(5.0, 1.0 + Math.Log(Math.Max(1.0, _segmentState.UserScaleFactor), 2.0));
+
+        var step = baseStep * qtyBoost * zoomBoost;
+        return Math.Max(baseStep, Math.Min(3.0, step));
+    }
+
     /// <summary>
     /// Adjust segment scale factor (mirrors TypeScript adjustSegmentScale)
     /// </summary>
     public void AdjustSegmentScale(int delta, OrderBookSnapshot snapshot, ViewportManager viewport)
     {
-        var step = RenderConfig.SegmentScaleStep;
+        var step = CalculateDynamicSegmentScaleStep();
         var newScale = _segmentState.UserScaleFactor + (delta * step);
 
         // Clamp to valid range

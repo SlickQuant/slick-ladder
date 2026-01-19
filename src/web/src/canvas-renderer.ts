@@ -1033,6 +1033,16 @@ export class CanvasRenderer {
         const barHeight = this.rowHeight - 8;
         const fillColor = side === Side.BID ? this.colors.bidBar : this.colors.askBar;
 
+        // Clip to bar column so scrolled segments/text don't bleed into qty columns.
+        const clipX = barStartX;
+        const clipY = y + 4;
+        const clipWidth = this.barColumnWidth;
+        const clipHeight = barHeight;
+        this.offscreenCtx.save();
+        this.offscreenCtx.beginPath();
+        this.offscreenCtx.rect(clipX, clipY, clipWidth, clipHeight);
+        this.offscreenCtx.clip();
+
         let xOffset = 0; // Track position within virtual segment space
         const gap = SEGMENT_GAP_PX;
 
@@ -1094,13 +1104,35 @@ export class CanvasRenderer {
             // Move to next segment position
             xOffset += renderWidth + gap;
         }
+
+        this.offscreenCtx.restore();
+    }
+
+    /**
+     * Calculate dynamic segment scale step based on order size and zoom level.
+     */
+    private calculateDynamicSegmentScaleStep(): number {
+        const baseStep = SEGMENT_SCALE_STEP;
+        const basePixelsPerUnit = this.segmentState.basePixelsPerUnit;
+
+        if (basePixelsPerUnit <= 0) {
+            return baseStep;
+        }
+
+        const maxOrderQtyEstimate = TARGET_MAX_SEGMENT_WIDTH / basePixelsPerUnit;
+        const qtyRatio = Math.max(1, maxOrderQtyEstimate / 100);
+        const qtyBoost = Math.min(4, 1 + Math.log10(qtyRatio));
+        const zoomBoost = Math.min(5, 1 + Math.log2(Math.max(1, this.segmentState.userScaleFactor)));
+
+        const step = baseStep * qtyBoost * zoomBoost;
+        return Math.max(baseStep, Math.min(3, step));
     }
 
     /**
      * Adjust segment scale factor (called by Shift+Scroll)
      */
     public adjustSegmentScale(delta: number): void {
-        const step = SEGMENT_SCALE_STEP;
+        const step = this.calculateDynamicSegmentScaleStep();
         const newScale = this.segmentState.userScaleFactor + (delta * step);
 
         // Clamp to valid range

@@ -15,6 +15,9 @@ export class InteractionHandler {
     // Mouse drag state for horizontal scroll
     private isDraggingBar: boolean = false;
     private dragStartX: number = 0;
+    private dragDistance: number = 0;
+    private suppressClick: boolean = false;
+    private static readonly dragSuppressThresholdPx = 3;
 
     // Callbacks
     public onPriceClick?: (price: number, side: Side) => void;
@@ -41,6 +44,10 @@ export class InteractionHandler {
     }
 
     private handleClick(event: MouseEvent): void {
+        if (this.suppressClick) {
+            this.suppressClick = false;
+            return;
+        }
         if (this.readOnly) return;
 
         const rect = this.canvas.getBoundingClientRect();
@@ -82,6 +89,10 @@ export class InteractionHandler {
         // Handle horizontal scroll dragging
         if (this.isDraggingBar) {
             const dragDelta = this.dragStartX - x; // Invert for natural scroll direction
+            this.dragDistance += Math.abs(dragDelta);
+            if (this.dragDistance >= InteractionHandler.dragSuppressThresholdPx) {
+                this.suppressClick = true;
+            }
             this.renderer.adjustHorizontalScroll(dragDelta);
             this.dragStartX = x;
             this.onRenderNeeded?.();
@@ -118,6 +129,8 @@ export class InteractionHandler {
         // Stop dragging if mouse leaves canvas
         if (this.isDraggingBar) {
             this.isDraggingBar = false;
+            this.dragDistance = 0;
+            this.suppressClick = false;
         }
     }
 
@@ -133,6 +146,8 @@ export class InteractionHandler {
         if (x >= barStartX && x < barStartX + barColumnWidth) {
             this.isDraggingBar = true;
             this.dragStartX = x;
+            this.dragDistance = 0;
+            this.suppressClick = false;
             event.preventDefault();
         }
     }
@@ -140,6 +155,12 @@ export class InteractionHandler {
     private handleMouseUp(event: MouseEvent): void {
         if (this.isDraggingBar) {
             this.isDraggingBar = false;
+            this.dragDistance = 0;
+            if (this.suppressClick) {
+                setTimeout(() => {
+                    this.suppressClick = false;
+                }, 0);
+            }
             event.preventDefault();
         }
     }

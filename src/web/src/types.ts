@@ -32,7 +32,7 @@ export interface Order {
 
 export interface SegmentRenderState {
     basePixelsPerUnit: number;      // Auto-calculated from max order quantity
-    userScaleFactor: number;        // 1.0 default (0.1 to 10.0 range)
+    userScaleFactor: number;        // 1.0 default (0.1 to 1000.0 range)
     horizontalScrollOffset: number; // Global scroll in pixels
     maxScrollOffset: number;        // Calculated from widest level
 }
@@ -140,8 +140,8 @@ export const DEFAULT_SEGMENT_CONFIG: SegmentRenderState = {
 };
 
 export const SEGMENT_SCALE_MIN = 0.1;
-export const SEGMENT_SCALE_MAX = 10.0;
-export const SEGMENT_SCALE_STEP = 0.1; // 10% per wheel tick
+export const SEGMENT_SCALE_MAX = 100.0;
+export const SEGMENT_SCALE_STEP = 0.2; // Base step for dynamic zoom
 export const MIN_SEGMENT_WIDTH_PX = 1; // Minimum rendered width
 export const SEGMENT_GAP_PX = 2;
 export const MIN_BAR_COLUMN_WIDTH = 100; // Prevent collapse on resize
