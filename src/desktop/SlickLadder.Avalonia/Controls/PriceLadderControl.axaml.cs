@@ -89,6 +89,11 @@ public partial class PriceLadderControl : UserControl
     /// </summary>
     public ViewportManager? GetViewport() => _viewport;
 
+    public void SetMboOrderSizeFilter(long filter)
+    {
+        _renderer?.SetMboOrderSizeFilter(filter);
+    }
+
     /// <summary>
     /// Inner Skia canvas control for custom Skia rendering
     /// </summary>

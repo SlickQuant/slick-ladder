@@ -404,4 +404,9 @@ public partial class PriceLadderControl : UserControl
     /// Get access to viewport manager (for demo UI)
     /// </summary>
     public ViewportManager? GetViewport() => _viewport;
+
+    public void SetMboOrderSizeFilter(long filter)
+    {
+        _renderer?.SetMboOrderSizeFilter(filter);
+    }
 }

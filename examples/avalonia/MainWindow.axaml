@@ -111,6 +111,14 @@
                                  IsChecked="False"
                                  Margin="0,0,0,10"/>
 
+                        <TextBlock Text="MBO Order Filter (qty >)" Foreground="White" Margin="0,0,0,5"/>
+                        <TextBox x:Name="MboOrderSizeFilterText"
+                                 Text="0"
+                                 Background="White"
+                                 Foreground="#000000"
+                                 FontSize="13"
+                                 Margin="0,0,0,10"/>
+
                         <TextBlock Text="Data Mode:" Foreground="White" Margin="0,0,0,5"/>
                         <ComboBox x:Name="DataModeCombo"
                                  Background="White"

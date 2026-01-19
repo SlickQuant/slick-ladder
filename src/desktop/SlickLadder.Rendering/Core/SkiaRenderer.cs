@@ -1358,6 +1358,19 @@ public class SkiaRenderer : IDisposable
         _needsFullRedraw = true;
     }
 
+
+    public void SetMboOrderSizeFilter(long filter)
+    {
+        var normalized = Math.Max(0, filter);
+        if (_config.MboOrderSizeFilter == normalized)
+        {
+            return;
+        }
+
+        _config.MboOrderSizeFilter = normalized;
+        _needsFullRedraw = true;
+    }
+
     public void Dispose()
     {
         _bidBackgroundPaint?.Dispose();

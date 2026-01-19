@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using System.Globalization;
 using SlickLadder.Core;
 using SlickLadder.Rendering.Simulation;
 using SlickLadder.Rendering.ViewModels;
@@ -109,6 +110,27 @@ public partial class MainWindow : Window
         {
             PriceLadder.GetViewport().ShowOrderCount = ShowOrderCountCheckbox.IsChecked ?? false;
         }
+    }
+
+    private void MboOrderSizeFilterText_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (PriceLadder == null)
+        {
+            return;
+        }
+
+        var text = (sender as TextBox)?.Text?.Trim();
+        long filterValue = 0;
+
+        if (!string.IsNullOrEmpty(text))
+        {
+            if (!long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out filterValue))
+            {
+                return;
+            }
+        }
+
+        PriceLadder.SetMboOrderSizeFilter(filterValue);
     }
 
     private void DataModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

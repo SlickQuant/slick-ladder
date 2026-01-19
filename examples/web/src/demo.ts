@@ -93,6 +93,8 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const dataModeSelect = document.getElementById('data-mode') as HTMLSelectElement;
             const dataMode = (dataModeSelect?.value as 'PriceLevel' | 'MBO') ?? 'PriceLevel';
 
+            const mboOrderSizeFilter = getMboOrderSizeFilter();
+
             // Calculate initial width based on display settings (same as TypeScript mode)
             const dataColumns = showOrderCount ? 5 : 3;
             const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
@@ -108,6 +110,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 mode: dataMode,
                 showVolumeBars,
                 showOrderCount,
+                mboOrderSizeFilter,
                 onTrade: (price, side) => {
                     const action = side === Side.BID ? 'SELL' : 'BUY';
                     console.log(`${action} @ $${price.toFixed(2)}`);
@@ -165,6 +168,8 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         const dataModeSelect = document.getElementById('data-mode') as HTMLSelectElement;
         const dataMode = (dataModeSelect?.value as 'PriceLevel' | 'MBO') ?? 'PriceLevel';
 
+        const mboOrderSizeFilter = getMboOrderSizeFilter();
+
         // Calculate initial width based on display settings
         const dataColumns = showOrderCount ? 5 : 3;
         const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
@@ -181,6 +186,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             readOnly: false,
             showVolumeBars,
             showOrderCount,
+            mboOrderSizeFilter,
             onTrade: (price, side) => {
                 const action = side === Side.ASK ? 'BUY' : 'SELL';
                 console.log(`${action} @ $${price.toFixed(2)}`);
@@ -521,6 +527,18 @@ function roundToTick(price: number, tickSize: number): number {
     return Math.round(price / tickSize) * tickSize;
 }
 
+function getMboOrderSizeFilter(): number {
+    const input = document.getElementById('mbo-order-filter') as HTMLInputElement | null;
+    if (!input) {
+        return 0;
+    }
+    const parsed = parseInt(input.value, 10);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+        return 0;
+    }
+    return parsed;
+}
+
 function setupControls() {
     const startButton = document.getElementById('start-updates');
     const stopButton = document.getElementById('stop-updates');
@@ -528,6 +546,7 @@ function setupControls() {
     const updateRateSelect = document.getElementById('update-rate') as HTMLSelectElement;
     const toggleBarsCheckbox = document.getElementById('toggle-bars') as HTMLInputElement;
     const toggleOrdersCheckbox = document.getElementById('toggle-orders') as HTMLInputElement;
+    const mboOrderFilterInput = document.getElementById('mbo-order-filter') as HTMLInputElement;
     const backendSelect = document.getElementById('backend-select') as HTMLSelectElement;
     const dataModeSelect = document.getElementById('data-mode') as HTMLSelectElement;
 
@@ -585,6 +604,12 @@ function setupControls() {
         const checked = (e.target as HTMLInputElement).checked;
         if (ladder) {
             ladder.setShowOrderCount(checked);
+        }
+    });
+
+    mboOrderFilterInput?.addEventListener('input', () => {
+        if (ladder) {
+            ladder.setMboOrderSizeFilter(getMboOrderSizeFilter());
         }
     });
 

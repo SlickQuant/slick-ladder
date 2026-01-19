@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private ComboBox? _dataModeCombo;
     private ComboBox? _removalModeCombo;
     private ComboBox? _tickSizeCombo;
+    private TextBox? _mboOrderSizeFilterText;
 
     public MainWindow()
     {
@@ -54,6 +55,7 @@ public partial class MainWindow : Window
         _dataModeCombo = this.FindControl<ComboBox>("DataModeCombo");
         _removalModeCombo = this.FindControl<ComboBox>("RemovalModeCombo");
         _tickSizeCombo = this.FindControl<ComboBox>("TickSizeCombo");
+        _mboOrderSizeFilterText = this.FindControl<TextBox>("MboOrderSizeFilterText");
 
         // Wire up checkbox changed events
         if (_showVolumeBarsCheckbox != null)
@@ -63,6 +65,10 @@ public partial class MainWindow : Window
         if (_showOrderCountCheckbox != null)
         {
             _showOrderCountCheckbox.IsCheckedChanged += ShowOrderCountCheckbox_Changed;
+        }
+        if (_mboOrderSizeFilterText != null)
+        {
+            _mboOrderSizeFilterText.TextChanged += MboOrderSizeFilterText_Changed;
         }
     }
 
@@ -187,6 +193,28 @@ public partial class MainWindow : Window
         {
             priceLadder.GetViewport().ShowOrderCount = _showOrderCountCheckbox.IsChecked ?? false;
         }
+    }
+
+    private void MboOrderSizeFilterText_Changed(object? sender, TextChangedEventArgs e)
+    {
+        var priceLadder = this.FindControl<global::SlickLadder.Avalonia.Controls.PriceLadderControl>("PriceLadder");
+        if (priceLadder == null)
+        {
+            return;
+        }
+
+        var text = _mboOrderSizeFilterText?.Text?.Trim();
+        long filterValue = 0;
+
+        if (!string.IsNullOrEmpty(text))
+        {
+            if (!long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out filterValue))
+            {
+                return;
+            }
+        }
+
+        priceLadder.SetMboOrderSizeFilter(filterValue);
     }
 
     private void DataModeCombo_SelectionChanged(object? sender, SelectionChangedEventArgs e)
