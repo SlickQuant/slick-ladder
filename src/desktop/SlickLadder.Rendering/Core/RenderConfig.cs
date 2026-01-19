@@ -44,6 +44,27 @@ public class RenderConfig
     public const int RowHeight = 24;
     public const float ColumnWidth = 66.7f;  // Matches web version COL_WIDTH
     public const float VolumeBarWidthMultiplier = 2.5f;
+
+    // New segment rendering configuration (must match web version)
+    public const double SegmentScaleMin = 0.1;
+    public const double SegmentScaleMax = 10.0;
+    public const double SegmentScaleStep = 0.1;
+    public const int MinSegmentWidthPx = 1;
+    public const int SegmentGapPx = 2;
+    public const int MinBarColumnWidth = 100;
+    public const int TargetMaxSegmentWidth = 200;
+}
+
+/// <summary>
+/// State for segment rendering with dynamic scaling and scrolling
+/// Mirrors TypeScript SegmentRenderState interface
+/// </summary>
+public class SegmentRenderState
+{
+    public double BasePixelsPerUnit { get; set; } = 1.0;  // Auto-calculated from max order quantity
+    public double UserScaleFactor { get; set; } = 1.0;    // 1.0 default (0.1 to 10.0 range)
+    public double HorizontalScrollOffset { get; set; } = 0;  // Global scroll in pixels
+    public double MaxScrollOffset { get; set; } = 0;      // Calculated from widest level
 }
 
 /// <summary>

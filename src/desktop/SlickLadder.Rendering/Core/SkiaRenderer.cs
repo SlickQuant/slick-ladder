@@ -45,6 +45,9 @@ public class SkiaRenderer : IDisposable
     private int _lastDensePackingScrollOffset;
     private decimal _lastCenterPrice;
 
+    // Segment rendering state (mirrors TypeScript SegmentRenderState)
+    private SegmentRenderState _segmentState = new SegmentRenderState();
+
     public SkiaRenderer(RenderConfig config)
     {
         _config = config;
@@ -114,6 +117,12 @@ public class SkiaRenderer : IDisposable
     {
         EnsureCache(viewport.Width, viewport.Height);
         var targetCanvas = _cachedSurface!.Canvas;
+
+        // Recalculate base scale if order quantities changed
+        CalculateBaseScale(snapshot);
+
+        // Recalculate max scroll offset with current scale
+        RecalculateMaxScroll(snapshot, viewport);
 
         // Calculate max volume for proportional bars
         var maxVolume = 0L;
@@ -857,7 +866,7 @@ public class SkiaRenderer : IDisposable
     }
 
     /// <summary>
-    /// Draw individual order bars for MBO mode (horizontally adjacent segments within row)
+    /// Draw individual order bars for MBO mode with proportional sizing (mirrors TypeScript drawIndividualOrders)
     /// </summary>
     private void DrawIndividualOrders(
         SKCanvas canvas,
@@ -872,135 +881,69 @@ public class SkiaRenderer : IDisposable
             return;
         }
 
+        // Calculate segment widths without minimum constraint
+        var pixelsPerUnit = _segmentState.BasePixelsPerUnit * _segmentState.UserScaleFactor;
+        var scrollOffset = _segmentState.HorizontalScrollOffset;
         var barStartX = viewport.VolumeBarColumnX.Value;
-        var barMaxWidth = viewport.VolumeBarMaxWidth;
-        var barHeight = RenderConfig.RowHeight - 8;  // Same height as single bar (with padding)
+        var barColumnWidth = viewport.VolumeBarMaxWidth;
+        var barHeight = RenderConfig.RowHeight - 8;
         var paint = side == Side.BID ? _bidVolumePaint : _askVolumePaint;
 
-        long totalOrderQuantity = 0;
-        for (int i = 0; i < orders.Length; i++)
-        {
-            totalOrderQuantity += orders[i].Quantity;
-        }
-
-        if (totalOrderQuantity <= 0)
-        {
-            return;
-        }
-
-        var minSegmentWidth = Math.Max(0f, _config.MinOrderSegmentWidth);
-        var segmentGap = Math.Max(0f, _config.OrderSegmentGap);
-
-        // Calculate the total bar width for this level (proportional to maxVolume)
-        var levelBarWidth = maxVolume > 0
-            ? (float)totalOrderQuantity / maxVolume * barMaxWidth
-            : 0;
-
-        if (minSegmentWidth > 0f)
-        {
-            var minTotalWidth = (orders.Length * minSegmentWidth) +
-                (segmentGap * Math.Max(0, orders.Length - 1));
-            levelBarWidth = Math.Max(levelBarWidth, Math.Min(minTotalWidth, barMaxWidth));
-        }
-
-        if (levelBarWidth <= 0)
-        {
-            return;
-        }
-
-        // Always use consistent gap between segments
-        var gap = orders.Length > 1 ? segmentGap : 0f;
-        var totalGapWidth = gap * (orders.Length - 1);
-        var availableWidth = Math.Max(0f, levelBarWidth - totalGapWidth);
-
-        var effectiveMinWidth = minSegmentWidth > 0f
-            ? Math.Min(minSegmentWidth, availableWidth / orders.Length)
-            : 0f;
-
-        var deficit = 0f;
-        var surplus = 0f;
-        if (effectiveMinWidth > 0f)
-        {
-            for (int i = 0; i < orders.Length; i++)
-            {
-                var baseWidth = (float)orders[i].Quantity / totalOrderQuantity * availableWidth;
-                if (baseWidth < effectiveMinWidth)
-                {
-                    deficit += effectiveMinWidth - baseWidth;
-                }
-                else if (baseWidth > effectiveMinWidth)
-                {
-                    surplus += baseWidth - effectiveMinWidth;
-                }
-            }
-        }
-
-        var reductionFactor = deficit > 0f && surplus > 0f ? deficit / surplus : 0f;
-        var xOffset = barStartX;  // Start at left edge of volume bar column
+        double xOffset = 0;  // Track position within virtual segment space
+        var gap = RenderConfig.SegmentGapPx;
 
         for (int i = 0; i < orders.Length; i++)
         {
             var order = orders[i];
 
-            // Calculate segment width as proportion of levelBarWidth (not barMaxWidth)
-            // This ensures all orders at this level fit within the level's total bar
-            var barWidth = (float)order.Quantity / totalOrderQuantity * availableWidth;
+            // Calculate proportional width (no min constraint)
+            var segmentWidth = order.Quantity * pixelsPerUnit;
 
-            if (effectiveMinWidth > 0f)
+            // Apply minimum rendering width
+            var renderWidth = (float)Math.Max(RenderConfig.MinSegmentWidthPx, segmentWidth);
+
+            // Calculate screen position accounting for scroll
+            var segmentStartX = (float)(barStartX + xOffset - scrollOffset);
+            var segmentEndX = segmentStartX + renderWidth;
+
+            // Cull segments outside visible area
+            var visibleStartX = Math.Max(segmentStartX, barStartX);
+            var visibleEndX = Math.Min(segmentEndX, barStartX + barColumnWidth);
+
+            if (visibleEndX > visibleStartX && visibleEndX > barStartX && visibleStartX < barStartX + barColumnWidth)
             {
-                if (barWidth < effectiveMinWidth)
-                {
-                    barWidth = effectiveMinWidth;
-                }
-                else if (reductionFactor > 0f)
-                {
-                    barWidth -= (barWidth - effectiveMinWidth) * reductionFactor;
-                }
-            }
+                var visibleWidth = visibleEndX - visibleStartX;
 
-            // Draw individual order bar as a segment with gap
-            if (barWidth > 0)
-            {
-                canvas.DrawRect(xOffset, y + 4, barWidth, barHeight, paint);
+                // Draw segment background
+                canvas.DrawRect(visibleStartX, y + 4, visibleWidth, barHeight, paint);
 
-                // Draw order quantity text centered in segment
-                var qtyText = FormatQuantity(order.Quantity);
+                // Draw exact quantity text (no K/M formatting)
+                var qtyText = order.Quantity.ToString("N0");  // e.g., "1,234,567"
                 var textWidth = _segmentTextPaint.MeasureText(qtyText);
-                if (textWidth < barWidth - 4)  // Only draw if text fits
+
+                // Only draw text if segment is wide enough and text is in visible area
+                if (renderWidth > 40 && textWidth < renderWidth - 4)
                 {
-                    var textX = xOffset + barWidth / 2;
-                    var textY = y + 4 + barHeight / 2 + 3;  // Vertically centered
-                    canvas.DrawText(qtyText, textX, textY, _segmentTextPaint);
+                    var textCenterX = segmentStartX + renderWidth / 2;
+
+                    // Check if text center is in visible area
+                    if (textCenterX >= barStartX && textCenterX <= barStartX + barColumnWidth)
+                    {
+                        var textY = y + 4 + barHeight / 2 + 3;  // Vertically centered
+                        canvas.DrawText(qtyText, textCenterX, textY, _segmentTextPaint);
+                    }
                 }
 
-                // Draw gold border if this is an own order
+                // Draw gold border for own orders
                 if (order.IsOwnOrder)
                 {
-                    canvas.DrawRect(xOffset, y + 4, barWidth, barHeight, _ownOrderBorderPaint);
+                    canvas.DrawRect(visibleStartX, y + 4, visibleWidth, barHeight, _ownOrderBorderPaint);
                 }
             }
 
-            // Move to the right for next bar segment
-            xOffset += barWidth;
-            if (gap > 0f && i < orders.Length - 1)
-            {
-                xOffset += gap;
-            }
-
-            // Stop if we've exceeded the level's total bar width
-            if (xOffset >= barStartX + levelBarWidth)
-                break;
+            // Move to next segment position
+            xOffset += renderWidth + gap;
         }
-    }
-
-    /// <summary>
-    /// Format quantity for display in segment (e.g., "500", "1K", "2M")
-    /// </summary>
-    private static string FormatQuantity(long quantity)
-    {
-        if (quantity >= 1000000) return $"{quantity / 1000000}M";
-        if (quantity >= 1000) return $"{quantity / 1000}K";
-        return quantity.ToString();
     }
 
     private void DrawBidLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)
@@ -1231,6 +1174,136 @@ public class SkiaRenderer : IDisposable
     {
         if (maxVolume == 0) return 0;
         return (float)quantity / maxVolume * maxWidth;
+    }
+
+    /// <summary>
+    /// Calculate base scale factor from max order quantity (mirrors TypeScript calculateBaseScale)
+    /// Formula: basePixelsPerUnit = TARGET_MAX_SEGMENT_WIDTH / maxOrderQuantity
+    /// </summary>
+    private void CalculateBaseScale(OrderBookSnapshot snapshot)
+    {
+        long maxOrderQty = 0;
+
+        // Check bid orders
+        if (snapshot.BidOrders != null)
+        {
+            foreach (var orders in snapshot.BidOrders.Values)
+            {
+                foreach (var order in orders)
+                {
+                    maxOrderQty = Math.Max(maxOrderQty, order.Quantity);
+                }
+            }
+        }
+
+        // Check ask orders
+        if (snapshot.AskOrders != null)
+        {
+            foreach (var orders in snapshot.AskOrders.Values)
+            {
+                foreach (var order in orders)
+                {
+                    maxOrderQty = Math.Max(maxOrderQty, order.Quantity);
+                }
+            }
+        }
+
+        if (maxOrderQty > 0)
+        {
+            var newBaseScale = (double)RenderConfig.TargetMaxSegmentWidth / maxOrderQty;
+
+            var changeRatio = Math.Abs(newBaseScale - _segmentState.BasePixelsPerUnit)
+                             / _segmentState.BasePixelsPerUnit;
+
+            // Only update if significantly different (20% threshold) or initial calculation
+            if (changeRatio > 0.2 || _segmentState.BasePixelsPerUnit == 1.0)
+            {
+                _segmentState.BasePixelsPerUnit = newBaseScale;
+                // Note: RecalculateMaxScroll would be called here if we add scroll support
+            }
+        }
+    }
+
+    /// <summary>
+    /// Recalculate max horizontal scroll offset based on current scale (mirrors TypeScript recalculateMaxScroll)
+    /// </summary>
+    private void RecalculateMaxScroll(OrderBookSnapshot snapshot, ViewportManager viewport)
+    {
+        var pixelsPerUnit = _segmentState.BasePixelsPerUnit * _segmentState.UserScaleFactor;
+        double maxWidth = 0;
+
+        // Check all price levels for widest segment set
+        foreach (var level in snapshot.Bids)
+        {
+            if (snapshot.BidOrders != null && snapshot.BidOrders.TryGetValue(level.Price, out var orders) && orders.Length > 0)
+            {
+                double totalWidth = 0;
+                foreach (var order in orders)
+                {
+                    totalWidth += (order.Quantity * pixelsPerUnit) + RenderConfig.SegmentGapPx;
+                }
+                maxWidth = Math.Max(maxWidth, totalWidth);
+            }
+        }
+
+        foreach (var level in snapshot.Asks)
+        {
+            if (snapshot.AskOrders != null && snapshot.AskOrders.TryGetValue(level.Price, out var orders) && orders.Length > 0)
+            {
+                double totalWidth = 0;
+                foreach (var order in orders)
+                {
+                    totalWidth += (order.Quantity * pixelsPerUnit) + RenderConfig.SegmentGapPx;
+                }
+                maxWidth = Math.Max(maxWidth, totalWidth);
+            }
+        }
+
+        _segmentState.MaxScrollOffset = Math.Max(0, maxWidth - viewport.VolumeBarMaxWidth);
+    }
+
+    /// <summary>
+    /// Adjust segment scale factor (mirrors TypeScript adjustSegmentScale)
+    /// </summary>
+    public void AdjustSegmentScale(int delta, OrderBookSnapshot snapshot, ViewportManager viewport)
+    {
+        var step = RenderConfig.SegmentScaleStep;
+        var newScale = _segmentState.UserScaleFactor + (delta * step);
+
+        // Clamp to valid range
+        _segmentState.UserScaleFactor = Math.Max(
+            RenderConfig.SegmentScaleMin,
+            Math.Min(RenderConfig.SegmentScaleMax, newScale)
+        );
+
+        // Recalculate max scroll offset with new scale
+        RecalculateMaxScroll(snapshot, viewport);
+
+        // Clamp current scroll to new max
+        if (_segmentState.HorizontalScrollOffset > _segmentState.MaxScrollOffset)
+        {
+            _segmentState.HorizontalScrollOffset = _segmentState.MaxScrollOffset;
+        }
+
+        // Force full redraw
+        _needsFullRedraw = true;
+    }
+
+    /// <summary>
+    /// Adjust horizontal scroll offset (mirrors TypeScript adjustHorizontalScroll)
+    /// </summary>
+    public void AdjustHorizontalScroll(double delta)
+    {
+        _segmentState.HorizontalScrollOffset = Math.Max(
+            0,
+            Math.Min(
+                _segmentState.MaxScrollOffset,
+                _segmentState.HorizontalScrollOffset + delta
+            )
+        );
+
+        // Force full redraw
+        _needsFullRedraw = true;
     }
 
     public void Dispose()

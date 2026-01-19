@@ -1,4 +1,4 @@
-import { BookLevel, Side, OrderBookSnapshot, CanvasColors, DEFAULT_COLORS, RenderMetrics, Order, DirtyLevelChange, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, ORDER_SEGMENT_GAP, MIN_ORDER_SEGMENT_WIDTH } from './types';
+import { BookLevel, Side, OrderBookSnapshot, CanvasColors, DEFAULT_COLORS, RenderMetrics, Order, DirtyLevelChange, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, SegmentRenderState, DEFAULT_SEGMENT_CONFIG, SEGMENT_SCALE_MIN, SEGMENT_SCALE_MAX, SEGMENT_SCALE_STEP, MIN_SEGMENT_WIDTH_PX, SEGMENT_GAP_PX, MIN_BAR_COLUMN_WIDTH, TARGET_MAX_SEGMENT_WIDTH } from './types';
 
 type DensePackingLayout = {
     nonEmptyAsks: BookLevel[];
@@ -64,6 +64,10 @@ export class CanvasRenderer {
     // Price configuration
     private tickSize: number;
 
+    // Segment rendering state
+    private barColumnWidth: number;
+    private segmentState: SegmentRenderState;
+
     constructor(
         canvas: HTMLCanvasElement,
         width: number,
@@ -83,6 +87,22 @@ export class CanvasRenderer {
         this.showOrderCount = showOrderCount;
         this.tickSize = tickSize;
         this.visibleRows = Math.floor(height / rowHeight);
+
+        // Calculate initial bar column width
+        const fixedDataColumns = showOrderCount ? 5 : 3;
+        this.barColumnWidth = Math.max(MIN_BAR_COLUMN_WIDTH, width - (fixedDataColumns * COL_WIDTH));
+
+        // Initialize segment state
+        this.segmentState = { ...DEFAULT_SEGMENT_CONFIG };
+
+        // Load persisted user scale factor from localStorage
+        const savedScale = localStorage.getItem('segmentScaleFactor');
+        if (savedScale) {
+            const scale = parseFloat(savedScale);
+            if (!isNaN(scale) && scale >= SEGMENT_SCALE_MIN && scale <= SEGMENT_SCALE_MAX) {
+                this.segmentState.userScaleFactor = scale;
+            }
+        }
 
         // Set canvas size
         canvas.width = width;
@@ -166,6 +186,88 @@ export class CanvasRenderer {
         return lookup;
     }
 
+    /**
+     * Calculate base scale dynamically based on max order quantity
+     */
+    private calculateBaseScale(): void {
+        if (!this.currentSnapshot) return;
+
+        // Find max individual order quantity across all levels
+        let maxOrderQty = 0;
+
+        const checkOrders = (ordersMap: Map<number, Order[]> | null | undefined) => {
+            if (!ordersMap) return;
+            for (const orders of ordersMap.values()) {
+                for (const order of orders) {
+                    maxOrderQty = Math.max(maxOrderQty, order.quantity);
+                }
+            }
+        };
+
+        checkOrders(this.currentSnapshot.bidOrders);
+        checkOrders(this.currentSnapshot.askOrders);
+
+        // Calculate base scale to make largest order ~200px wide
+        if (maxOrderQty > 0) {
+            const newBaseScale = TARGET_MAX_SEGMENT_WIDTH / maxOrderQty;
+
+            // Only update if significantly different (avoid constant tiny adjustments)
+            const changeRatio = Math.abs(newBaseScale - this.segmentState.basePixelsPerUnit)
+                               / this.segmentState.basePixelsPerUnit;
+
+            if (changeRatio > 0.2 || this.segmentState.basePixelsPerUnit === 1.0) {
+                // More than 20% change, or initial calculation
+                this.segmentState.basePixelsPerUnit = newBaseScale;
+
+                // Recalculate scroll limits with new scale
+                this.recalculateMaxScroll();
+            }
+        }
+    }
+
+    /**
+     * Recalculate max horizontal scroll offset based on current scale
+     */
+    private recalculateMaxScroll(): void {
+        if (!this.currentSnapshot) return;
+
+        const pixelsPerUnit = this.segmentState.basePixelsPerUnit * this.segmentState.userScaleFactor;
+        let maxWidth = 0;
+
+        // Check all price levels for widest segment set
+        const allLevels = [
+            ...this.currentSnapshot.bids,
+            ...this.currentSnapshot.asks
+        ];
+
+        for (const level of allLevels) {
+            const orders = level.side === Side.BID
+                ? this.currentSnapshot.bidOrders?.get(level.price)
+                : this.currentSnapshot.askOrders?.get(level.price);
+
+            if (orders && orders.length > 0) {
+                const totalWidth = orders.reduce((sum, order) =>
+                    sum + (order.quantity * pixelsPerUnit) + SEGMENT_GAP_PX, 0);
+                maxWidth = Math.max(maxWidth, totalWidth);
+            }
+        }
+
+        this.segmentState.maxScrollOffset = Math.max(0, maxWidth - this.barColumnWidth);
+    }
+
+    /**
+     * Update bar column width (called on resize)
+     */
+    public updateBarColumnWidth(width: number): void {
+        this.barColumnWidth = width;
+
+        // Reset horizontal scroll if segments now fit
+        this.recalculateMaxScroll();
+        if (this.segmentState.horizontalScrollOffset > this.segmentState.maxScrollOffset) {
+            this.segmentState.horizontalScrollOffset = this.segmentState.maxScrollOffset;
+        }
+    }
+
     private drawFullBackground(): void {
         this.offscreenCtx.fillStyle = this.colors.background;
         this.offscreenCtx.fillRect(0, 0, this.width, this.height);
@@ -215,6 +317,9 @@ export class CanvasRenderer {
         this.currentSnapshot = snapshot;
         this.bidOrdersByPriceKey = this.buildOrderLookup(snapshot.bidOrders);
         this.askOrdersByPriceKey = this.buildOrderLookup(snapshot.askOrders);
+
+        // Recalculate base scale if order quantities changed
+        this.calculateBaseScale();
 
         this.clearDirtyState();
 
@@ -735,7 +840,7 @@ export class CanvasRenderer {
             if (this.showVolumeBars) {
                 if (orders && orders.length > 0) {
                     // MBO mode: Draw individual order bars
-                    this.drawIndividualOrders(orders, Side.BID, maxQty, y);
+                    this.drawIndividualOrders(orders, Side.BID, y);
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.bidBar;
@@ -760,7 +865,7 @@ export class CanvasRenderer {
             if (this.showVolumeBars) {
                 if (orders && orders.length > 0) {
                     // MBO mode: Draw individual order bars
-                    this.drawIndividualOrders(orders, Side.ASK, maxQty, y);
+                    this.drawIndividualOrders(orders, Side.ASK, y);
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.askBar;
@@ -874,7 +979,7 @@ export class CanvasRenderer {
             if (this.showVolumeBars) {
                 if (orders && orders.length > 0) {
                     // MBO mode: Draw individual order bars
-                    this.drawIndividualOrders(orders, Side.BID, maxQty, y);
+                    this.drawIndividualOrders(orders, Side.BID, y);
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.bidBar;
@@ -896,7 +1001,7 @@ export class CanvasRenderer {
             if (this.showVolumeBars) {
                 if (orders && orders.length > 0) {
                     // MBO mode: Draw individual order bars
-                    this.drawIndividualOrders(orders, Side.ASK, maxQty, y);
+                    this.drawIndividualOrders(orders, Side.ASK, y);
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.askBar;
@@ -915,121 +1020,138 @@ export class CanvasRenderer {
     private drawIndividualOrders(
         orders: Order[],
         side: Side,
-        maxQty: number,
         y: number
     ): void {
         if (!orders || orders.length === 0 || !this.showVolumeBars) return;
 
-        let columnCount = 3;
-        if (this.showOrderCount) columnCount += 2;
-        const barCol = columnCount;
-        const barStartX = COL_WIDTH * barCol;
-        const BAR_MAX_WIDTH = (COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER) - 5;
+        // Calculate segment widths without minimum constraint
+        const pixelsPerUnit = this.segmentState.basePixelsPerUnit * this.segmentState.userScaleFactor;
+        const scrollOffset = this.segmentState.horizontalScrollOffset;
+        const barStartX = this.showOrderCount ? COL_WIDTH * 5 : COL_WIDTH * 3;
 
         // Same height as single bar (with padding)
         const barHeight = this.rowHeight - 8;
         const fillColor = side === Side.BID ? this.colors.bidBar : this.colors.askBar;
-        const segmentGap = ORDER_SEGMENT_GAP;
-        const minSegmentWidth = MIN_ORDER_SEGMENT_WIDTH;
 
-        let totalOrderQuantity = 0;
-        for (const order of orders) {
-            totalOrderQuantity += order.quantity;
-        }
-
-        if (totalOrderQuantity <= 0) {
-            return;
-        }
-
-        // Calculate the total bar width for this level (proportional to maxQty)
-        let levelBarWidth = maxQty > 0 ? (totalOrderQuantity / maxQty) * BAR_MAX_WIDTH : 0;
-        const minTotalWidth = (orders.length * minSegmentWidth) + (segmentGap * Math.max(0, orders.length - 1));
-        levelBarWidth = Math.max(levelBarWidth, Math.min(minTotalWidth, BAR_MAX_WIDTH));
-
-        if (levelBarWidth <= 0) {
-            return;
-        }
-
-        // Always use consistent gap between segments
-        const gap = orders.length > 1 ? segmentGap : 0;
-        const totalGapWidth = gap * (orders.length - 1);
-        const availableWidth = Math.max(0, levelBarWidth - totalGapWidth);
-
-        const effectiveMinWidth = Math.min(minSegmentWidth, availableWidth / orders.length);
-        let deficit = 0;
-        let surplus = 0;
-        for (const order of orders) {
-            const baseWidth = (order.quantity / totalOrderQuantity) * availableWidth;
-            if (baseWidth < effectiveMinWidth) {
-                deficit += effectiveMinWidth - baseWidth;
-            } else if (baseWidth > effectiveMinWidth) {
-                surplus += baseWidth - effectiveMinWidth;
-            }
-        }
-
-        const reductionFactor = deficit > 0 && surplus > 0 ? deficit / surplus : 0;
-        let xOffset = barStartX;  // Start at left edge of volume bar column
+        let xOffset = 0; // Track position within virtual segment space
+        const gap = SEGMENT_GAP_PX;
 
         for (let i = 0; i < orders.length; i++) {
             const order = orders[i];
 
-            // Calculate segment width as proportion of levelBarWidth (not BAR_MAX_WIDTH)
-            // This ensures all orders at this level fit within the level's total bar
-            let barWidth = (order.quantity / totalOrderQuantity) * availableWidth;
-            if (barWidth < effectiveMinWidth) {
-                barWidth = effectiveMinWidth;
-            } else if (reductionFactor > 0) {
-                barWidth -= (barWidth - effectiveMinWidth) * reductionFactor;
-            }
+            // Calculate proportional width (no min constraint)
+            let segmentWidth = order.quantity * pixelsPerUnit;
 
-            // Draw individual order bar as a segment with gap
-            if (barWidth > 0) {
+            // Apply minimum rendering width
+            const renderWidth = Math.max(MIN_SEGMENT_WIDTH_PX, segmentWidth);
+
+            // Calculate screen position accounting for scroll
+            const segmentStartX = barStartX + xOffset - scrollOffset;
+            const segmentEndX = segmentStartX + renderWidth;
+
+            // Cull segments outside visible area
+            const visibleStartX = Math.max(segmentStartX, barStartX);
+            const visibleEndX = Math.min(segmentEndX, barStartX + this.barColumnWidth);
+
+            if (visibleEndX > visibleStartX && visibleEndX > barStartX && visibleStartX < barStartX + this.barColumnWidth) {
+                const visibleWidth = visibleEndX - visibleStartX;
+
+                // Draw segment background
                 this.offscreenCtx.fillStyle = fillColor;
-                this.offscreenCtx.fillRect(xOffset, y + 4, barWidth, barHeight);
+                this.offscreenCtx.fillRect(visibleStartX, y + 4, visibleWidth, barHeight);
 
-                // Draw order quantity text centered in segment
-                const qtyText = this.formatQuantity(order.quantity);
+                // Draw exact quantity text (no K/M formatting)
+                const qtyText = order.quantity.toLocaleString(); // e.g., "1,234,567"
                 this.offscreenCtx.font = '10px monospace';
                 const textWidth = this.offscreenCtx.measureText(qtyText).width;
-                if (textWidth < barWidth - 4) {  // Only draw if text fits
-                    this.offscreenCtx.fillStyle = this.colors.text;
-                    this.offscreenCtx.textAlign = 'center';
-                    this.offscreenCtx.textBaseline = 'middle';
-                    this.offscreenCtx.fillText(qtyText, xOffset + barWidth / 2, y + 4 + barHeight / 2);
+
+                // Only draw text if segment is wide enough and text is in visible area
+                if (renderWidth > 40 && textWidth < renderWidth - 4) {
+                    const textCenterX = segmentStartX + renderWidth / 2;
+
+                    // Check if text center is in visible area
+                    if (textCenterX >= barStartX && textCenterX <= barStartX + this.barColumnWidth) {
+                        this.offscreenCtx.fillStyle = this.colors.text;
+                        this.offscreenCtx.textAlign = 'center';
+                        this.offscreenCtx.textBaseline = 'middle';
+                        this.offscreenCtx.fillText(qtyText, textCenterX, y + 4 + barHeight / 2);
+                    }
                 }
-                // Restore font for subsequent text rendering
+
+                // Restore font
                 this.offscreenCtx.font = '14px monospace';
                 this.offscreenCtx.textAlign = 'left';
                 this.offscreenCtx.textBaseline = 'middle';
 
-                // Draw gold border if this is an own order
+                // Draw gold border for own orders
                 if (order.isOwnOrder) {
                     this.offscreenCtx.strokeStyle = this.colors.ownOrderBorder;
                     this.offscreenCtx.lineWidth = 2;
-                    this.offscreenCtx.strokeRect(xOffset, y + 4, barWidth, barHeight);
+                    this.offscreenCtx.strokeRect(visibleStartX, y + 4, visibleWidth, barHeight);
                 }
             }
 
-            // Move to the right for next bar segment
-            xOffset += barWidth;
-            if (gap > 0 && i < orders.length - 1) {
-                xOffset += gap;
-            }
-
-            // Stop if we've exceeded the level's total bar width
-            if (xOffset >= barStartX + levelBarWidth) {
-                break;
-            }
+            // Move to next segment position
+            xOffset += renderWidth + gap;
         }
     }
 
     /**
-     * Format quantity for display in segment (e.g., "500", "1K", "2M")
+     * Adjust segment scale factor (called by Shift+Scroll)
      */
-    private formatQuantity(quantity: number): string {
-        if (quantity >= 1000000) return `${Math.floor(quantity / 1000000)}M`;
-        if (quantity >= 1000) return `${Math.floor(quantity / 1000)}K`;
-        return quantity.toString();
+    public adjustSegmentScale(delta: number): void {
+        const step = SEGMENT_SCALE_STEP;
+        const newScale = this.segmentState.userScaleFactor + (delta * step);
+
+        // Clamp to valid range
+        this.segmentState.userScaleFactor = Math.max(
+            SEGMENT_SCALE_MIN,
+            Math.min(SEGMENT_SCALE_MAX, newScale)
+        );
+
+        // Recalculate max scroll offset with new scale
+        this.recalculateMaxScroll();
+
+        // Clamp current scroll to new max
+        if (this.segmentState.horizontalScrollOffset > this.segmentState.maxScrollOffset) {
+            this.segmentState.horizontalScrollOffset = this.segmentState.maxScrollOffset;
+        }
+
+        // Save to localStorage for persistence
+        localStorage.setItem('segmentScaleFactor', this.segmentState.userScaleFactor.toString());
+
+        // Force full redraw (structural change)
+        this.needsFullRedraw = true;
+    }
+
+    /**
+     * Adjust horizontal scroll offset (called by mouse drag)
+     */
+    public adjustHorizontalScroll(delta: number): void {
+        this.segmentState.horizontalScrollOffset = Math.max(
+            0,
+            Math.min(
+                this.segmentState.maxScrollOffset,
+                this.segmentState.horizontalScrollOffset + delta
+            )
+        );
+
+        // Mark for redraw
+        this.needsFullRedraw = true;
+    }
+
+    /**
+     * Get bar column width (for interaction handler)
+     */
+    public getBarColumnWidth(): number {
+        return this.barColumnWidth;
+    }
+
+    /**
+     * Get showOrderCount setting (for interaction handler)
+     */
+    public getShowOrderCount(): boolean {
+        return this.showOrderCount;
     }
 
     private calculateMaxQuantity(): number {

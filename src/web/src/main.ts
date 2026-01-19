@@ -11,7 +11,8 @@ import {
     DEFAULT_COLORS,
     COL_WIDTH,
     VOLUME_BAR_WIDTH_MULTIPLIER,
-    DirtyLevelChange
+    DirtyLevelChange,
+    MIN_BAR_COLUMN_WIDTH
 } from './types';
 import { MBOManager } from './mbo-manager';
 
@@ -23,7 +24,7 @@ import { MBOManager } from './mbo-manager';
 export class PriceLadder {
     private container: HTMLElement;
     private canvas: HTMLCanvasElement;
-    private renderer: CanvasRenderer;
+    protected renderer: CanvasRenderer;
     private interactionHandler: InteractionHandler;
     private config: Required<PriceLadderConfig>;
     private dataMode: 'PriceLevel' | 'MBO';
@@ -40,15 +41,28 @@ export class PriceLadder {
     // Animation frame request
     private rafId: number = 0;
 
+    // Responsive layout
+    private barColumnWidth: number = 0;
+    private resizeObserver?: ResizeObserver;
+
     constructor(config: PriceLadderConfig) {
         this.container = config.container;
 
         const showVolumeBars = config.showVolumeBars !== undefined ? config.showVolumeBars : true;
         const showOrderCount = config.showOrderCount !== undefined ? config.showOrderCount : true;
-        const defaultWidth = Math.round(
-            (showOrderCount ? 5 : 3) * COL_WIDTH +
-            (showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0)
-        );
+
+        // Fixed data columns width
+        const fixedDataColumns = showOrderCount ? 5 : 3;
+        const fixedColumnsWidth = fixedDataColumns * COL_WIDTH;
+
+        // Calculate bar column width from container (or use default)
+        const containerWidth = config.container.clientWidth || 800;
+        const availableWidth = containerWidth - fixedColumnsWidth;
+        this.barColumnWidth = showVolumeBars
+            ? Math.max(MIN_BAR_COLUMN_WIDTH, availableWidth)
+            : 0;
+
+        const defaultWidth = Math.round(fixedColumnsWidth + this.barColumnWidth);
 
         // Apply defaults
         this.config = {
@@ -71,7 +85,15 @@ export class PriceLadder {
         // Create canvas
         this.canvas = document.createElement('canvas');
         this.canvas.style.display = 'block';
+        // // Prevent canvas from stretching to fill container
+        // this.canvas.style.maxWidth = '100%';
         this.container.appendChild(this.canvas);
+
+        // Add resize observer for responsive layout
+        this.resizeObserver = new ResizeObserver(() => {
+            this.handleResize();
+        });
+        this.resizeObserver.observe(this.container);
 
         // Create renderer
         this.renderer = new CanvasRenderer(
@@ -109,6 +131,34 @@ export class PriceLadder {
             const currentOffset = this.renderer.getScrollOffset();
             this.renderer.setScrollOffset(currentOffset + scrollTicks);
         };
+    }
+
+    /**
+     * Handle container resize for responsive layout
+     */
+    private handleResize(): void {
+        const showOrderCount = this.config.showOrderCount;
+        const showVolumeBars = this.config.showVolumeBars;
+        const fixedDataColumns = showOrderCount ? 5 : 3;
+        const fixedColumnsWidth = fixedDataColumns * COL_WIDTH;
+
+        const containerWidth = this.container.clientWidth || 800;
+        const availableWidth = containerWidth - fixedColumnsWidth;
+        const newBarColumnWidth = showVolumeBars
+            ? Math.max(MIN_BAR_COLUMN_WIDTH, availableWidth)
+            : 0;
+
+        if (newBarColumnWidth !== this.barColumnWidth) {
+            this.barColumnWidth = newBarColumnWidth;
+            this.renderer.updateBarColumnWidth(newBarColumnWidth);
+            const newWidth = Math.round(fixedColumnsWidth + newBarColumnWidth);
+            this.canvas.width = newWidth;
+            // Also update CSS width to prevent stretching
+            this.canvas.style.width = `${newWidth}px`;
+            // Trigger a re-render with current snapshot
+            const snapshot = this.getSnapshot();
+            this.renderer.render(snapshot);
+        }
     }
 
     /**
@@ -460,6 +510,20 @@ export class PriceLadder {
     }
 
     /**
+     * Set removal mode (showEmpty or removeRow)
+     */
+    public setRemovalMode(mode: 'showEmpty' | 'removeRow'): void {
+        this.renderer.setRemovalMode(mode);
+    }
+
+    /**
+     * Get current tick size
+     */
+    public getTickSize(): number {
+        return this.config.tickSize;
+    }
+
+    /**
      * Clear all data
      */
     public clear(): void {
@@ -483,6 +547,7 @@ export class PriceLadder {
      */
     public destroy(): void {
         cancelAnimationFrame(this.rafId);
+        this.resizeObserver?.disconnect();
         this.interactionHandler.destroy();
         this.container.removeChild(this.canvas);
     }

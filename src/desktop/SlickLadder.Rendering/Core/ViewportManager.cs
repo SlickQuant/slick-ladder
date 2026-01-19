@@ -25,7 +25,18 @@ public class ViewportManager
     public float AskOrderCountColumnX => ColumnWidth * 4; // Always column 4
 
     public float? VolumeBarColumnX => ShowVolumeBars ? ColumnWidth * ColumnCount : null;
-    public float VolumeBarMaxWidth => (RenderConfig.ColumnWidth * RenderConfig.VolumeBarWidthMultiplier) - 5;
+
+    // Responsive bar column width: fills remaining canvas width (min 100px)
+    public float VolumeBarMaxWidth
+    {
+        get
+        {
+            if (!ShowVolumeBars) return 0;
+            var fixedColumnsWidth = ColumnWidth * ColumnCount;
+            var barColumnWidth = Math.Max(RenderConfig.MinBarColumnWidth, Width - fixedColumnsWidth);
+            return barColumnWidth;
+        }
+    }
 
     // Viewport state
     public decimal CenterPrice { get; set; } = 50000.00m;

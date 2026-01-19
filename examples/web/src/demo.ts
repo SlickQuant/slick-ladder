@@ -1,6 +1,5 @@
 import { PriceLadder } from 'slick-ladder/main';
 import { WasmPriceLadder } from 'slick-ladder/wasm-adapter';
-import { CanvasRenderer } from 'slick-ladder/canvas-renderer';
 import { Side, PriceLevel, OrderUpdate, OrderUpdateType, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER } from 'slick-ladder/types';
 
 /**
@@ -8,7 +7,6 @@ import { Side, PriceLevel, OrderUpdate, OrderUpdateType, COL_WIDTH, VOLUME_BAR_W
  */
 
 let ladder: PriceLadder | WasmPriceLadder | null = null;
-let renderer: CanvasRenderer | null = null;
 let updateInterval: number | null = null;
 let statsInterval: number | null = null;
 let wasCleared: boolean = false; // Track if order book was just cleared
@@ -95,113 +93,45 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const dataModeSelect = document.getElementById('data-mode') as HTMLSelectElement;
             const dataMode = (dataModeSelect?.value as 'PriceLevel' | 'MBO') ?? 'PriceLevel';
 
-            // Calculate initial canvas width based on display settings
+            // Calculate initial width based on display settings (same as TypeScript mode)
             const dataColumns = showOrderCount ? 5 : 3;
             const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
-            const canvasWidth = Math.round((dataColumns * COL_WIDTH) + barWidth);
+            const initialWidth = Math.round((dataColumns * COL_WIDTH) + barWidth);
 
-            // Create canvas for rendering
-            const canvas = document.createElement('canvas');
-            canvas.width = canvasWidth;
-            canvas.height = 600;
-            container.appendChild(canvas);
-
-            // Create WASM-backed ladder with tick size
-            const wasmLadder = new WasmPriceLadder(200, tickSize);
+            // Create WASM ladder (same API as TypeScript ladder)
+            const wasmLadder = new WasmPriceLadder({
+                container,
+                width: initialWidth,
+                height: 600,
+                rowHeight: 24,
+                tickSize,
+                mode: dataMode,
+                showVolumeBars,
+                showOrderCount,
+                onTrade: (price, side) => {
+                    const action = side === Side.BID ? 'SELL' : 'BUY';
+                    console.log(`${action} @ $${price.toFixed(2)}`);
+                    alert(`${action} @ $${price.toFixed(2)}`);
+                },
+                onPriceHover: (price) => {
+                    const tooltip = document.getElementById('tooltip');
+                    if (tooltip && price !== null) {
+                        tooltip.textContent = `Price: $${price.toFixed(2)}`;
+                        tooltip.style.display = 'block';
+                    } else if (tooltip) {
+                        tooltip.style.display = 'none';
+                    }
+                }
+            });
 
             // Wait for WASM to be ready
             await wasmLadder.waitForReady();
-            wasmLadder.setDataMode(dataMode);
-
-            // Create renderer with current display settings
-            renderer = new CanvasRenderer(canvas, canvasWidth, 600, 24, undefined, showVolumeBars, showOrderCount, tickSize);
 
             // Apply current removal mode
-            renderer.setRemovalMode(currentRemovalMode);
+            wasmLadder.setRemovalMode(currentRemovalMode);
 
-            // Set up snapshot callback for rendering
-            wasmLadder.onSnapshot((snapshot) => {
-                renderer?.render(snapshot);
-            });
-
-            // Add click handler for trading
-            canvas.addEventListener('click', (e) => {
-                if (!renderer) return;
-
-                const rect = canvas.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
-
-                const rowIndex = renderer.screenYToRow(y);
-                const price = renderer.rowToPrice(rowIndex);
-
-                if (price !== null) {
-                    const column = renderer.screenXToColumn(x);
-                    const bidColumn = renderer.getBidQtyColumn();
-                    const askColumn = renderer.getAskQtyColumn();
-
-                    let action: string;
-
-                    if (column === bidColumn) {
-                        action = 'SELL';
-                    } else if (column === askColumn) {
-                        action = 'BUY';
-                    } else {
-                        return; // Clicked on price column, ignore
-                    }
-
-                    console.log(`${action} @ $${price.toFixed(2)}`);
-                    alert(`${action} @ $${price.toFixed(2)}`);
-                }
-            });
-
-            // Add hover handler for tooltip
-            canvas.addEventListener('mousemove', (e) => {
-                if (!renderer) return;
-
-                const rect = canvas.getBoundingClientRect();
-                const y = e.clientY - rect.top;
-
-                const rowIndex = renderer.screenYToRow(y);
-                const price = renderer.rowToPrice(rowIndex);
-
-                const tooltip = document.getElementById('tooltip');
-                if (tooltip && price !== null) {
-                    tooltip.textContent = `Price: $${price.toFixed(2)}`;
-                    tooltip.style.display = 'block';
-                } else if (tooltip) {
-                    tooltip.style.display = 'none';
-                }
-            });
-
-            canvas.addEventListener('mouseleave', () => {
-                const tooltip = document.getElementById('tooltip');
-                if (tooltip) {
-                    tooltip.style.display = 'none';
-                }
-            });
-
-            // Add wheel handler for scrolling
-            canvas.addEventListener('wheel', (e) => {
-                e.preventDefault();
-                if (!renderer) return;
-
-                const delta = Math.sign(e.deltaY);
-                const mode = renderer.getRemovalMode();
-
-                if (mode === 'removeRow') {
-                    // Dense packing mode: row-based scrolling
-                    const scrollTicks = delta * 5; // Scroll 5 rows per wheel tick
-                    const currentOffset = renderer.getScrollOffset();
-                    renderer.setScrollOffset(currentOffset + scrollTicks);
-                } else {
-                    // Show empty mode: price-based scrolling
-                    const scrollTicks = delta > 0 ? -5 : 5; // Inverted for scroll up = higher prices
-                    const tickSize = renderer.getTickSize();
-                    const scrollAmount = scrollTicks * tickSize; // 5 ticks * tickSize
-                    renderer.scrollByPrice(scrollAmount);
-                }
-            }, { passive: false });
+            // Apply current data mode (critical for MBO mode)
+            wasmLadder.setDataMode(dataMode);
 
             ladder = wasmLadder;
             updateElement('backend', 'WASM Engine');
@@ -267,11 +197,8 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             }
         });
 
-        // Apply current removal mode to the internal renderer
-        const internalRenderer = (ladder as any).renderer;
-        if (internalRenderer && typeof internalRenderer.setRemovalMode === 'function') {
-            internalRenderer.setRemovalMode(currentRemovalMode);
-        }
+        // Apply current removal mode
+        ladder.setRemovalMode(currentRemovalMode);
 
         updateElement('backend', 'TypeScript Engine');
         console.log('Slick Ladder initialized with TypeScript engine');
@@ -288,13 +215,8 @@ function initializeOrderBook() {
 
     // Get current tick size from the renderer
     let tickSize = 0.01;
-    if (ladder instanceof PriceLadder) {
-        const internalRenderer = (ladder as any).renderer;
-        if (internalRenderer && typeof internalRenderer.getTickSize === 'function') {
-            tickSize = internalRenderer.getTickSize();
-        }
-    } else if (renderer) {
-        tickSize = renderer.getTickSize();
+    if (ladder) {
+        tickSize = ladder.getTickSize();
     }
 
     if (dataMode === 'MBO') {
@@ -653,22 +575,16 @@ function setupControls() {
     // Toggle volume bars
     toggleBarsCheckbox?.addEventListener('change', (e) => {
         const checked = (e.target as HTMLInputElement).checked;
-        if (ladder instanceof PriceLadder) {
+        if (ladder) {
             ladder.setShowVolumeBars(checked);
-        } else if (renderer) {
-            // WASM engine uses CanvasRenderer
-            renderer.setShowVolumeBars(checked);
         }
     });
 
     // Toggle order count
     toggleOrdersCheckbox?.addEventListener('change', (e) => {
         const checked = (e.target as HTMLInputElement).checked;
-        if (ladder instanceof PriceLadder) {
+        if (ladder) {
             ladder.setShowOrderCount(checked);
-        } else if (renderer) {
-            // WASM engine uses CanvasRenderer
-            renderer.setShowOrderCount(checked);
         }
     });
 
@@ -676,15 +592,8 @@ function setupControls() {
     document.querySelectorAll('input[name="removal-mode"]').forEach(radio => {
         radio.addEventListener('change', (e) => {
             const mode = (e.target as HTMLInputElement).value as 'showEmpty' | 'removeRow';
-            if (ladder instanceof PriceLadder) {
-                // TypeScript engine: ladder has internal renderer
-                const internalRenderer = (ladder as any).renderer;
-                if (internalRenderer && typeof internalRenderer.setRemovalMode === 'function') {
-                    internalRenderer.setRemovalMode(mode);
-                }
-            } else if (renderer) {
-                // WASM engine uses CanvasRenderer directly
-                renderer.setRemovalMode(mode);
+            if (ladder) {
+                ladder.setRemovalMode(mode);
             }
         });
     });
@@ -754,15 +663,10 @@ function startMarketUpdates(rate: number) {
         const isWasm = ladder instanceof WasmPriceLadder;
         const isMbo = dataMode === 'MBO';
 
-        // Get current tick size from the renderer
+        // Get current tick size
         let tickSize = 0.01;
-        if (ladder instanceof PriceLadder) {
-            const internalRenderer = (ladder as any).renderer;
-            if (internalRenderer && typeof internalRenderer.getTickSize === 'function') {
-                tickSize = internalRenderer.getTickSize();
-            }
-        } else if (renderer) {
-            tickSize = renderer.getTickSize();
+        if (ladder) {
+            tickSize = ladder.getTickSize();
         }
 
         if (isMbo) {
@@ -899,10 +803,10 @@ async function updateStats() {
         updateElement('bid-levels', metrics.bidLevels?.toString() || '0');
         updateElement('ask-levels', metrics.askLevels?.toString() || '0');
 
-        updateElement('best-bid', metrics.bestBid ? `$${metrics.bestBid.toFixed(2)}` : '-');
-        updateElement('best-ask', metrics.bestAsk ? `$${metrics.bestAsk.toFixed(2)}` : '-');
+        updateElement('best-bid', (metrics as any).bestBid ? `$${(metrics as any).bestBid.toFixed(2)}` : '-');
+        updateElement('best-ask', (metrics as any).bestAsk ? `$${(metrics as any).bestAsk.toFixed(2)}` : '-');
 
-        const spread = (metrics.bestAsk && metrics.bestBid) ? metrics.bestAsk - metrics.bestBid : null;
+        const spread = ((metrics as any).bestAsk && (metrics as any).bestBid) ? (metrics as any).bestAsk - (metrics as any).bestBid : null;
         updateElement('spread', spread !== null ? `$${spread.toFixed(2)}` : '-');
     } else {
         // TypeScript engine - synchronous

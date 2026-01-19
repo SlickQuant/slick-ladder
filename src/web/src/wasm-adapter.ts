@@ -1,25 +1,32 @@
-import { Side, PriceLevel, OrderBookSnapshot, Order, OrderUpdate, OrderUpdateType, DirtyLevelChange } from './types';
+import { PriceLevel, OrderBookSnapshot, OrderUpdate, OrderUpdateType, PriceLadderConfig } from './types';
 import type { WorkerRequest, WorkerResponse } from './wasm-types';
+import { PriceLadder } from './main';
+import { CanvasRenderer } from './canvas-renderer';
 
 /**
- * WASM backend adapter for PriceLadder
- * Provides the same API as the TypeScript implementation but uses WASM for processing
+ * WASM-powered Price Ladder component
+ * Extends PriceLadder and replaces data processing with WASM backend
  */
-export class WasmPriceLadder {
+export class WasmPriceLadder extends PriceLadder {
     private worker: Worker;
     private isReady: boolean = false;
     private readyPromise: Promise<void>;
-    private snapshotCallback?: (snapshot: OrderBookSnapshot) => void;
-    private updateCount: number = 0;
-    private tickSize: number;
     private generation: number = 0;
     private priceBatchInFlight: boolean = false;
     private orderBatchInFlight: boolean = false;
     private priceBatchQueue: PriceLevel[][] = [];
     private orderBatchQueue: Array<Array<{ update: OrderUpdate; type: OrderUpdateType }>> = [];
+    private lastSnapshot: OrderBookSnapshot | null = null;
 
-    constructor(maxLevels: number = 200, tickSize: number = 0.01) {
-        this.tickSize = tickSize;
+    constructor(config: PriceLadderConfig) {
+        super(config);
+
+        // Stop the base class render loop - WASM will drive rendering via worker messages
+        this.stopBaseRenderLoop();
+
+        // Set up interaction handler to request re-render on user interactions
+        this.setupWasmInteractions();
+
         // Create the Web Worker as a module worker
         // This allows it to import the .NET WASM runtime as an ES module
         this.worker = new Worker(new URL('./wasm-worker-module.ts', import.meta.url), {
@@ -48,7 +55,46 @@ export class WasmPriceLadder {
             }, { once: true });
         });
 
+        const tickSize = config.tickSize || 0.01;
+        const maxLevels = config.visibleLevels || 50;
         this.postMessage({ type: 'init', maxLevels, tickSize });
+    }
+
+    /**
+     * Setup WASM-specific interactions
+     * In WASM mode, user interactions (scroll, zoom) need to trigger a re-render
+     */
+    private setupWasmInteractions(): void {
+        // Access the interaction handler through type assertion since it's private in base class
+        const interactionHandler = (this as any).interactionHandler;
+        if (interactionHandler) {
+            // When user interactions change the viewport (scroll, zoom), re-render with last snapshot
+            interactionHandler.onRenderNeeded = () => {
+                this.reRenderLastSnapshot();
+            };
+        }
+    }
+
+    /**
+     * Re-render the last received snapshot
+     * Used when viewport changes (scroll, zoom) but data hasn't changed
+     */
+    private reRenderLastSnapshot(): void {
+        if (this.lastSnapshot) {
+            this.renderer.render(this.lastSnapshot);
+        }
+    }
+
+    /**
+     * Stop the base class render loop since WASM worker will drive rendering
+     */
+    private stopBaseRenderLoop(): void {
+        // Access the private rafId through type assertion
+        const rafId = (this as any).rafId;
+        if (rafId) {
+            cancelAnimationFrame(rafId);
+            (this as any).rafId = 0;
+        }
     }
 
     /**
@@ -59,22 +105,15 @@ export class WasmPriceLadder {
     }
 
     /**
-     * Set snapshot callback
-     */
-    public onSnapshot(callback: (snapshot: OrderBookSnapshot) => void): void {
-        this.snapshotCallback = callback;
-    }
-
-    /**
      * Process a single price level update
+     * Overrides base class to use WASM worker
      */
-    public processUpdate(update: PriceLevel): void {
+    public override processUpdate(update: PriceLevel): void {
         if (!this.isReady) {
             console.warn('WASM not ready, update ignored');
             return;
         }
 
-        this.updateCount++;
         this.postMessage({
             type: 'update',
             side: update.side,
@@ -87,8 +126,9 @@ export class WasmPriceLadder {
 
     /**
      * Process multiple updates in batch
+     * Overrides base class to use WASM worker
      */
-    public processBatch(updates: PriceLevel[]): void {
+    public override processBatch(updates: PriceLevel[]): void {
         if (!this.isReady) {
             console.warn('WASM not ready, batch ignored');
             return;
@@ -98,33 +138,20 @@ export class WasmPriceLadder {
     }
 
     /**
-     * Set data mode (PriceLevel or MBO)
-     */
-    public setDataMode(mode: 'PriceLevel' | 'MBO'): void {
-        if (!this.isReady) {
-            console.warn('WASM not ready, mode change ignored');
-            return;
-        }
-
-        const modeValue = mode === 'MBO' ? 1 : 0;
-        this.postMessage({ type: 'setDataMode', mode: modeValue });
-    }
-
-    /**
      * Process a single order update (MBO mode)
+     * Overrides base class to use WASM worker
      */
-    public processOrderUpdate(update: OrderUpdate, type: OrderUpdateType): void {
+    public override processOrderUpdate(update: OrderUpdate, type: OrderUpdateType): void {
         if (!this.isReady) {
             console.warn('WASM not ready, order update ignored');
             return;
         }
 
-        this.updateCount++;
         this.postMessage({
             type: 'orderUpdate',
             orderId: update.orderId,
             side: update.side,
-            price: this.roundToTick(update.price),
+            price: update.price,
             quantity: update.quantity,
             priority: update.priority,
             updateType: type,
@@ -135,8 +162,9 @@ export class WasmPriceLadder {
 
     /**
      * Process multiple order updates in batch (MBO mode)
+     * Overrides base class to use WASM worker
      */
-    public processOrderBatch(updates: Array<{ update: OrderUpdate; type: OrderUpdateType }>): void {
+    public override processOrderBatch(updates: Array<{ update: OrderUpdate; type: OrderUpdateType }>): void {
         if (!this.isReady) {
             console.warn('WASM not ready, order batch ignored');
             return;
@@ -146,216 +174,141 @@ export class WasmPriceLadder {
     }
 
     /**
-     * Flush pending updates
+     * Set volume bars visibility
+     * Overrides base class to re-render last snapshot instead of calling getSnapshot()
      */
-    public flush(): void {
-        if (this.isReady) {
-            this.postMessage({ type: 'flush', generation: this.generation });
+    public override setShowVolumeBars(show: boolean): void {
+        const config = (this as any).config;
+        config.showVolumeBars = show;
+        // Update width based on new settings
+        const newWidth = (this as any).calculateWidth();
+        config.width = newWidth;
+
+        // Recreate renderer with new settings
+        this.renderer = new CanvasRenderer(
+            (this as any).canvas,
+            config.width,
+            config.height,
+            config.rowHeight,
+            config.colors!,
+            config.showVolumeBars,
+            config.showOrderCount,
+            config.tickSize
+        );
+
+        // Update interaction handler with new renderer
+        const interactionHandler = (this as any).interactionHandler;
+        interactionHandler.setRenderer(this.renderer);
+
+        // Re-render last snapshot (not getSnapshot() which would be empty)
+        this.reRenderLastSnapshot();
+    }
+
+    /**
+     * Set order count visibility
+     * Overrides base class to re-render last snapshot instead of calling getSnapshot()
+     */
+    public override setShowOrderCount(show: boolean): void {
+        const config = (this as any).config;
+        config.showOrderCount = show;
+        // Update width based on new settings
+        const newWidth = (this as any).calculateWidth();
+        config.width = newWidth;
+
+        // Recreate renderer with new settings
+        this.renderer = new CanvasRenderer(
+            (this as any).canvas,
+            config.width,
+            config.height,
+            config.rowHeight,
+            config.colors!,
+            config.showVolumeBars,
+            config.showOrderCount,
+            config.tickSize
+        );
+
+        // Update interaction handler with new renderer
+        const interactionHandler = (this as any).interactionHandler;
+        interactionHandler.setRenderer(this.renderer);
+
+        // Re-render last snapshot (not getSnapshot() which would be empty)
+        this.reRenderLastSnapshot();
+    }
+
+    /**
+     * Set data mode (PriceLevel or MBO)
+     * Overrides base class to notify WASM worker
+     */
+    public override setDataMode(mode: 'PriceLevel' | 'MBO'): void {
+        if (!this.isReady) {
+            console.warn('WASM not ready, mode change ignored');
+            return;
         }
+
+        // CRITICAL: Set mode in WASM worker BEFORE calling super.setDataMode
+        // because super.setDataMode calls clear() which will send data to worker
+        const modeValue = mode === 'MBO' ? 1 : 0;
+        this.postMessage({ type: 'setDataMode', mode: modeValue });
+
+        // Now call base class which will clear local state
+        super.setDataMode(mode);
     }
 
     /**
      * Clear all data
+     * Overrides base class to clear WASM worker state
      */
-    public clear(): void {
-        if (this.isReady) {
-            this.updateCount = 0;
-            this.bumpGeneration();
-            this.postMessage({ type: 'clear' });
-        }
-    }
-
-    public dropPendingUpdates(): void {
-        if (this.isReady) {
-            this.bumpGeneration();
-            this.postMessage({ type: 'clearPending' });
-        }
-    }
-
-    public isBackpressured(): boolean {
-        return this.priceBatchInFlight
-            || this.orderBatchInFlight
-            || this.priceBatchQueue.length > 0
-            || this.orderBatchQueue.length > 0;
+    public override clear(): void {
+        super.clear();
+        this.postMessage({ type: 'clear' });
     }
 
     /**
-     * Get metrics
+     * Destroy the ladder and clean up resources
+     * Overrides base class to terminate worker
      */
-    public async getMetrics(): Promise<any> {
-        if (!this.isReady) {
-            return {
-                updateCount: 0,
-                bidLevels: 0,
-                askLevels: 0
-            };
-        }
-
-        return new Promise((resolve) => {
-            const handler = (e: MessageEvent<WorkerResponse>) => {
-                if (e.data.type === 'metrics') {
-                    this.worker.removeEventListener('message', handler);
-                    const metrics = JSON.parse(e.data.data);
-                    resolve({
-                        ...metrics,
-                        updateCount: this.updateCount
-                    });
-                }
-            };
-
-            this.worker.addEventListener('message', handler);
-            this.postMessage({ type: 'getMetrics' });
-        });
-    }
-
-    /**
-     * Terminate the worker
-     */
-    public destroy(): void {
+    public override destroy(): void {
+        super.destroy();
         this.worker.terminate();
     }
 
-    private postMessage(message: WorkerRequest): void {
-        this.worker.postMessage(message);
-    }
-
-    private bumpGeneration(): void {
-        this.generation += 1;
-        this.priceBatchInFlight = false;
-        this.orderBatchInFlight = false;
+    /**
+     * Drop pending batched updates (for testing/demo purposes)
+     */
+    public dropPendingUpdates(): void {
         this.priceBatchQueue = [];
         this.orderBatchQueue = [];
-        this.postMessage({ type: 'setGeneration', generation: this.generation });
-    }
-
-    private handleWorkerMessage(e: MessageEvent<WorkerResponse>): void {
-        const response = e.data;
-
-        switch (response.type) {
-            case 'snapshot':
-                if (this.snapshotCallback) {
-                    const data = JSON.parse(response.data);
-                    const bidOrders = this.parseOrderMap(data.bidOrders);
-                    const askOrders = this.parseOrderMap(data.askOrders);
-                    const dirtyChanges: DirtyLevelChange[] | undefined = Array.isArray(data.dirtyChanges)
-                        ? data.dirtyChanges.map((change: any) => ({
-                            price: this.roundToTick(change.price),
-                            side: change.side as Side,
-                            isRemoval: !!change.isRemoval,
-                            isAddition: !!change.isAddition
-                        }))
-                        : undefined;
-                    const structuralChange = typeof data.structuralChange === 'boolean'
-                        ? data.structuralChange
-                        : undefined;
-                    const snapshot: OrderBookSnapshot = {
-                        bestBid: data.bestBid,
-                        bestAsk: data.bestAsk,
-                        midPrice: data.midPrice,
-                        bids: data.bids.map((b: any) => ({
-                            price: this.roundToTick(b.price),
-                            quantity: b.quantity,
-                            numOrders: b.numOrders,
-                            side: b.side as Side,
-                            isDirty: true,
-                            hasOwnOrders: false
-                        })),
-                        asks: data.asks.map((a: any) => ({
-                            price: this.roundToTick(a.price),
-                            quantity: a.quantity,
-                            numOrders: a.numOrders,
-                            side: a.side as Side,
-                            isDirty: true,
-                            hasOwnOrders: false
-                        })),
-                        timestamp: new Date(data.timestamp / 10000).getTime(),
-                        bidOrders,
-                        askOrders,
-                        dirtyChanges,
-                        structuralChange
-                    };
-                    this.snapshotCallback(snapshot);
-                }
-                break;
-
-            case 'batchProcessed':
-                if (response.generation !== this.generation) {
-                    break;
-                }
-                if (response.kind === 'price') {
-                    this.priceBatchInFlight = false;
-                    this.sendNextPriceBatch();
-                } else {
-                    this.orderBatchInFlight = false;
-                    this.sendNextOrderBatch();
-                }
-                break;
-
-            case 'error':
-                console.error('WASM worker error:', response.message);
-                break;
-        }
-    }
-
-    private handleWorkerError(error: ErrorEvent): void {
-        console.error('WASM worker error event:', error.message);
-    }
-
-    private parseOrderMap(source: any): Map<number, Order[]> | null {
-        if (!source) {
-            return null;
-        }
-
-        const map = new Map<number, Order[]>();
-        for (const key of Object.keys(source)) {
-            const price = Number(key);
-            if (!Number.isFinite(price)) {
-                continue;
-            }
-
-            const roundedPrice = this.roundToTick(price);
-            const orders = (source[key] as any[]).map((order) => ({
-                orderId: order.orderId,
-                quantity: order.quantity,
-                priority: order.priority,
-                isOwnOrder: order.isOwnOrder ?? false
-            }));
-            map.set(roundedPrice, orders);
-        }
-
-        return map;
-    }
-
-    private roundToTick(price: number): number {
-        return Math.round(price / this.tickSize) * this.tickSize;
+        this.priceBatchInFlight = false;
+        this.orderBatchInFlight = false;
+        this.postMessage({ type: 'clearPending' });
     }
 
     private enqueuePriceBatch(updates: PriceLevel[]): void {
-        if (updates.length === 0) {
-            return;
-        }
-
-        this.updateCount += updates.length;
         this.priceBatchQueue.push(updates);
         if (!this.priceBatchInFlight) {
-            this.sendNextPriceBatch();
+            this.processPriceBatchQueue();
         }
     }
 
-    private sendNextPriceBatch(): void {
-        if (this.priceBatchInFlight) {
-            return;
+    private enqueueOrderBatch(updates: Array<{ update: OrderUpdate; type: OrderUpdateType }>): void {
+        this.orderBatchQueue.push(updates);
+        if (!this.orderBatchInFlight) {
+            this.processOrderBatchQueue();
         }
+    }
 
-        const updates = this.priceBatchQueue.shift();
-        if (!updates) {
+    private processPriceBatchQueue(): void {
+        if (this.priceBatchQueue.length === 0) {
+            this.priceBatchInFlight = false;
             return;
         }
 
         this.priceBatchInFlight = true;
+        const batch = this.priceBatchQueue.shift()!;
+
         this.postMessage({
             type: 'batch',
-            updates: updates.map(u => ({
+            updates: batch.map(u => ({
                 side: u.side,
                 price: u.price,
                 quantity: u.quantity,
@@ -365,35 +318,21 @@ export class WasmPriceLadder {
         });
     }
 
-    private enqueueOrderBatch(updates: Array<{ update: OrderUpdate; type: OrderUpdateType }>): void {
-        if (updates.length === 0) {
-            return;
-        }
-
-        this.updateCount += updates.length;
-        this.orderBatchQueue.push(updates);
-        if (!this.orderBatchInFlight) {
-            this.sendNextOrderBatch();
-        }
-    }
-
-    private sendNextOrderBatch(): void {
-        if (this.orderBatchInFlight) {
-            return;
-        }
-
-        const updates = this.orderBatchQueue.shift();
-        if (!updates) {
+    private processOrderBatchQueue(): void {
+        if (this.orderBatchQueue.length === 0) {
+            this.orderBatchInFlight = false;
             return;
         }
 
         this.orderBatchInFlight = true;
+        const batch = this.orderBatchQueue.shift()!;
+
         this.postMessage({
             type: 'orderBatch',
-            updates: updates.map(item => ({
+            updates: batch.map(item => ({
                 orderId: item.update.orderId,
                 side: item.update.side,
-                price: this.roundToTick(item.update.price),
+                price: item.update.price,
                 quantity: item.update.quantity,
                 priority: item.update.priority,
                 updateType: item.type,
@@ -401,5 +340,118 @@ export class WasmPriceLadder {
             })),
             generation: this.generation
         });
+    }
+
+    private handleWorkerMessage(e: MessageEvent<WorkerResponse>): void {
+        const response = e.data;
+
+        switch (response.type) {
+            case 'snapshot':
+                // Render the snapshot from WASM
+                this.renderSnapshot(response.data);
+                break;
+
+            case 'batchProcessed':
+                if (response.generation !== this.generation) {
+                    break;
+                }
+
+                if (response.kind === 'price') {
+                    this.processPriceBatchQueue();
+                } else if (response.kind === 'order') {
+                    this.processOrderBatchQueue();
+                }
+                break;
+
+            case 'error':
+                console.error('[WASM Worker Error]', response.message);
+                break;
+
+            case 'metrics':
+                // Optionally handle metrics
+                break;
+        }
+    }
+
+    private handleWorkerError(event: ErrorEvent): void {
+        console.error('[WASM Worker Error]', event.message, event.error);
+    }
+
+    private postMessage(message: WorkerRequest): void {
+        try {
+            this.worker.postMessage(message);
+        } catch (error) {
+            console.error('[WASM Worker] Failed to post message:', error);
+        }
+    }
+
+    /**
+     * Render a snapshot received from WASM worker
+     */
+    private renderSnapshot(snapshotData: any): void {
+        // Parse JSON string if needed
+        let parsedData = snapshotData;
+        if (typeof snapshotData === 'string') {
+            parsedData = JSON.parse(snapshotData);
+        }
+
+        // Transform C# PascalCase to TypeScript camelCase
+        const bidsArray = parsedData.Bids ?? parsedData.bids ?? [];
+        const asksArray = parsedData.Asks ?? parsedData.asks ?? [];
+
+        // Transform BookLevel objects
+        const transformLevel = (level: any) => ({
+            price: level.Price ?? level.price,
+            quantity: level.Quantity ?? level.quantity,
+            numOrders: level.NumOrders ?? level.numOrders ?? 0,
+            side: level.Side ?? level.side,
+            isDirty: level.IsDirty ?? level.isDirty ?? false,
+            hasOwnOrders: level.HasOwnOrders ?? level.hasOwnOrders ?? false
+        });
+
+        // Transform order maps from plain objects to Maps (MBO mode)
+        const transformOrderMap = (orderMapData: any): Map<number, OrderUpdate[]> | null => {
+            if (!orderMapData) return null;
+
+            const orderMap = new Map<number, OrderUpdate[]>();
+            // Handle both PascalCase and camelCase property names
+            const entries = Object.entries(orderMapData);
+
+            for (const [priceStr, ordersArray] of entries) {
+                const price = parseFloat(priceStr);
+                const orders = (ordersArray as any[]).map((order: any) => ({
+                    orderId: order.OrderId ?? order.orderId,
+                    side: order.Side ?? order.side,
+                    price: order.Price ?? order.price,
+                    quantity: order.Quantity ?? order.quantity,
+                    priority: order.Priority ?? order.priority,
+                    isOwnOrder: order.IsOwnOrder ?? order.isOwnOrder ?? false
+                }));
+                orderMap.set(price, orders);
+            }
+
+            return orderMap;
+        };
+
+        const bidOrdersData = parsedData.BidOrders ?? parsedData.bidOrders;
+        const askOrdersData = parsedData.AskOrders ?? parsedData.askOrders;
+
+        const snapshot: OrderBookSnapshot = {
+            bestBid: parsedData.BestBid ?? parsedData.bestBid ?? null,
+            bestAsk: parsedData.BestAsk ?? parsedData.bestAsk ?? null,
+            midPrice: parsedData.MidPrice ?? parsedData.midPrice ?? null,
+            bids: bidsArray.map(transformLevel),
+            asks: asksArray.map(transformLevel),
+            timestamp: parsedData.Timestamp ?? parsedData.timestamp ?? Date.now(),
+            bidOrders: transformOrderMap(bidOrdersData),
+            askOrders: transformOrderMap(askOrdersData),
+            dirtyChanges: parsedData.DirtyChanges ?? parsedData.dirtyChanges,
+            structuralChange: parsedData.StructuralChange ?? parsedData.structuralChange
+        };
+
+        // Store the last snapshot for re-rendering on viewport changes
+        this.lastSnapshot = snapshot;
+
+        this.renderer.render(snapshot);
     }
 }

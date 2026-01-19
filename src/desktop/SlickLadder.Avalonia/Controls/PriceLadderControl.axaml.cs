@@ -96,12 +96,17 @@ public partial class PriceLadderControl : UserControl
     {
         private readonly PriceLadderControl _parent;
 
+        // Mouse drag state for horizontal scroll
+        private bool _isDraggingBar = false;
+        private double _dragStartX = 0;
+
         public SkiaCanvas(PriceLadderControl parent)
         {
             _parent = parent;
 
             // Input handling
             PointerPressed += OnPointerPressed;
+            PointerReleased += OnPointerReleased;
             PointerMoved += OnPointerMoved;
             PointerWheelChanged += OnPointerWheelChanged;
             PointerExited += OnPointerExited;
@@ -184,6 +189,21 @@ public partial class PriceLadderControl : UserControl
             var pos = e.GetPosition(this);
             var snapshot = _parent._viewModel.CurrentSnapshot.Value;
             var x = (float)pos.X;
+
+            // Check if click is in bar column for horizontal scroll dragging
+            if (_parent._viewport.VolumeBarColumnX.HasValue)
+            {
+                var barStartX = _parent._viewport.VolumeBarColumnX.Value;
+                var barColumnWidth = _parent._viewport.VolumeBarMaxWidth;
+
+                if (x >= barStartX && x < barStartX + barColumnWidth)
+                {
+                    _isDraggingBar = true;
+                    _dragStartX = pos.X;
+                    e.Handled = true;
+                    return;
+                }
+            }
 
             // Use viewport's column X positions (respects ShowOrderCount setting)
             var columnWidth = _parent._viewport.ColumnWidth;
@@ -356,15 +376,50 @@ public partial class PriceLadderControl : UserControl
             _parent._viewModel.HandlePriceClick(clickedPrice, tradeSide);
         }
 
+        private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
+        {
+            if (_isDraggingBar)
+            {
+                _isDraggingBar = false;
+                e.Handled = true;
+            }
+        }
+
         private void OnPointerMoved(object? sender, PointerEventArgs e)
         {
+            if (_parent._renderer == null) return;
+
+            // Handle horizontal scroll dragging
+            if (_isDraggingBar)
+            {
+                var pos = e.GetPosition(this);
+                var dragDelta = _dragStartX - pos.X; // Invert for natural scroll direction
+                _parent._renderer.AdjustHorizontalScroll(dragDelta);
+                _dragStartX = pos.X;
+                e.Handled = true;
+                return;
+            }
+
             // Mouse move tracking can be added later when needed
             // For now, matches minimal web version functionality
         }
 
         private void OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
         {
-            if (_parent._viewport == null || _parent._viewModel == null) return;
+            if (_parent._viewport == null || _parent._viewModel == null || _parent._renderer == null) return;
+
+            // Shift+Scroll: Adjust segment scale globally
+            if (e.KeyModifiers.HasFlag(KeyModifiers.Shift))
+            {
+                var scaleDelta = e.Delta.Y > 0 ? 1 : -1; // Inverted for intuitive zoom
+                if (_parent._viewModel.CurrentSnapshot.HasValue)
+                {
+                    var snapshot = _parent._viewModel.CurrentSnapshot.Value;
+                    _parent._renderer.AdjustSegmentScale(scaleDelta, snapshot, _parent._viewport);
+                }
+                e.Handled = true;
+                return;
+            }
 
             var delta = e.Delta.Y;
 
@@ -403,6 +458,12 @@ public partial class PriceLadderControl : UserControl
 
         private void OnPointerExited(object? sender, PointerEventArgs e)
         {
+            // Stop dragging if pointer leaves canvas
+            if (_isDraggingBar)
+            {
+                _isDraggingBar = false;
+            }
+
             // Mouse leave tracking can be added later when needed
         }
     }

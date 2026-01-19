@@ -67,7 +67,7 @@ ladder.processUpdate({ price: 100.7, quantity: 1800, numOrders: 1, side: Side.AS
 - **WebAssembly powered** order book processing (optional)
 - **Real-time updates** with minimal CPU overhead
 - **Customizable appearance** and behavior
-- **Interactive** - click to trade, drag to place orders
+- **Interactive** - click to trade
 
 ## WebAssembly Mode
 

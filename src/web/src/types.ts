@@ -30,6 +30,13 @@ export interface Order {
     isOwnOrder?: boolean;
 }
 
+export interface SegmentRenderState {
+    basePixelsPerUnit: number;      // Auto-calculated from max order quantity
+    userScaleFactor: number;        // 1.0 default (0.1 to 10.0 range)
+    horizontalScrollOffset: number; // Global scroll in pixels
+    maxScrollOffset: number;        // Calculated from widest level
+}
+
 export enum OrderUpdateType {
     Add = 0,
     Modify = 1,
@@ -123,6 +130,22 @@ export const COL_WIDTH = 66.7;
 export const VOLUME_BAR_WIDTH_MULTIPLIER = 2.5;
 export const ORDER_SEGMENT_GAP = 2;
 export const MIN_ORDER_SEGMENT_WIDTH = 30;  // Increased from 2 for better visibility and quantity text
+
+// New segment rendering configuration
+export const DEFAULT_SEGMENT_CONFIG: SegmentRenderState = {
+    basePixelsPerUnit: 1.0, // Will be recalculated dynamically
+    userScaleFactor: 1.0,
+    horizontalScrollOffset: 0,
+    maxScrollOffset: 0
+};
+
+export const SEGMENT_SCALE_MIN = 0.1;
+export const SEGMENT_SCALE_MAX = 10.0;
+export const SEGMENT_SCALE_STEP = 0.1; // 10% per wheel tick
+export const MIN_SEGMENT_WIDTH_PX = 1; // Minimum rendered width
+export const SEGMENT_GAP_PX = 2;
+export const MIN_BAR_COLUMN_WIDTH = 100; // Prevent collapse on resize
+export const TARGET_MAX_SEGMENT_WIDTH = 200; // Target width for largest order
 
 export const DEFAULT_COLORS: CanvasColors = {
     background: '#1e1e1e',
