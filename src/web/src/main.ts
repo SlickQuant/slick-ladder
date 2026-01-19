@@ -12,7 +12,8 @@ import {
     COL_WIDTH,
     VOLUME_BAR_WIDTH_MULTIPLIER,
     DirtyLevelChange,
-    MIN_BAR_COLUMN_WIDTH
+    MIN_BAR_COLUMN_WIDTH,
+    DEFAULT_MBO_ORDER_SIZE_FILTER
 } from './types';
 import { MBOManager } from './mbo-manager';
 
@@ -76,6 +77,7 @@ export class PriceLadder {
             readOnly: config.readOnly || false,
             showVolumeBars,
             showOrderCount,
+            mboOrderSizeFilter: Math.max(0, config.mboOrderSizeFilter ?? DEFAULT_MBO_ORDER_SIZE_FILTER),
             colors: config.colors || DEFAULT_COLORS,
             onTrade: config.onTrade || (() => {}),
             onPriceHover: config.onPriceHover || (() => {})
@@ -104,7 +106,8 @@ export class PriceLadder {
             this.config.colors,
             this.config.showVolumeBars,
             this.config.showOrderCount,
-            this.config.tickSize
+            this.config.tickSize,
+            this.config.mboOrderSizeFilter
         );
 
         // Create interaction handler
@@ -453,7 +456,8 @@ export class PriceLadder {
             this.config.colors!,
             this.config.showVolumeBars,
             this.config.showOrderCount,
-            this.config.tickSize
+            this.config.tickSize,
+            this.config.mboOrderSizeFilter
         );
 
         // Update interaction handler with new renderer
@@ -482,7 +486,8 @@ export class PriceLadder {
             this.config.colors!,
             this.config.showVolumeBars,
             this.config.showOrderCount,
-            this.config.tickSize
+            this.config.tickSize,
+            this.config.mboOrderSizeFilter
         );
 
         // Update interaction handler with new renderer
@@ -491,6 +496,15 @@ export class PriceLadder {
         // Re-render current snapshot
         const snapshot = this.getSnapshot();
         this.renderer.render(snapshot);
+    }
+
+    /**
+     * Set MBO order size filter (only show orders with qty > filter)
+     */
+    public setMboOrderSizeFilter(filter: number): void {
+        const normalized = Math.max(0, filter);
+        this.config.mboOrderSizeFilter = normalized;
+        this.renderer.setMboOrderSizeFilter(normalized);
     }
 
     /**

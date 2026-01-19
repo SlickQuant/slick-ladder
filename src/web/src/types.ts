@@ -87,6 +87,7 @@ export interface PriceLadderConfig {
     readOnly?: boolean;
     showVolumeBars?: boolean;
     showOrderCount?: boolean;
+    mboOrderSizeFilter?: number;
     colors?: CanvasColors;
     onTrade?: (price: number, side: Side) => void;
     onPriceHover?: (price: number | null) => void;
@@ -138,6 +139,8 @@ export const DEFAULT_SEGMENT_CONFIG: SegmentRenderState = {
     horizontalScrollOffset: 0,
     maxScrollOffset: 0
 };
+
+export const DEFAULT_MBO_ORDER_SIZE_FILTER = 0;
 
 export const SEGMENT_SCALE_MIN = 0.1;
 export const SEGMENT_SCALE_MAX = 100.0;

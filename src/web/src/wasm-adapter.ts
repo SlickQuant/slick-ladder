@@ -193,7 +193,8 @@ export class WasmPriceLadder extends PriceLadder {
             config.colors!,
             config.showVolumeBars,
             config.showOrderCount,
-            config.tickSize
+            config.tickSize,
+            config.mboOrderSizeFilter
         );
 
         // Update interaction handler with new renderer
@@ -224,7 +225,8 @@ export class WasmPriceLadder extends PriceLadder {
             config.colors!,
             config.showVolumeBars,
             config.showOrderCount,
-            config.tickSize
+            config.tickSize,
+            config.mboOrderSizeFilter
         );
 
         // Update interaction handler with new renderer

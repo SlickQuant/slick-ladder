@@ -36,6 +36,7 @@ public class RenderConfig
     // Order segment gap (MBO volume bars)
     public float OrderSegmentGap { get; } = 2.0f;
     public float MinOrderSegmentWidth { get; } = 30.0f;  // Increased from 2.0f for better visibility and quantity text
+    public long MboOrderSizeFilter { get; set; } = 0;
 
     // Own order border color (must match web version ownOrderBorder)
     public SKColor OwnOrderBorderColor { get; } = new SKColor(255, 215, 0);  // #ffd700 (gold)

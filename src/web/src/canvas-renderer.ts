@@ -1,4 +1,4 @@
-import { BookLevel, Side, OrderBookSnapshot, CanvasColors, DEFAULT_COLORS, RenderMetrics, Order, DirtyLevelChange, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, SegmentRenderState, DEFAULT_SEGMENT_CONFIG, SEGMENT_SCALE_MIN, SEGMENT_SCALE_MAX, SEGMENT_SCALE_STEP, MIN_SEGMENT_WIDTH_PX, SEGMENT_GAP_PX, MIN_BAR_COLUMN_WIDTH, TARGET_MAX_SEGMENT_WIDTH } from './types';
+import { BookLevel, Side, OrderBookSnapshot, CanvasColors, DEFAULT_COLORS, RenderMetrics, Order, DirtyLevelChange, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, SegmentRenderState, DEFAULT_SEGMENT_CONFIG, DEFAULT_MBO_ORDER_SIZE_FILTER, SEGMENT_SCALE_MIN, SEGMENT_SCALE_MAX, SEGMENT_SCALE_STEP, MIN_SEGMENT_WIDTH_PX, SEGMENT_GAP_PX, MIN_BAR_COLUMN_WIDTH, TARGET_MAX_SEGMENT_WIDTH } from './types';
 
 type DensePackingLayout = {
     nonEmptyAsks: BookLevel[];
@@ -46,6 +46,8 @@ export class CanvasRenderer {
     private showVolumeBars: boolean = true;
     private showOrderCount: boolean = true;
 
+    private mboOrderSizeFilter: number;
+
     // Performance tracking
     private lastFrameTime: number = 0;
     private frameCount: number = 0;
@@ -76,7 +78,8 @@ export class CanvasRenderer {
         colors: CanvasColors = DEFAULT_COLORS,
         showVolumeBars: boolean = true,
         showOrderCount: boolean = true,
-        tickSize: number = 0.01
+        tickSize: number = 0.01,
+        mboOrderSizeFilter: number = DEFAULT_MBO_ORDER_SIZE_FILTER
     ) {
         this.canvas = canvas;
         this.width = width;
@@ -86,6 +89,7 @@ export class CanvasRenderer {
         this.showVolumeBars = showVolumeBars;
         this.showOrderCount = showOrderCount;
         this.tickSize = tickSize;
+        this.mboOrderSizeFilter = Math.max(0, mboOrderSizeFilter);
         this.visibleRows = Math.floor(height / rowHeight);
 
         // Calculate initial bar column width
@@ -195,10 +199,15 @@ export class CanvasRenderer {
         // Find max individual order quantity across all levels
         let maxOrderQty = 0;
 
+        const minQty = this.mboOrderSizeFilter;
+
         const checkOrders = (ordersMap: Map<number, Order[]> | null | undefined) => {
             if (!ordersMap) return;
             for (const orders of ordersMap.values()) {
                 for (const order of orders) {
+                    if (order.quantity <= minQty) {
+                        continue;
+                    }
                     maxOrderQty = Math.max(maxOrderQty, order.quantity);
                 }
             }
@@ -234,6 +243,8 @@ export class CanvasRenderer {
         const pixelsPerUnit = this.segmentState.basePixelsPerUnit * this.segmentState.userScaleFactor;
         let maxWidth = 0;
 
+        const minQty = this.mboOrderSizeFilter;
+
         // Check all price levels for widest segment set
         const allLevels = [
             ...this.currentSnapshot.bids,
@@ -247,7 +258,9 @@ export class CanvasRenderer {
 
             if (orders && orders.length > 0) {
                 const totalWidth = orders.reduce((sum, order) =>
-                    sum + (order.quantity * pixelsPerUnit) + SEGMENT_GAP_PX, 0);
+                    order.quantity > minQty
+                        ? sum + (order.quantity * pixelsPerUnit) + SEGMENT_GAP_PX
+                        : sum, 0);
                 maxWidth = Math.max(maxWidth, totalWidth);
             }
         }
@@ -1028,6 +1041,7 @@ export class CanvasRenderer {
         const pixelsPerUnit = this.segmentState.basePixelsPerUnit * this.segmentState.userScaleFactor;
         const scrollOffset = this.segmentState.horizontalScrollOffset;
         const barStartX = this.showOrderCount ? COL_WIDTH * 5 : COL_WIDTH * 3;
+        const minQty = this.mboOrderSizeFilter;
 
         // Same height as single bar (with padding)
         const barHeight = this.rowHeight - 8;
@@ -1048,6 +1062,10 @@ export class CanvasRenderer {
 
         for (let i = 0; i < orders.length; i++) {
             const order = orders[i];
+
+            if (order.quantity <= minQty) {
+                continue;
+            }
 
             // Calculate proportional width (no min constraint)
             let segmentWidth = order.quantity * pixelsPerUnit;
@@ -1452,6 +1470,26 @@ export class CanvasRenderer {
             // Recalculate and resize canvas based on new column count
             const newWidth = this.calculateCanvasWidth();
             this.resize(newWidth, this.height);
+        }
+    }
+
+    /**
+     * Set MBO order size filter (only show orders with qty > filter)
+     */
+    public setMboOrderSizeFilter(filter: number): void {
+        const normalized = Math.max(0, filter);
+        if (this.mboOrderSizeFilter === normalized) {
+            return;
+        }
+        this.mboOrderSizeFilter = normalized;
+        this.needsFullRedraw = true;
+        if (this.currentSnapshot) {
+            this.calculateBaseScale();
+            this.recalculateMaxScroll();
+            if (this.segmentState.horizontalScrollOffset > this.segmentState.maxScrollOffset) {
+                this.segmentState.horizontalScrollOffset = this.segmentState.maxScrollOffset;
+            }
+            this.render(this.currentSnapshot);
         }
     }
 

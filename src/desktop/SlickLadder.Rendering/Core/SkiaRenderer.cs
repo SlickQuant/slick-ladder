@@ -887,6 +887,7 @@ public class SkiaRenderer : IDisposable
         var barStartX = viewport.VolumeBarColumnX.Value;
         var barColumnWidth = viewport.VolumeBarMaxWidth;
         var barHeight = RenderConfig.RowHeight - 8;
+        var minQty = _config.MboOrderSizeFilter;
         var paint = side == Side.BID ? _bidVolumePaint : _askVolumePaint;
 
         // Clip to bar column so scrolled segments/text don't bleed into qty columns.
@@ -900,6 +901,11 @@ public class SkiaRenderer : IDisposable
         for (int i = 0; i < orders.Length; i++)
         {
             var order = orders[i];
+
+            if (order.Quantity <= minQty)
+            {
+                continue;
+            }
 
             // Calculate proportional width (no min constraint)
             var segmentWidth = order.Quantity * pixelsPerUnit;
@@ -1191,6 +1197,8 @@ public class SkiaRenderer : IDisposable
     {
         long maxOrderQty = 0;
 
+        var minQty = _config.MboOrderSizeFilter;
+
         // Check bid orders
         if (snapshot.BidOrders != null)
         {
@@ -1198,6 +1206,10 @@ public class SkiaRenderer : IDisposable
             {
                 foreach (var order in orders)
                 {
+                    if (order.Quantity <= minQty)
+                    {
+                        continue;
+                    }
                     maxOrderQty = Math.Max(maxOrderQty, order.Quantity);
                 }
             }
@@ -1210,6 +1222,10 @@ public class SkiaRenderer : IDisposable
             {
                 foreach (var order in orders)
                 {
+                    if (order.Quantity <= minQty)
+                    {
+                        continue;
+                    }
                     maxOrderQty = Math.Max(maxOrderQty, order.Quantity);
                 }
             }
@@ -1239,6 +1255,8 @@ public class SkiaRenderer : IDisposable
         var pixelsPerUnit = _segmentState.BasePixelsPerUnit * _segmentState.UserScaleFactor;
         double maxWidth = 0;
 
+        var minQty = _config.MboOrderSizeFilter;
+
         // Check all price levels for widest segment set
         foreach (var level in snapshot.Bids)
         {
@@ -1247,6 +1265,10 @@ public class SkiaRenderer : IDisposable
                 double totalWidth = 0;
                 foreach (var order in orders)
                 {
+                    if (order.Quantity <= minQty)
+                    {
+                        continue;
+                    }
                     totalWidth += (order.Quantity * pixelsPerUnit) + RenderConfig.SegmentGapPx;
                 }
                 maxWidth = Math.Max(maxWidth, totalWidth);
@@ -1260,6 +1282,10 @@ public class SkiaRenderer : IDisposable
                 double totalWidth = 0;
                 foreach (var order in orders)
                 {
+                    if (order.Quantity <= minQty)
+                    {
+                        continue;
+                    }
                     totalWidth += (order.Quantity * pixelsPerUnit) + RenderConfig.SegmentGapPx;
                 }
                 maxWidth = Math.Max(maxWidth, totalWidth);
