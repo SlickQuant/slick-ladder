@@ -1,6 +1,6 @@
 {
   "name": "@slickquant/slick-ladder",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Ultra-low latency price ladder component for web",
   "main": "dist/slick-ladder.js",
   "types": "dist/main.d.ts",

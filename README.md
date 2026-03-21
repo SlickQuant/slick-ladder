@@ -362,6 +362,8 @@ core.ProcessPriceLevelUpdate(update);
 | `readOnly` | `boolean` | `false` | Disable click interactions |
 | `showVolumeBars` | `boolean` | `true` | Show volume bar visualization |
 | `showOrderCount` | `boolean` | `true` | Show order count columns |
+| `mboOrderSizeFilter` | `number` | `0` | Minimum order size to display in MBO mode |
+| `removalMode` | `'showEmpty' \| 'removeRow'` | `'removeRow'` | How to handle empty price levels |
 | `colors` | `CanvasColors` | (see below) | Custom color scheme |
 | `onTrade` | `function` | - | Callback when price is clicked |
 | `onPriceHover` | `function` | - | Callback when price is hovered |
@@ -394,6 +396,7 @@ const DEFAULT_COLORS = {
 | `setDataMode` | `'PriceLevel' \| 'MBO'` | `void` | Switch data mode |
 | `setShowVolumeBars` | `boolean` | `void` | Toggle volume bars |
 | `setShowOrderCount` | `boolean` | `void` | Toggle order count columns |
+| `setRemovalMode` | `'showEmpty' \| 'removeRow'` | `void` | Set how empty price levels are displayed |
 | `setReadOnly` | `boolean` | `void` | Enable/disable interactions |
 | `resize` | `width?, height?` | `void` | Resize the canvas |
 | `getMetrics` | - | `object` | Get performance metrics |

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-03-21
+
+### Added
+- Shift+Wheel zoom and Mouse Drag horizontal scroll interaction features
+- Dynamic zoom scale functionality
+- MBO order size filter capability
+- `removalMode` configuration option in `PriceLadderConfig` for web implementation
+
+### Changed
+- Exposed MBO order filter in demo applications
+- `removalMode` can now be set during PriceLadder initialization via config
+- Updated README.md documentation with `removalMode` and `mboOrderSizeFilter` options
+
 ## [0.1.1] - 2026-01-17
 
 ### Added

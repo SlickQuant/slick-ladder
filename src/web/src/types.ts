@@ -88,6 +88,7 @@ export interface PriceLadderConfig {
     showVolumeBars?: boolean;
     showOrderCount?: boolean;
     mboOrderSizeFilter?: number;
+    removalMode?: 'showEmpty' | 'removeRow';
     colors?: CanvasColors;
     onTrade?: (price: number, side: Side) => void;
     onPriceHover?: (price: number | null) => void;

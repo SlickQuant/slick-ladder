@@ -78,6 +78,7 @@ export class PriceLadder {
             showVolumeBars,
             showOrderCount,
             mboOrderSizeFilter: Math.max(0, config.mboOrderSizeFilter ?? DEFAULT_MBO_ORDER_SIZE_FILTER),
+            removalMode: config.removalMode || 'removeRow',
             colors: config.colors || DEFAULT_COLORS,
             onTrade: config.onTrade || (() => {}),
             onPriceHover: config.onPriceHover || (() => {})
@@ -109,6 +110,9 @@ export class PriceLadder {
             this.config.tickSize,
             this.config.mboOrderSizeFilter
         );
+
+        // Set removal mode from config
+        this.renderer.setRemovalMode(this.config.removalMode);
 
         // Create interaction handler
         this.interactionHandler = new InteractionHandler(
