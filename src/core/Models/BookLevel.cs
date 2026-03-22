@@ -12,8 +12,8 @@ public struct BookLevel
     /// <summary>Price of this level</summary>
     public decimal Price;
 
-    /// <summary>Total quantity at this price level</summary>
-    public long Quantity;
+    /// <summary>Total quantity at this price level (supports decimal quantities)</summary>
+    public decimal Quantity;
 
     /// <summary>Number of orders at this price level</summary>
     public int NumOrders;
@@ -38,7 +38,7 @@ public struct BookLevel
         set => Flags = value ? (byte)(Flags | 0x02) : (byte)(Flags & ~0x02);
     }
 
-    public BookLevel(decimal price, long quantity, int numOrders, Side side)
+    public BookLevel(decimal price, decimal quantity, int numOrders, Side side)
     {
         Price = price;
         Quantity = quantity;

@@ -89,6 +89,7 @@ export interface PriceLadderConfig {
     showOrderCount?: boolean;
     mboOrderSizeFilter?: number;
     removalMode?: 'showEmpty' | 'removeRow';
+    minQuantityThreshold?: number; // Minimum quantity to display (filters out 0 and near-zero quantities), default: 0.0001
     colors?: CanvasColors;
     onTrade?: (price: number, side: Side) => void;
     onPriceHover?: (price: number | null) => void;
@@ -142,7 +143,7 @@ export const DEFAULT_SEGMENT_CONFIG: SegmentRenderState = {
 };
 
 export const DEFAULT_MBO_ORDER_SIZE_FILTER = 0;
-
+export const DEFAULT_MIN_QUANTITY_THRESHOLD = 0.0001;
 export const SEGMENT_SCALE_MIN = 0.1;
 export const SEGMENT_SCALE_MAX = 100.0;
 export const SEGMENT_SCALE_STEP = 0.2; // Base step for dynamic zoom

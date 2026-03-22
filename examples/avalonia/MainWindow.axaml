@@ -6,6 +6,28 @@
         Height="900" Width="900"
         Background="#0f0f0f">
 
+    <Window.Styles>
+        <!-- TextBox hover style -->
+        <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+            <Setter Property="Background" Value="#f5f5f5"/>
+            <Setter Property="BorderBrush" Value="#666"/>
+        </Style>
+        <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#3b82f6"/>
+        </Style>
+
+        <!-- ComboBox hover style -->
+        <Style Selector="ComboBox:pointerover /template/ Border#Background">
+            <Setter Property="Background" Value="#f5f5f5"/>
+            <Setter Property="BorderBrush" Value="#666"/>
+        </Style>
+        <Style Selector="ComboBox:focus /template/ Border#Background">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#3b82f6"/>
+        </Style>
+    </Window.Styles>
+
     <Grid ColumnDefinitions="300,*">
 
         <!-- Control Panel -->
@@ -109,6 +131,15 @@
                                  Content="Show Order Count"
                                  Foreground="White"
                                  IsChecked="False"
+                                 Margin="0,0,0,10"/>
+
+                        <TextBlock Text="Min Quantity Threshold" Foreground="White" Margin="0,0,0,5"/>
+                        <TextBox x:Name="MinQuantityThresholdText"
+                                 Text="0.0001"
+                                 Background="White"
+                                 Foreground="#000000"
+                                 FontSize="13"
+                                 TextChanged="MinQuantityThresholdText_Changed"
                                  Margin="0,0,0,10"/>
 
                         <TextBlock Text="MBO Order Filter (qty >)" Foreground="White" Margin="0,0,0,5"/>

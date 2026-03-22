@@ -46,6 +46,10 @@ public class RenderConfig
     public const float ColumnWidth = 66.7f;  // Matches web version COL_WIDTH
     public const float VolumeBarWidthMultiplier = 2.5f;
 
+    // Minimum quantity threshold for filtering levels/orders (default 1.0 for whole quantities)
+    // Set to values like 0.01, 0.001, etc. to support fractional quantities
+    public decimal MinQuantityThreshold { get; set; } = 1.0m;
+
     // New segment rendering configuration (must match web version)
     public const double SegmentScaleMin = 0.1;
     public const double SegmentScaleMax = 1000.0;

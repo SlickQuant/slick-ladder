@@ -86,7 +86,7 @@ public partial class WasmExports
     /// Process a single price level update
     /// </summary>
     [JSExport]
-    public static void ProcessPriceLevelUpdate(int side, double price, int quantity, int numOrders)
+    public static void ProcessPriceLevelUpdate(int side, double price, double quantity, int numOrders)
     {
         ExecuteSafely(nameof(ProcessPriceLevelUpdate), () =>
         {
@@ -95,7 +95,7 @@ public partial class WasmExports
             var update = new PriceLevel(
                 (Side)side,
                 (decimal)price,
-                quantity,
+                (decimal)quantity,
                 numOrders
             );
 
@@ -107,7 +107,7 @@ public partial class WasmExports
     /// Process a single price level update without auto-flushing
     /// </summary>
     [JSExport]
-    public static void ProcessPriceLevelUpdateNoFlush(int side, double price, int quantity, int numOrders)
+    public static void ProcessPriceLevelUpdateNoFlush(int side, double price, double quantity, int numOrders)
     {
         ExecuteSafely(nameof(ProcessPriceLevelUpdateNoFlush), () =>
         {
@@ -116,7 +116,7 @@ public partial class WasmExports
             var update = new PriceLevel(
                 (Side)side,
                 (decimal)price,
-                quantity,
+                (decimal)quantity,
                 numOrders
             );
 
@@ -157,7 +157,7 @@ public partial class WasmExports
         int orderId,
         int side,
         double price,
-        int quantity,
+        double quantity,
         int priority,
         int updateType,
         int isOwnOrder)
@@ -170,7 +170,7 @@ public partial class WasmExports
                 orderId,
                 (Side)side,
                 (decimal)price,
-                quantity,
+                (decimal)quantity,
                 priority,
                 isOwnOrder != 0
             );
@@ -187,7 +187,7 @@ public partial class WasmExports
         int orderId,
         int side,
         double price,
-        int quantity,
+        double quantity,
         int priority,
         int updateType,
         int isOwnOrder)
@@ -200,7 +200,7 @@ public partial class WasmExports
                 orderId,
                 (Side)side,
                 (decimal)price,
-                quantity,
+                (decimal)quantity,
                 priority,
                 isOwnOrder != 0
             );

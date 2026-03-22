@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private ComboBox? _dataModeCombo;
     private ComboBox? _removalModeCombo;
     private ComboBox? _tickSizeCombo;
+    private TextBox? _minQuantityThresholdText;
     private TextBox? _mboOrderSizeFilterText;
 
     public MainWindow()
@@ -55,6 +56,7 @@ public partial class MainWindow : Window
         _dataModeCombo = this.FindControl<ComboBox>("DataModeCombo");
         _removalModeCombo = this.FindControl<ComboBox>("RemovalModeCombo");
         _tickSizeCombo = this.FindControl<ComboBox>("TickSizeCombo");
+        _minQuantityThresholdText = this.FindControl<TextBox>("MinQuantityThresholdText");
         _mboOrderSizeFilterText = this.FindControl<TextBox>("MboOrderSizeFilterText");
 
         // Wire up checkbox changed events
@@ -65,6 +67,10 @@ public partial class MainWindow : Window
         if (_showOrderCountCheckbox != null)
         {
             _showOrderCountCheckbox.IsCheckedChanged += ShowOrderCountCheckbox_Changed;
+        }
+        if (_minQuantityThresholdText != null)
+        {
+            _minQuantityThresholdText.TextChanged += MinQuantityThresholdText_Changed;
         }
         if (_mboOrderSizeFilterText != null)
         {
@@ -89,7 +95,8 @@ public partial class MainWindow : Window
         _simulator = new MarketDataSimulator(_viewModel.Core, tickSize)
         {
             UpdatesPerSecond = 1000,
-            BasePrice = 50000.00m
+            BasePrice = 50000.00m,
+            MinQuantityThreshold = 0.0001m
         };
 
         // Setup metrics update timer (10 Hz for UI updates)
@@ -193,6 +200,27 @@ public partial class MainWindow : Window
         {
             priceLadder.GetViewport().ShowOrderCount = _showOrderCountCheckbox.IsChecked ?? false;
         }
+    }
+
+    private void MinQuantityThresholdText_Changed(object? sender, TextChangedEventArgs e)
+    {
+        if (_simulator == null)
+        {
+            return;
+        }
+
+        var text = _minQuantityThresholdText?.Text?.Trim();
+        decimal thresholdValue = 0.0001m;
+
+        if (!string.IsNullOrEmpty(text))
+        {
+            if (!decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out thresholdValue))
+            {
+                return;
+            }
+        }
+
+        _simulator.MinQuantityThreshold = thresholdValue;
     }
 
     private void MboOrderSizeFilterText_Changed(object? sender, TextChangedEventArgs e)
@@ -331,7 +359,8 @@ public partial class MainWindow : Window
             {
                 UpdatesPerSecond = updateRate,
                 BasePrice = 50000.00m,
-                UseMBOMode = isMBOMode
+                UseMBOMode = isMBOMode,
+                MinQuantityThreshold = 0.0001m
             };
 
             // Update viewport tick size

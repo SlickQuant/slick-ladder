@@ -40,7 +40,8 @@ public partial class MainWindow : Window
         _simulator = new MarketDataSimulator(_viewModel.Core, tickSize)
         {
             UpdatesPerSecond = 1000,
-            BasePrice = 50000.00m
+            BasePrice = 50000.00m,
+            MinQuantityThreshold = 0.0001m
         };
 
         // Setup metrics update timer (10 Hz for UI updates)
@@ -110,6 +111,27 @@ public partial class MainWindow : Window
         {
             PriceLadder.GetViewport().ShowOrderCount = ShowOrderCountCheckbox.IsChecked ?? false;
         }
+    }
+
+    private void MinQuantityThresholdText_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (_simulator == null)
+        {
+            return;
+        }
+
+        var text = (sender as TextBox)?.Text?.Trim();
+        decimal thresholdValue = 0.0001m;
+
+        if (!string.IsNullOrEmpty(text))
+        {
+            if (!decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out thresholdValue))
+            {
+                return;
+            }
+        }
+
+        _simulator.MinQuantityThreshold = thresholdValue;
     }
 
     private void MboOrderSizeFilterText_Changed(object sender, TextChangedEventArgs e)
@@ -252,7 +274,8 @@ public partial class MainWindow : Window
         {
             UpdatesPerSecond = int.Parse((string)((ComboBoxItem)UpdateRateCombo.SelectedItem).Tag),
             BasePrice = 50000.00m,
-            UseMBOMode = isMBOMode
+            UseMBOMode = isMBOMode,
+            MinQuantityThreshold = 0.0001m
         };
 
         // Update viewport tick size

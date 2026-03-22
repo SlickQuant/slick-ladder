@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Dynamic column auto-sizing**: Price and quantity columns now automatically resize based on content across all platforms (Web, WPF, Avalonia)
+- **Min Quantity Threshold**: Configurable threshold with visual indicator - quantities below threshold display as `<0.0001` instead of being hidden
+- **Decimal quantity support**: Full decimal precision support with smart formatting based on threshold value
+- Min Quantity Threshold and MBO Order Filter controls in all demo applications
+
+
+### Fixed
+- Avalonia demo input controls: Improved hover/focus visibility with light background colors
+- Cross-platform consistency: Synchronized decimal formatting between TypeScript and C# implementations
+
 ## [0.1.2] - 2026-03-21
 
 ### Added

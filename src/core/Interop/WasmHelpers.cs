@@ -138,7 +138,7 @@ public static class WasmHelpers
 
         buffer[0] = (byte)update.Side;
         BitConverter.GetBytes((double)update.Price).CopyTo(buffer, 1);
-        BitConverter.GetBytes(update.Quantity).CopyTo(buffer, 9);
+        BitConverter.GetBytes((double)update.Quantity).CopyTo(buffer, 9);
         BitConverter.GetBytes(update.NumOrders).CopyTo(buffer, 13);
 
         return buffer;

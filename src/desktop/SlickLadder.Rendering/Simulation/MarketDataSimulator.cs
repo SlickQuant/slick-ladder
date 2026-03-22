@@ -24,6 +24,7 @@ public class MarketDataSimulator : IDisposable
     private int _updatesPerSecond = 100;
     private decimal _basePrice = 50000.00m;
     private decimal _tickSize = 0.01m;
+    private decimal _minQuantityThreshold = 1.0m;
     private readonly Random _random = new();
     private bool _useMBOMode = false;
     private volatile bool _isRunning = false;
@@ -72,6 +73,12 @@ public class MarketDataSimulator : IDisposable
     {
         get => _useMBOMode;
         set => _useMBOMode = value;
+    }
+
+    public decimal MinQuantityThreshold
+    {
+        get => _minQuantityThreshold;
+        set => _minQuantityThreshold = value;
     }
 
     public MarketDataSimulator(PriceLadderCore core, decimal tickSize = 0.01m)
@@ -214,7 +221,7 @@ public class MarketDataSimulator : IDisposable
 
             // Occasionally remove levels (set qty = 0) to simulate level removal
             // 5% chance of removal
-            long qty;
+            decimal qty;
             int numOrders;
             if (_random.Next(100) < 5)
             {
@@ -223,8 +230,13 @@ public class MarketDataSimulator : IDisposable
             }
             else
             {
-                qty = _random.Next(100, 10000);
+                // Generate aggregated quantity as sum of multiple orders
                 numOrders = _random.Next(1, 30);
+                qty = 0;
+                for (int j = 0; j < numOrders; j++)
+                {
+                    qty += NextOrderQuantity();
+                }
             }
 
             _core.ProcessPriceLevelUpdateNoFlush(new PriceLevel(side, price, qty, numOrders));
@@ -561,18 +573,45 @@ public class MarketDataSimulator : IDisposable
         return null;
     }
 
-    private long NextOrderQuantity()
+    private decimal NextOrderQuantity()
     {
         var roll = _random.Next(100);
+        int baseQty;
         if (roll < 60)
         {
-            return _random.Next(MinOrderQuantity, MidOrderQuantity + 1);
+            baseQty = _random.Next(MinOrderQuantity, MidOrderQuantity + 1);
         }
-        if (roll < 90)
+        else if (roll < 90)
         {
-            return _random.Next(MidOrderQuantity, 5000);
+            baseQty = _random.Next(MidOrderQuantity, 5000);
         }
-        return _random.Next(5000, MaxOrderQuantity + 1);
+        else
+        {
+            baseQty = _random.Next(5000, MaxOrderQuantity + 1);
+        }
+
+        // Add decimal component based on minQuantityThreshold
+        if (_minQuantityThreshold < 1.0m && _minQuantityThreshold > 0)
+        {
+            var decimalPlaces = GetDecimalPlaces(_minQuantityThreshold);
+            var multiplier = (decimal)Math.Pow(10, decimalPlaces);
+            var randomDecimal = (decimal)_random.NextDouble();
+            var decimalComponent = Math.Floor(randomDecimal * multiplier) / multiplier;
+            return baseQty + decimalComponent;
+        }
+
+        return baseQty;
+    }
+
+    private int GetDecimalPlaces(decimal threshold)
+    {
+        if (threshold >= 1.0m) return 0;
+        var str = threshold.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var dotIndex = str.IndexOf('.');
+        if (dotIndex == -1) return 0;
+
+        var fractionalPart = str.Substring(dotIndex + 1).TrimEnd('0');
+        return fractionalPart.Length;
     }
 
     public void Dispose()

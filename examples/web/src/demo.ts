@@ -94,6 +94,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const dataMode = (dataModeSelect?.value as 'PriceLevel' | 'MBO') ?? 'PriceLevel';
 
             const mboOrderSizeFilter = getMboOrderSizeFilter();
+            const minQuantityThreshold = getMinQuantityThreshold();
 
             // Calculate initial width based on display settings (same as TypeScript mode)
             const dataColumns = showOrderCount ? 5 : 3;
@@ -111,6 +112,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 showVolumeBars,
                 showOrderCount,
                 mboOrderSizeFilter,
+                minQuantityThreshold,
                 onTrade: (price, side) => {
                     const action = side === Side.BID ? 'SELL' : 'BUY';
                     console.log(`${action} @ $${price.toFixed(2)}`);
@@ -169,6 +171,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         const dataMode = (dataModeSelect?.value as 'PriceLevel' | 'MBO') ?? 'PriceLevel';
 
         const mboOrderSizeFilter = getMboOrderSizeFilter();
+        const minQuantityThreshold = getMinQuantityThreshold();
 
         // Calculate initial width based on display settings
         const dataColumns = showOrderCount ? 5 : 3;
@@ -187,6 +190,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             showVolumeBars,
             showOrderCount,
             mboOrderSizeFilter,
+            minQuantityThreshold,
             onTrade: (price, side) => {
                 const action = side === Side.ASK ? 'BUY' : 'SELL';
                 console.log(`${action} @ $${price.toFixed(2)}`);
@@ -239,7 +243,7 @@ function initializeOrderBook() {
     // Add bid levels
     for (let i = 0; i < levels; i++) {
         const price = basePrice - i * tickSize;
-        const qty = Math.floor(1000 + Math.random() * 5000);
+        const qty = generateRandomQuantity(1000, 6000);
         const numOrders = Math.floor(1 + Math.random() * 20);
 
         ladder.processUpdate({
@@ -253,7 +257,7 @@ function initializeOrderBook() {
     // Add ask levels
     for (let i = 0; i < levels; i++) {
         const price = basePrice + tickSize + i * tickSize;
-        const qty = Math.floor(1000 + Math.random() * 5000);
+        const qty = generateRandomQuantity(1000, 6000);
         const numOrders = Math.floor(1 + Math.random() * 20);
 
         ladder.processUpdate({
@@ -511,12 +515,12 @@ function generateMboPrice(side: Side, tickSize: number): number {
 function nextMboOrderQuantity(): number {
     const roll = Math.random();
     if (roll < 0.6) {
-        return randomInt(MBO_MIN_ORDER_QTY, MBO_MID_ORDER_QTY);
+        return generateRandomQuantity(MBO_MIN_ORDER_QTY, MBO_MID_ORDER_QTY);
     }
     if (roll < 0.9) {
-        return randomInt(MBO_MID_ORDER_QTY, 5000);
+        return generateRandomQuantity(MBO_MID_ORDER_QTY, 5000);
     }
-    return randomInt(5000, MBO_MAX_ORDER_QTY);
+    return generateRandomQuantity(5000, MBO_MAX_ORDER_QTY);
 }
 
 function randomInt(min: number, max: number): number {
@@ -537,6 +541,61 @@ function getMboOrderSizeFilter(): number {
         return 0;
     }
     return parsed;
+}
+
+function getMinQuantityThreshold(): number {
+    const input = document.getElementById('min-quantity-threshold') as HTMLInputElement | null;
+    if (!input) {
+        return 1.0; // Default value - integers for WASM compatibility
+    }
+    const parsed = parseFloat(input.value);
+    if (Number.isNaN(parsed) || parsed < 0) {
+        return 1.0; // Default value - integers for WASM compatibility
+    }
+    // If 0, treat as 1.0 to avoid excessive decimal places and WASM compatibility issues
+    if (parsed === 0) {
+        return 1.0;
+    }
+    return parsed;
+}
+
+/**
+ * Calculate decimal places needed to represent a threshold value
+ */
+function getDecimalPlaces(threshold: number): number {
+    let decimalPlaces = 0;
+    let valueTest = threshold;
+
+    // Keep multiplying by 10 until we get a value >= 1
+    while (valueTest < 1 && decimalPlaces < 10) {
+        valueTest *= 10;
+        decimalPlaces++;
+    }
+
+    // Verify if this number of decimals is sufficient
+    while (decimalPlaces < 10) {
+        const multiplier = Math.pow(10, decimalPlaces);
+        const rounded = Math.round(threshold * multiplier);
+
+        // If close enough to a whole number, we have the right decimal places
+        if (Math.abs((rounded / multiplier) - threshold) < 1e-10) {
+            break;
+        }
+
+        decimalPlaces++;
+    }
+
+    return decimalPlaces;
+}
+
+/**
+ * Generate a random quantity with decimal precision matching the minQuantityThreshold
+ */
+function generateRandomQuantity(min: number, max: number): number {
+    const threshold = getMinQuantityThreshold();
+    const decimalPlaces = getDecimalPlaces(threshold);
+    const value = min + Math.random() * (max - min);
+    return parseFloat(value.toFixed(decimalPlaces));
 }
 
 function setupControls() {
@@ -611,6 +670,20 @@ function setupControls() {
         if (ladder) {
             ladder.setMboOrderSizeFilter(getMboOrderSizeFilter());
         }
+    });
+
+    // Min quantity threshold input
+    const minQuantityThresholdInput = document.getElementById('min-quantity-threshold') as HTMLInputElement;
+    minQuantityThresholdInput?.addEventListener('input', async () => {
+        const container = document.getElementById('ladder-container');
+        if (!container) return;
+
+        // Get current backend
+        const backendSelect = document.getElementById('backend-select') as HTMLSelectElement;
+        const currentBackend = backendSelect?.value as 'typescript' | 'wasm' ?? 'typescript';
+
+        // Reinitialize with new minQuantityThreshold
+        await initializeBackend(currentBackend, container);
     });
 
     // Removal mode switching
@@ -743,7 +816,7 @@ function startMarketUpdates(rate: number) {
 
                 // 10% chance to remove a level (quantity = 0)
                 const shouldRemove = Math.random() < 0.1;
-                const qty = shouldRemove ? 0 : Math.floor(100 + Math.random() * 10000);
+                const qty = shouldRemove ? 0 : generateRandomQuantity(100, 10100);
                 const numOrders = shouldRemove ? 0 : Math.floor(1 + Math.random() * 30);
 
                 const update: PriceLevel = {

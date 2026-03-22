@@ -3,6 +3,8 @@ const TerserPlugin = require('terser-webpack-plugin');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 
 module.exports = {
+  mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
+  devtool: 'source-map', // Generate source maps for easier debugging
   entry: {
     'slick-ladder': './src/main.ts'
   },

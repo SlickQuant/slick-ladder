@@ -1,4 +1,4 @@
-import { BookLevel, Side, OrderBookSnapshot, CanvasColors, DEFAULT_COLORS, RenderMetrics, Order, DirtyLevelChange, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, SegmentRenderState, DEFAULT_SEGMENT_CONFIG, DEFAULT_MBO_ORDER_SIZE_FILTER, SEGMENT_SCALE_MIN, SEGMENT_SCALE_MAX, SEGMENT_SCALE_STEP, MIN_SEGMENT_WIDTH_PX, SEGMENT_GAP_PX, MIN_BAR_COLUMN_WIDTH, TARGET_MAX_SEGMENT_WIDTH } from './types';
+import { BookLevel, Side, OrderBookSnapshot, CanvasColors, DEFAULT_COLORS, RenderMetrics, Order, DirtyLevelChange, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, SegmentRenderState, DEFAULT_SEGMENT_CONFIG, DEFAULT_MBO_ORDER_SIZE_FILTER, DEFAULT_MIN_QUANTITY_THRESHOLD, SEGMENT_SCALE_MIN, SEGMENT_SCALE_MAX, SEGMENT_SCALE_STEP, MIN_SEGMENT_WIDTH_PX, SEGMENT_GAP_PX, MIN_BAR_COLUMN_WIDTH, TARGET_MAX_SEGMENT_WIDTH } from './types';
 
 type DensePackingLayout = {
     nonEmptyAsks: BookLevel[];
@@ -47,6 +47,11 @@ export class CanvasRenderer {
     private showOrderCount: boolean = true;
 
     private mboOrderSizeFilter: number;
+    private minQuantityThreshold: number;
+
+    // Dynamic column widths
+    private qtyColWidth: number = COL_WIDTH; // Dynamic quantity column width
+    private priceColWidth: number = COL_WIDTH; // Dynamic price column width
 
     // Performance tracking
     private lastFrameTime: number = 0;
@@ -79,7 +84,8 @@ export class CanvasRenderer {
         showVolumeBars: boolean = true,
         showOrderCount: boolean = true,
         tickSize: number = 0.01,
-        mboOrderSizeFilter: number = DEFAULT_MBO_ORDER_SIZE_FILTER
+        mboOrderSizeFilter: number = DEFAULT_MBO_ORDER_SIZE_FILTER,
+        minQuantityThreshold: number = DEFAULT_MIN_QUANTITY_THRESHOLD
     ) {
         this.canvas = canvas;
         this.width = width;
@@ -90,11 +96,11 @@ export class CanvasRenderer {
         this.showOrderCount = showOrderCount;
         this.tickSize = tickSize;
         this.mboOrderSizeFilter = Math.max(0, mboOrderSizeFilter);
+        this.minQuantityThreshold = minQuantityThreshold;
         this.visibleRows = Math.floor(height / rowHeight);
 
         // Calculate initial bar column width
-        const fixedDataColumns = showOrderCount ? 5 : 3;
-        this.barColumnWidth = Math.max(MIN_BAR_COLUMN_WIDTH, width - (fixedDataColumns * COL_WIDTH));
+        this.barColumnWidth = this.calculateBarColumnWidth();
 
         // Initialize segment state
         this.segmentState = { ...DEFAULT_SEGMENT_CONFIG };
@@ -150,32 +156,190 @@ export class CanvasRenderer {
      * Format price based on tick size
      */
     private formatPrice(price: number): string {
-        // Determine decimal places needed based on tick size
-        // Find the number of decimal places required to represent the tick size
+        return price.toFixed(this.getDecimalPlaces(this.tickSize));
+    }
+
+    /**
+     * Format quantity based on minimum quantity threshold
+     */
+    private formatQuantity(quantity: number): string {
+        // If quantity is below threshold, show "<threshold" instead
+        if (quantity > 0 && quantity < this.minQuantityThreshold) {
+            const decimalPlaces = this.getDecimalPlaces(this.minQuantityThreshold);
+            if (decimalPlaces === 0) {
+                return `<${this.minQuantityThreshold}`;
+            }
+            return `<${this.minQuantityThreshold.toFixed(decimalPlaces)}`;
+        }
+
+        // If integer, use thousands separator (e.g., "1,234")
+        if (quantity % 1 === 0) {
+            return quantity.toLocaleString('en-US', { maximumFractionDigits: 0 });
+        }
+
+        // Decimal: show decimal places, trim trailing zeros (e.g., "123.45")
+        // Use toLocaleString with sufficient precision, then manually trim trailing zeros
+        const formatted = quantity.toLocaleString('en-US', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 8,  // Reasonable precision limit
+            useGrouping: false  // No thousands separator for decimals to simplify trimming
+        });
+
+        // If the result still has a decimal point, remove trailing zeros
+        if (formatted.includes('.')) {
+            return formatted.replace(/\.?0+$/, '');
+        }
+        return formatted;
+    }
+
+    /**
+     * Calculate decimal places needed to represent a value (tick size or threshold)
+     */
+    private getDecimalPlaces(value: number): number {
+        // Determine decimal places needed based on value
+        // Find the number of decimal places required to represent the value
         let decimalPlaces = 0;
-        let tickSizeTest = this.tickSize;
+        let valueTest = value;
 
         // Keep multiplying by 10 until we get a value >= 1
-        while (tickSizeTest < 1 && decimalPlaces < 10) {
-            tickSizeTest *= 10;
+        while (valueTest < 1 && decimalPlaces < 10) {
+            valueTest *= 10;
             decimalPlaces++;
         }
 
         // Verify if this number of decimals is sufficient
-        // by checking if tickSize * 10^decimalPlaces is a whole number
+        // by checking if value * 10^decimalPlaces is a whole number
         while (decimalPlaces < 10) {
             const multiplier = Math.pow(10, decimalPlaces);
-            const rounded = Math.round(this.tickSize * multiplier);
+            const rounded = Math.round(value * multiplier);
 
             // If close enough to a whole number, we have the right decimal places
-            if (Math.abs((rounded / multiplier) - this.tickSize) < 1e-10) {
+            if (Math.abs((rounded / multiplier) - value) < 1e-10) {
                 break;
             }
 
             decimalPlaces++;
         }
 
-        return price.toFixed(decimalPlaces);
+        return decimalPlaces;
+    }
+
+    /**
+     * Calculate required quantity column width based on maximum quantity in snapshot
+     */
+    private calculateQuantityColumnWidth(snapshot: OrderBookSnapshot): number {
+        // Find the maximum quantity across all levels
+        let maxQty = 0;
+        for (const level of snapshot.bids) {
+            if (level.quantity > maxQty) {
+                maxQty = level.quantity;
+            }
+        }
+        for (const level of snapshot.asks) {
+            if (level.quantity > maxQty) {
+                maxQty = level.quantity;
+            }
+        }
+
+        // If no levels, use default width
+        if (maxQty === 0) {
+            return COL_WIDTH;
+        }
+
+        // Format the maximum quantity to get its text width
+        const maxQtyText = this.formatQuantity(maxQty);
+
+        // Measure the text width using the actual rendering font
+        this.offscreenCtx.font = '14px monospace';
+        const textWidth = this.offscreenCtx.measureText(maxQtyText).width;
+
+        // Add padding (10px on each side)
+        const requiredWidth = textWidth + 20;
+
+        // Use at least COL_WIDTH, but expand if needed
+        return Math.max(COL_WIDTH, Math.ceil(requiredWidth));
+    }
+
+    /**
+     * Calculate dynamic price column width based on price values
+     * Mirrors TypeScript implementation logic
+     */
+    private calculatePriceColumnWidth(snapshot: OrderBookSnapshot): number {
+        // Find the maximum and minimum prices to determine max digits
+        let maxPrice = 0;
+        let minPrice = Infinity;
+
+        for (const level of snapshot.bids) {
+            if (level.price > maxPrice) maxPrice = level.price;
+            if (level.price < minPrice) minPrice = level.price;
+        }
+        for (const level of snapshot.asks) {
+            if (level.price > maxPrice) maxPrice = level.price;
+            if (level.price < minPrice) minPrice = level.price;
+        }
+
+        // If no levels, use default width
+        if (maxPrice === 0 || minPrice === Infinity) {
+            return COL_WIDTH;
+        }
+
+        // Format the maximum price to get its text width
+        const maxPriceText = this.formatPrice(maxPrice);
+
+        // Measure the text width using the actual rendering font
+        this.offscreenCtx.font = '14px monospace';
+        const textWidth = this.offscreenCtx.measureText(maxPriceText).width;
+
+        // Add padding (10px on each side)
+        const requiredWidth = textWidth + 20;
+
+        // Use at least COL_WIDTH, but expand if needed
+        return Math.max(COL_WIDTH, Math.ceil(requiredWidth));
+    }
+
+    /**
+     * Get X positions for all columns
+     */
+    private getColumnPositions(): { bidOrderX: number; bidQtyX: number; priceX: number; askQtyX: number; askOrderX: number; barX: number } {
+        let x = 0;
+
+        // Bid order count column (if enabled)
+        const bidOrderX = this.showOrderCount ? x : -1;
+        if (this.showOrderCount) x += COL_WIDTH;
+
+        // Bid quantity column
+        const bidQtyX = x;
+        x += this.qtyColWidth;
+
+        // Price column (dynamic width)
+        const priceX = x;
+        x += this.priceColWidth;
+
+        // Ask quantity column
+        const askQtyX = x;
+        x += this.qtyColWidth;
+
+        // Ask order count column (if enabled)
+        const askOrderX = this.showOrderCount ? x : -1;
+        if (this.showOrderCount) x += COL_WIDTH;
+
+        // Volume bar column (if enabled)
+        const barX = this.showVolumeBars ? x : -1;
+
+        return { bidOrderX, bidQtyX, priceX, askQtyX, askOrderX, barX };
+    }
+
+    /**
+     * Calculate bar column width based on canvas width and other columns
+     */
+    private calculateBarColumnWidth(): number {
+        const cols = this.getColumnPositions();
+        if (!this.showVolumeBars) {
+            return 0;
+        }
+        // Bar column starts where barX indicates, and extends to the end of canvas
+        const barWidth = this.width - cols.barX;
+        return Math.max(MIN_BAR_COLUMN_WIDTH, barWidth);
     }
 
     private buildOrderLookup(orderMap: Map<number, Order[]> | null | undefined): Map<string, Order[]> | null {
@@ -285,22 +449,20 @@ export class CanvasRenderer {
         this.offscreenCtx.fillStyle = this.colors.background;
         this.offscreenCtx.fillRect(0, 0, this.width, this.height);
 
-        // Calculate column indices
-        const bidQtyCol = this.showOrderCount ? 1 : 0;
-        const priceCol = this.showOrderCount ? 2 : 1;
-        const askQtyCol = this.showOrderCount ? 3 : 2;
+        // Get column positions
+        const cols = this.getColumnPositions();
 
         // BID qty column (blue)
         this.offscreenCtx.fillStyle = this.colors.bidQtyBackground;
-        this.offscreenCtx.fillRect(COL_WIDTH * bidQtyCol, 0, COL_WIDTH, this.height);
+        this.offscreenCtx.fillRect(cols.bidQtyX, 0, this.qtyColWidth, this.height);
 
         // Price column (light gray)
         this.offscreenCtx.fillStyle = this.colors.priceBackground;
-        this.offscreenCtx.fillRect(COL_WIDTH * priceCol, 0, COL_WIDTH, this.height);
+        this.offscreenCtx.fillRect(cols.priceX, 0, this.priceColWidth, this.height);
 
         // ASK qty column (red)
         this.offscreenCtx.fillStyle = this.colors.askQtyBackground;
-        this.offscreenCtx.fillRect(COL_WIDTH * askQtyCol, 0, COL_WIDTH, this.height);
+        this.offscreenCtx.fillRect(cols.askQtyX, 0, this.qtyColWidth, this.height);
 
         // Draw grid lines
         this.offscreenCtx.strokeStyle = this.colors.gridLine;
@@ -330,6 +492,20 @@ export class CanvasRenderer {
         this.currentSnapshot = snapshot;
         this.bidOrdersByPriceKey = this.buildOrderLookup(snapshot.bidOrders);
         this.askOrdersByPriceKey = this.buildOrderLookup(snapshot.askOrders);
+
+        // Calculate dynamic quantity column width
+        const newQtyColWidth = this.calculateQuantityColumnWidth(snapshot);
+        const newPriceColWidth = this.calculatePriceColumnWidth(snapshot);
+
+        if (newQtyColWidth !== this.qtyColWidth || newPriceColWidth !== this.priceColWidth) {
+            this.qtyColWidth = newQtyColWidth;
+            this.priceColWidth = newPriceColWidth;
+            // Resize canvas to accommodate new column widths
+            const newCanvasWidth = this.calculateCanvasWidth();
+            if (newCanvasWidth !== this.width) {
+                this.resize(newCanvasWidth, this.height);
+            }
+        }
 
         // Recalculate base scale if order quantities changed
         this.calculateBaseScale();
@@ -619,8 +795,9 @@ export class CanvasRenderer {
     }
 
     private buildDensePackingLayout(snapshot: OrderBookSnapshot): DensePackingLayout {
-        const nonEmptyAsks = snapshot.asks.filter(l => l.quantity > 0);
-        const nonEmptyBids = snapshot.bids.filter(l => l.quantity > 0);
+        // Filter out levels with 0 or near-zero quantity to ensure they're never rendered in removeRow mode
+        const nonEmptyAsks = snapshot.asks.filter(l => l.quantity >= this.minQuantityThreshold);
+        const nonEmptyBids = snapshot.bids.filter(l => l.quantity >= this.minQuantityThreshold);
         const midRow = Math.floor(this.visibleRows / 2);
         const totalLevels = nonEmptyAsks.length + nonEmptyBids.length;
 
@@ -808,24 +985,20 @@ export class CanvasRenderer {
     }
 
     private renderRow(rowIndex: number, level: BookLevel, orders?: Order[]): void {
+        // Skip rendering levels with 0 quantity in removeRow mode
+        if (this.removalMode === 'removeRow' && level.quantity === 0) {
+            return;
+        }
+
         const y = rowIndex * this.rowHeight;
 
         // Prepare text values
         const priceText = this.formatPrice(level.price);
-        const qtyText = level.quantity.toLocaleString();
+        const qtyText = this.formatQuantity(level.quantity);
         const ordersText = `(${level.numOrders})`;
 
-        // Calculate column indices based on which features are enabled
-        let bidOrderCol = this.showOrderCount ? 0 : -1;
-        let bidQtyCol = this.showOrderCount ? 1 : 0;
-        let priceCol = this.showOrderCount ? 2 : 1;
-        let askQtyCol = this.showOrderCount ? 3 : 2;
-        let askOrderCol = this.showOrderCount ? 4 : -1;
-
-        // Bar column calculation
-        let columnCount = 3; // Base columns: bid_qty, price, ask_qty
-        if (this.showOrderCount) columnCount += 2; // Add bid_orders and ask_orders
-        let barCol = columnCount; // Bars always after the last data column
+        // Get column positions
+        const cols = this.getColumnPositions();
 
         const maxQty = this.showVolumeBars ? this.calculateMaxQuantity() : 0;
         const BAR_MAX_WIDTH = (COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER) - 5;
@@ -839,15 +1012,15 @@ export class CanvasRenderer {
             // BID: bid_order_count, bid_qty, price, bars
 
             // bid_order_count (if enabled)
-            if (bidOrderCol >= 0) {
-                this.offscreenCtx.fillText(ordersText, COL_WIDTH * (bidOrderCol + 0.5), y + this.rowHeight / 2);
+            if (cols.bidOrderX >= 0) {
+                this.offscreenCtx.fillText(ordersText, cols.bidOrderX + COL_WIDTH / 2, y + this.rowHeight / 2);
             }
 
             // bid_qty
-            this.offscreenCtx.fillText(qtyText, COL_WIDTH * (bidQtyCol + 0.5), y + this.rowHeight / 2);
+            this.offscreenCtx.fillText(qtyText, cols.bidQtyX + this.qtyColWidth / 2, y + this.rowHeight / 2);
 
             // price
-            this.offscreenCtx.fillText(priceText, COL_WIDTH * (priceCol + 0.5), y + this.rowHeight / 2);
+            this.offscreenCtx.fillText(priceText, cols.priceX + this.priceColWidth / 2, y + this.rowHeight / 2);
 
             // bars (if enabled)
             if (this.showVolumeBars) {
@@ -857,21 +1030,21 @@ export class CanvasRenderer {
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.bidBar;
-                    this.offscreenCtx.fillRect(COL_WIDTH * barCol, y + 4, barWidth, this.rowHeight - 8);
+                    this.offscreenCtx.fillRect(cols.barX, y + 4, barWidth, this.rowHeight - 8);
                 }
             }
         } else {
             // ASK: price, ask_qty, ask_order_count, bars
 
             // price
-            this.offscreenCtx.fillText(priceText, COL_WIDTH * (priceCol + 0.5), y + this.rowHeight / 2);
+            this.offscreenCtx.fillText(priceText, cols.priceX + this.priceColWidth / 2, y + this.rowHeight / 2);
 
             // ask_qty
-            this.offscreenCtx.fillText(qtyText, COL_WIDTH * (askQtyCol + 0.5), y + this.rowHeight / 2);
+            this.offscreenCtx.fillText(qtyText, cols.askQtyX + this.qtyColWidth / 2, y + this.rowHeight / 2);
 
             // ask_order_count (if enabled)
-            if (askOrderCol >= 0) {
-                this.offscreenCtx.fillText(ordersText, COL_WIDTH * (askOrderCol + 0.5), y + this.rowHeight / 2);
+            if (cols.askOrderX >= 0) {
+                this.offscreenCtx.fillText(ordersText, cols.askOrderX + COL_WIDTH / 2, y + this.rowHeight / 2);
             }
 
             // bars (if enabled)
@@ -882,7 +1055,7 @@ export class CanvasRenderer {
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.askBar;
-                    this.offscreenCtx.fillRect(COL_WIDTH * barCol, y + 4, barWidth, this.rowHeight - 8);
+                    this.offscreenCtx.fillRect(cols.barX, y + 4, barWidth, this.rowHeight - 8);
                 }
             }
         }
@@ -897,21 +1070,20 @@ export class CanvasRenderer {
         this.offscreenCtx.fillStyle = this.colors.background;
         this.offscreenCtx.fillRect(0, y, this.width, this.rowHeight);
 
-        const bidQtyCol = this.showOrderCount ? 1 : 0;
-        const priceCol = this.showOrderCount ? 2 : 1;
-        const askQtyCol = this.showOrderCount ? 3 : 2;
+        // Get column positions
+        const cols = this.getColumnPositions();
 
         // Bid qty column
         this.offscreenCtx.fillStyle = this.colors.bidQtyBackground;
-        this.offscreenCtx.fillRect(COL_WIDTH * bidQtyCol, y, COL_WIDTH, this.rowHeight);
+        this.offscreenCtx.fillRect(cols.bidQtyX, y, this.qtyColWidth, this.rowHeight);
 
         // Price column
         this.offscreenCtx.fillStyle = this.colors.priceBackground;
-        this.offscreenCtx.fillRect(COL_WIDTH * priceCol, y, COL_WIDTH, this.rowHeight);
+        this.offscreenCtx.fillRect(cols.priceX, y, this.priceColWidth, this.rowHeight);
 
         // Ask qty column
         this.offscreenCtx.fillStyle = this.colors.askQtyBackground;
-        this.offscreenCtx.fillRect(COL_WIDTH * askQtyCol, y, COL_WIDTH, this.rowHeight);
+        this.offscreenCtx.fillRect(cols.askQtyX, y, this.qtyColWidth, this.rowHeight);
     }
 
     private drawRowGridLines(rowIndex: number): void {
@@ -940,15 +1112,15 @@ export class CanvasRenderer {
         const y = rowIndex * this.rowHeight;
         const priceText = this.formatPrice(price);
 
-        // Calculate price column index
-        const priceCol = this.showOrderCount ? 2 : 1;
+        // Get column positions
+        const cols = this.getColumnPositions();
 
         // Set text style
         this.offscreenCtx.fillStyle = this.colors.text;
         this.offscreenCtx.textAlign = 'center';
 
         // Render price only
-        this.offscreenCtx.fillText(priceText, COL_WIDTH * (priceCol + 0.5), y + this.rowHeight / 2);
+        this.offscreenCtx.fillText(priceText, cols.priceX + this.priceColWidth / 2, y + this.rowHeight / 2);
     }
 
     /**
@@ -956,18 +1128,11 @@ export class CanvasRenderer {
      */
     private renderDataOverlay(rowIndex: number, level: BookLevel, orders?: Order[]): void {
         const y = rowIndex * this.rowHeight;
-        const qtyText = level.quantity.toLocaleString();
+        const qtyText = this.formatQuantity(level.quantity);
         const ordersText = `(${level.numOrders})`;
 
-        // Calculate column indices
-        const bidOrderCol = this.showOrderCount ? 0 : -1;
-        const bidQtyCol = this.showOrderCount ? 1 : 0;
-        const askQtyCol = this.showOrderCount ? 3 : 2;
-        const askOrderCol = this.showOrderCount ? 4 : -1;
-
-        let columnCount = 3;
-        if (this.showOrderCount) columnCount += 2;
-        const barCol = columnCount;
+        // Get column positions
+        const cols = this.getColumnPositions();
 
         const maxQty = this.showVolumeBars ? this.calculateMaxQuantity() : 0;
         const BAR_MAX_WIDTH = (COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER) - 5;
@@ -981,12 +1146,12 @@ export class CanvasRenderer {
             // BID: render bid_order_count, bid_qty, and bars
 
             // bid_order_count (if enabled)
-            if (bidOrderCol >= 0) {
-                this.offscreenCtx.fillText(ordersText, COL_WIDTH * (bidOrderCol + 0.5), y + this.rowHeight / 2);
+            if (cols.bidOrderX >= 0) {
+                this.offscreenCtx.fillText(ordersText, cols.bidOrderX + COL_WIDTH / 2, y + this.rowHeight / 2);
             }
 
             // bid_qty
-            this.offscreenCtx.fillText(qtyText, COL_WIDTH * (bidQtyCol + 0.5), y + this.rowHeight / 2);
+            this.offscreenCtx.fillText(qtyText, cols.bidQtyX + this.qtyColWidth / 2, y + this.rowHeight / 2);
 
             // bars (if enabled)
             if (this.showVolumeBars) {
@@ -996,18 +1161,18 @@ export class CanvasRenderer {
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.bidBar;
-                    this.offscreenCtx.fillRect(COL_WIDTH * barCol, y + 4, barWidth, this.rowHeight - 8);
+                    this.offscreenCtx.fillRect(cols.barX, y + 4, barWidth, this.rowHeight - 8);
                 }
             }
         } else {
             // ASK: render ask_qty, ask_order_count, and bars
 
             // ask_qty
-            this.offscreenCtx.fillText(qtyText, COL_WIDTH * (askQtyCol + 0.5), y + this.rowHeight / 2);
+            this.offscreenCtx.fillText(qtyText, cols.askQtyX + this.qtyColWidth / 2, y + this.rowHeight / 2);
 
             // ask_order_count (if enabled)
-            if (askOrderCol >= 0) {
-                this.offscreenCtx.fillText(ordersText, COL_WIDTH * (askOrderCol + 0.5), y + this.rowHeight / 2);
+            if (cols.askOrderX >= 0) {
+                this.offscreenCtx.fillText(ordersText, cols.askOrderX + COL_WIDTH / 2, y + this.rowHeight / 2);
             }
 
             // bars (if enabled)
@@ -1018,7 +1183,7 @@ export class CanvasRenderer {
                 } else if (barWidth > 0) {
                     // PriceLevel mode: Draw single aggregated bar
                     this.offscreenCtx.fillStyle = this.colors.askBar;
-                    this.offscreenCtx.fillRect(COL_WIDTH * barCol, y + 4, barWidth, this.rowHeight - 8);
+                    this.offscreenCtx.fillRect(cols.barX, y + 4, barWidth, this.rowHeight - 8);
                 }
             }
         }
@@ -1040,7 +1205,8 @@ export class CanvasRenderer {
         // Calculate segment widths without minimum constraint
         const pixelsPerUnit = this.segmentState.basePixelsPerUnit * this.segmentState.userScaleFactor;
         const scrollOffset = this.segmentState.horizontalScrollOffset;
-        const barStartX = this.showOrderCount ? COL_WIDTH * 5 : COL_WIDTH * 3;
+        const cols = this.getColumnPositions();
+        const barStartX = cols.barX;
         const minQty = this.mboOrderSizeFilter;
 
         // Same height as single bar (with padding)
@@ -1088,8 +1254,8 @@ export class CanvasRenderer {
                 this.offscreenCtx.fillStyle = fillColor;
                 this.offscreenCtx.fillRect(visibleStartX, y + 4, visibleWidth, barHeight);
 
-                // Draw exact quantity text (no K/M formatting)
-                const qtyText = order.quantity.toLocaleString(); // e.g., "1,234,567"
+                // Draw exact quantity text with appropriate decimal precision
+                const qtyText = this.formatQuantity(order.quantity);
                 this.offscreenCtx.font = '10px monospace';
                 const textWidth = this.offscreenCtx.measureText(qtyText).width;
 
@@ -1430,6 +1596,9 @@ export class CanvasRenderer {
         this.height = height;
         this.visibleRows = Math.floor(height / this.rowHeight);
 
+        // Recalculate bar column width based on new width
+        this.barColumnWidth = this.calculateBarColumnWidth();
+
         this.canvas.width = width;
         this.canvas.height = height;
         this.canvas.style.width = `${width}px`;
@@ -1587,8 +1756,21 @@ export class CanvasRenderer {
      * Calculate canvas width based on enabled features
      */
     private calculateCanvasWidth(): number {
-        const dataColumns = this.showOrderCount ? 5 : 3;
+        // Order count column width (fixed)
+        const orderColWidth = this.showOrderCount ? COL_WIDTH : 0;
+
+        // Two quantity columns (bid and ask) with dynamic width
+        const qtyColumnsWidth = 2 * this.qtyColWidth;
+
+        // Price column with dynamic width
+        const priceColWidth = this.priceColWidth;
+
+        // Two order count columns (bid and ask) if enabled
+        const orderCountColumnsWidth = this.showOrderCount ? (2 * orderColWidth) : 0;
+
+        // Volume bar column
         const barWidth = this.showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
-        return Math.round((dataColumns * COL_WIDTH) + barWidth);
+
+        return Math.round(orderCountColumnsWidth + qtyColumnsWidth + priceColWidth + barWidth);
     }
 }

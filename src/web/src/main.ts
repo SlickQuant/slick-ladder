@@ -13,7 +13,8 @@ import {
     VOLUME_BAR_WIDTH_MULTIPLIER,
     DirtyLevelChange,
     MIN_BAR_COLUMN_WIDTH,
-    DEFAULT_MBO_ORDER_SIZE_FILTER
+    DEFAULT_MBO_ORDER_SIZE_FILTER,
+    DEFAULT_MIN_QUANTITY_THRESHOLD
 } from './types';
 import { MBOManager } from './mbo-manager';
 
@@ -78,6 +79,7 @@ export class PriceLadder {
             showVolumeBars,
             showOrderCount,
             mboOrderSizeFilter: Math.max(0, config.mboOrderSizeFilter ?? DEFAULT_MBO_ORDER_SIZE_FILTER),
+            minQuantityThreshold: config.minQuantityThreshold ?? DEFAULT_MIN_QUANTITY_THRESHOLD,
             removalMode: config.removalMode || 'removeRow',
             colors: config.colors || DEFAULT_COLORS,
             onTrade: config.onTrade || (() => {}),
@@ -108,7 +110,8 @@ export class PriceLadder {
             this.config.showVolumeBars,
             this.config.showOrderCount,
             this.config.tickSize,
-            this.config.mboOrderSizeFilter
+            this.config.mboOrderSizeFilter,
+            this.config.minQuantityThreshold
         );
 
         // Set removal mode from config
@@ -176,13 +179,15 @@ export class PriceLadder {
             return;
         }
 
+        // Round price to tick size to ensure consistent map keys
+        const roundedPrice = this.roundToTick(update.price);
         const map = update.side === Side.BID ? this.bids : this.asks;
-        const existed = map.has(update.price);
+        const existed = map.has(roundedPrice);
         let isAddition = false;
         let isRemoval = false;
 
         const level: BookLevel = {
-            price: update.price,
+            price: roundedPrice,
             quantity: update.quantity,
             numOrders: update.numOrders,
             side: update.side,
@@ -191,20 +196,25 @@ export class PriceLadder {
         };
 
         if (update.quantity > 0) {
-            map.set(update.price, level);
+            map.set(roundedPrice, level);
             if (!existed) {
                 isAddition = true;
                 this.hasStructuralChange = true;
             }
-        } else if (existed) {
-            map.delete(update.price);
-            isRemoval = true;
-            this.hasStructuralChange = true;
+        } else {
+            // Quantity is 0 - remove level if it exists
+            if (existed) {
+                console.log(`Removing ${update.side === Side.BID ? 'BID' : 'ASK'} level at price ${roundedPrice} (qty=0)`);
+                map.delete(roundedPrice);
+                isRemoval = true;
+                this.hasStructuralChange = true;
+            }
+            // If level didn't exist and quantity is 0, do nothing (correct behavior)
         }
 
         if (update.quantity > 0 || existed) {
             this.dirtyChanges.push({
-                price: update.price,
+                price: roundedPrice,
                 side: update.side,
                 isRemoval,
                 isAddition
@@ -298,10 +308,13 @@ export class PriceLadder {
             };
         }
 
+        // Filter out zero quantities only (not below threshold - those will be displayed as "<threshold")
         const sortedBids = Array.from(this.bids.values())
+            .filter(level => level.quantity > 0)
             .sort((a, b) => a.price - b.price);
 
         const sortedAsks = Array.from(this.asks.values())
+            .filter(level => level.quantity > 0)
             .sort((a, b) => a.price - b.price);
 
         const bestBid = sortedBids.length > 0 ? sortedBids[sortedBids.length - 1].price : null;
@@ -461,7 +474,8 @@ export class PriceLadder {
             this.config.showVolumeBars,
             this.config.showOrderCount,
             this.config.tickSize,
-            this.config.mboOrderSizeFilter
+            this.config.mboOrderSizeFilter,
+            this.config.minQuantityThreshold
         );
 
         // Update interaction handler with new renderer
@@ -491,7 +505,8 @@ export class PriceLadder {
             this.config.showVolumeBars,
             this.config.showOrderCount,
             this.config.tickSize,
-            this.config.mboOrderSizeFilter
+            this.config.mboOrderSizeFilter,
+            this.config.minQuantityThreshold
         );
 
         // Update interaction handler with new renderer

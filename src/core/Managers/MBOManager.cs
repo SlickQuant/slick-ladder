@@ -278,7 +278,7 @@ public class OrderLevel
     public decimal Price { get; }
     public Side Side { get; }
     public SortedArray<long, Order> Orders { get; }
-    public long TotalQuantity { get; set; }
+    public decimal TotalQuantity { get; set; }
     public int OrderCount { get; set; }
     public bool IsDirty { get; set; }
 
@@ -336,11 +336,11 @@ public class OrderLevel
 public struct Order
 {
     public long OrderId;
-    public long Quantity;
+    public decimal Quantity;
     public long Priority;
     public bool IsOwnOrder;
 
-    public Order(long orderId, long quantity, long priority, bool isOwnOrder = false)
+    public Order(long orderId, decimal quantity, long priority, bool isOwnOrder = false)
     {
         OrderId = orderId;
         Quantity = quantity;

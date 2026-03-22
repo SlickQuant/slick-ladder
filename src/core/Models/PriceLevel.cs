@@ -11,10 +11,10 @@ public struct PriceLevel
 {
     public Side Side;
     public decimal Price;
-    public long Quantity;
+    public decimal Quantity;
     public int NumOrders;
 
-    public PriceLevel(Side side, decimal price, long quantity, int numOrders)
+    public PriceLevel(Side side, decimal price, decimal quantity, int numOrders)
     {
         Side = side;
         Price = price;

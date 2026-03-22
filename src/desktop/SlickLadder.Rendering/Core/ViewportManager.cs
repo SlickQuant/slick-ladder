@@ -13,18 +13,36 @@ public class ViewportManager
 
     // Column layout (MUST match web version exactly!)
     // Order: Bid Order Count | Bid Qty | Price | Ask Qty | Ask Order Count | Volume Bars
-    public float ColumnWidth => RenderConfig.ColumnWidth;
+    // Dynamic quantity column width (default to standard column width)
+    public float QtyColWidth { get; set; } = RenderConfig.ColumnWidth;
+    // Dynamic price column width (default to standard column width)
+    public float PriceColWidth { get; set; } = RenderConfig.ColumnWidth;
 
     // Column X positions (calculated dynamically based on ShowOrderCount)
     private int ColumnCount => ShowOrderCount ? 5 : 3; // 5 columns with order count, 3 without
 
     public float BidOrderCountColumnX => 0; // Always column 0
-    public float BidQtyColumnX => ShowOrderCount ? ColumnWidth : 0;
-    public float PriceColumnX => ShowOrderCount ? ColumnWidth * 2 : ColumnWidth;
-    public float AskQtyColumnX => ShowOrderCount ? ColumnWidth * 3 : ColumnWidth * 2;
-    public float AskOrderCountColumnX => ColumnWidth * 4; // Always column 4
+    public float BidQtyColumnX => ShowOrderCount ? RenderConfig.ColumnWidth : 0;
+    public float PriceColumnX => ShowOrderCount ? RenderConfig.ColumnWidth + QtyColWidth : QtyColWidth;
+    public float AskQtyColumnX => ShowOrderCount ? RenderConfig.ColumnWidth + QtyColWidth + PriceColWidth : QtyColWidth + PriceColWidth;
+    public float AskOrderCountColumnX => RenderConfig.ColumnWidth + QtyColWidth + PriceColWidth + QtyColWidth; // After ask qty
 
-    public float? VolumeBarColumnX => ShowVolumeBars ? ColumnWidth * ColumnCount : null;
+    public float? VolumeBarColumnX => ShowVolumeBars ? GetFixedColumnsWidth() : null;
+
+    private float GetFixedColumnsWidth()
+    {
+        // Calculate total width of all fixed columns
+        if (ShowOrderCount)
+        {
+            // Bid Order Count (fixed) + Bid Qty (dynamic) + Price (dynamic) + Ask Qty (dynamic) + Ask Order Count (fixed)
+            return RenderConfig.ColumnWidth + QtyColWidth + PriceColWidth + QtyColWidth + RenderConfig.ColumnWidth;
+        }
+        else
+        {
+            // Bid Qty (dynamic) + Price (dynamic) + Ask Qty (dynamic)
+            return QtyColWidth + PriceColWidth + QtyColWidth;
+        }
+    }
 
     // Responsive bar column width: fills remaining canvas width (min 100px)
     public float VolumeBarMaxWidth
@@ -32,7 +50,7 @@ public class ViewportManager
         get
         {
             if (!ShowVolumeBars) return 0;
-            var fixedColumnsWidth = ColumnWidth * ColumnCount;
+            var fixedColumnsWidth = GetFixedColumnsWidth();
             var barColumnWidth = Math.Max(RenderConfig.MinBarColumnWidth, Width - fixedColumnsWidth);
             return barColumnWidth;
         }

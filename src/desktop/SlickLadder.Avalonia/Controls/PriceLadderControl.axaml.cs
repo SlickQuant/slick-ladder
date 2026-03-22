@@ -211,7 +211,7 @@ public partial class PriceLadderControl : UserControl
             }
 
             // Use viewport's column X positions (respects ShowOrderCount setting)
-            var columnWidth = _parent._viewport.ColumnWidth;
+            var columnWidth = _parent._viewport.QtyColWidth;
             var bidQtyColumnX = _parent._viewport.BidQtyColumnX;
             var askQtyColumnX = _parent._viewport.AskQtyColumnX;
 

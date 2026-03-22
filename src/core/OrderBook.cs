@@ -73,7 +73,7 @@ public class OrderBook
     /// Update or add a price level. O(log n) lookup + O(1) or O(n) insert.
     /// Marks the level as dirty for incremental rendering.
     /// </summary>
-    public void UpdateLevel(decimal price, long quantity, int numOrders, Side side)
+    public void UpdateLevel(decimal price, decimal quantity, int numOrders, Side side)
     {
         var level = new BookLevel(price, quantity, numOrders, side);
         level.IsDirty = true;

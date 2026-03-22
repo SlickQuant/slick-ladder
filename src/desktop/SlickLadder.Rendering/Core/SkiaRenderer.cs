@@ -118,6 +118,17 @@ public class SkiaRenderer : IDisposable
         EnsureCache(viewport.Width, viewport.Height);
         var targetCanvas = _cachedSurface!.Canvas;
 
+        // Calculate dynamic quantity column width based on maximum quantity
+        var newQtyColWidth = CalculateQuantityColumnWidth(snapshot);
+        var newPriceColWidth = CalculatePriceColumnWidth(snapshot);
+
+        if (Math.Abs(viewport.QtyColWidth - newQtyColWidth) > 0.5f || Math.Abs(viewport.PriceColWidth - newPriceColWidth) > 0.5f)
+        {
+            viewport.QtyColWidth = newQtyColWidth;
+            viewport.PriceColWidth = newPriceColWidth;
+            _needsFullRedraw = true; // Force full redraw when column widths change
+        }
+
         // Recalculate base scale if order quantities changed
         CalculateBaseScale(snapshot);
 
@@ -125,11 +136,11 @@ public class SkiaRenderer : IDisposable
         RecalculateMaxScroll(snapshot, viewport);
 
         // Calculate max volume for proportional bars
-        var maxVolume = 0L;
+        var maxVolume = 0m;
         if (viewport.ShowVolumeBars)
         {
-            var maxBid = snapshot.Bids.Length > 0 ? snapshot.Bids.Max(b => b.Quantity) : 0L;
-            var maxAsk = snapshot.Asks.Length > 0 ? snapshot.Asks.Max(a => a.Quantity) : 0L;
+            var maxBid = snapshot.Bids.Length > 0 ? snapshot.Bids.Max(b => b.Quantity) : 0m;
+            var maxAsk = snapshot.Asks.Length > 0 ? snapshot.Asks.Max(a => a.Quantity) : 0m;
             maxVolume = Math.Max(maxBid, maxAsk);
         }
 
@@ -184,26 +195,26 @@ public class SkiaRenderer : IDisposable
         {
             canvas.DrawRect(
                 viewport.BidOrderCountColumnX, 0,
-                viewport.ColumnWidth, viewport.Height,
+                RenderConfig.ColumnWidth, viewport.Height,
                 _orderCountBackgroundPaint);
         }
 
-        // Bid quantity column (blue background)
+        // Bid quantity column (blue background) - uses dynamic width
         canvas.DrawRect(
             viewport.BidQtyColumnX, 0,
-            viewport.ColumnWidth, viewport.Height,
+            viewport.QtyColWidth, viewport.Height,
             _bidBackgroundPaint);
 
-        // Price column (gray background)
+        // Price column (gray background) - uses dynamic width
         canvas.DrawRect(
             viewport.PriceColumnX, 0,
-            viewport.ColumnWidth, viewport.Height,
+            viewport.PriceColWidth, viewport.Height,
             _priceBackgroundPaint);
 
-        // Ask quantity column (red background)
+        // Ask quantity column (red background) - uses dynamic width
         canvas.DrawRect(
             viewport.AskQtyColumnX, 0,
-            viewport.ColumnWidth, viewport.Height,
+            viewport.QtyColWidth, viewport.Height,
             _askBackgroundPaint);
 
         // Ask order count column (darker background to match web - NOT the same as ask qty)
@@ -211,7 +222,7 @@ public class SkiaRenderer : IDisposable
         {
             canvas.DrawRect(
                 viewport.AskOrderCountColumnX, 0,
-                viewport.ColumnWidth, viewport.Height,
+                RenderConfig.ColumnWidth, viewport.Height,
                 _orderCountBackgroundPaint);
         }
     }
@@ -224,30 +235,30 @@ public class SkiaRenderer : IDisposable
         {
             canvas.DrawRect(
                 viewport.BidOrderCountColumnX, y,
-                viewport.ColumnWidth, RenderConfig.RowHeight,
+                RenderConfig.ColumnWidth, RenderConfig.RowHeight,
                 _orderCountBackgroundPaint);
         }
 
         canvas.DrawRect(
             viewport.BidQtyColumnX, y,
-            viewport.ColumnWidth, RenderConfig.RowHeight,
+            viewport.QtyColWidth, RenderConfig.RowHeight,
             _bidBackgroundPaint);
 
         canvas.DrawRect(
             viewport.PriceColumnX, y,
-            viewport.ColumnWidth, RenderConfig.RowHeight,
+            viewport.PriceColWidth, RenderConfig.RowHeight,
             _priceBackgroundPaint);
 
         canvas.DrawRect(
             viewport.AskQtyColumnX, y,
-            viewport.ColumnWidth, RenderConfig.RowHeight,
+            viewport.QtyColWidth, RenderConfig.RowHeight,
             _askBackgroundPaint);
 
         if (viewport.ShowOrderCount)
         {
             canvas.DrawRect(
                 viewport.AskOrderCountColumnX, y,
-                viewport.ColumnWidth, RenderConfig.RowHeight,
+                RenderConfig.ColumnWidth, RenderConfig.RowHeight,
                 _orderCountBackgroundPaint);
         }
     }
@@ -260,6 +271,88 @@ public class SkiaRenderer : IDisposable
         {
             canvas.DrawLine(0, bottomY, viewport.Width, bottomY, _gridLinePaint);
         }
+    }
+
+    /// <summary>
+    /// Calculate dynamic quantity column width based on maximum quantity in snapshot
+    /// Mirrors TypeScript calculateQuantityColumnWidth() in canvas-renderer.ts
+    /// </summary>
+    private float CalculateQuantityColumnWidth(OrderBookSnapshot snapshot)
+    {
+        // Find the maximum quantity across all levels
+        decimal maxQty = 0;
+        foreach (var level in snapshot.Bids)
+        {
+            if (level.Quantity > maxQty)
+            {
+                maxQty = level.Quantity;
+            }
+        }
+        foreach (var level in snapshot.Asks)
+        {
+            if (level.Quantity > maxQty)
+            {
+                maxQty = level.Quantity;
+            }
+        }
+
+        if (maxQty == 0)
+        {
+            return RenderConfig.ColumnWidth;
+        }
+
+        // Format quantity (trim trailing zeros for decimals, use N0 for integers)
+        var maxQtyText = maxQty % 1 == 0
+            ? maxQty.ToString("N0")  // Integer: use thousands separators
+            : maxQty.ToString("0.################").TrimEnd('0').TrimEnd('.');  // Decimal: trim trailing zeros
+
+        // Measure text width
+        var textWidth = _textPaint.MeasureText(maxQtyText);
+
+        // Add padding (10px each side)
+        var requiredWidth = textWidth + 20;
+
+        // Return max of standard column width or required width
+        return Math.Max(RenderConfig.ColumnWidth, (float)Math.Ceiling(requiredWidth));
+    }
+
+    /// <summary>
+    /// Calculate dynamic price column width based on price values
+    /// Mirrors TypeScript calculatePriceColumnWidth() in canvas-renderer.ts
+    /// </summary>
+    private float CalculatePriceColumnWidth(OrderBookSnapshot snapshot)
+    {
+        // Find the maximum and minimum prices to determine max digits
+        decimal maxPrice = 0;
+        decimal minPrice = decimal.MaxValue;
+
+        foreach (var level in snapshot.Bids)
+        {
+            if (level.Price > maxPrice) maxPrice = level.Price;
+            if (level.Price < minPrice) minPrice = level.Price;
+        }
+        foreach (var level in snapshot.Asks)
+        {
+            if (level.Price > maxPrice) maxPrice = level.Price;
+            if (level.Price < minPrice) minPrice = level.Price;
+        }
+
+        if (maxPrice == 0 || minPrice == decimal.MaxValue)
+        {
+            return RenderConfig.ColumnWidth;
+        }
+
+        // Format the maximum price to get its text width
+        var maxPriceText = FormatPrice(maxPrice);
+
+        // Measure text width
+        var textWidth = _textPaint.MeasureText(maxPriceText);
+
+        // Add padding (10px each side)
+        var requiredWidth = textWidth + 20;
+
+        // Return max of standard column width or required width
+        return Math.Max(RenderConfig.ColumnWidth, (float)Math.Ceiling(requiredWidth));
     }
 
     private void EnsureCache(int width, int height)
@@ -325,7 +418,7 @@ public class SkiaRenderer : IDisposable
         SKCanvas canvas,
         OrderBookSnapshot snapshot,
         ViewportManager viewport,
-        long maxVolume,
+        decimal maxVolume,
         int visibleRows,
         int midRow,
         decimal tickSize,
@@ -386,7 +479,7 @@ public class SkiaRenderer : IDisposable
 
                 canvas.DrawText(
                     price.ToString("F2"),
-                    viewport.PriceColumnX + (viewport.ColumnWidth / 2),
+                    viewport.PriceColumnX + (viewport.PriceColWidth / 2),
                     textY,
                     _textPaint);
             }
@@ -431,7 +524,7 @@ public class SkiaRenderer : IDisposable
         SKCanvas canvas,
         OrderBookSnapshot snapshot,
         ViewportManager viewport,
-        long maxVolume,
+        decimal maxVolume,
         int visibleRows,
         int midRow,
         decimal tickSize,
@@ -599,7 +692,7 @@ public class SkiaRenderer : IDisposable
         SKCanvas canvas,
         OrderBookSnapshot snapshot,
         ViewportManager viewport,
-        long maxVolume,
+        decimal maxVolume,
         int rowIndex,
         float y,
         int midRow,
@@ -613,7 +706,7 @@ public class SkiaRenderer : IDisposable
         var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
         canvas.DrawText(
             price.ToString("F2"),
-            viewport.PriceColumnX + (viewport.ColumnWidth / 2),
+            viewport.PriceColumnX + (RenderConfig.ColumnWidth / 2),
             textY,
             _textPaint);
 
@@ -873,7 +966,7 @@ public class SkiaRenderer : IDisposable
         Order[] orders,
         Side side,
         ViewportManager viewport,
-        long maxVolume,
+        decimal maxVolume,
         float y)
     {
         if (orders == null || orders.Length == 0 || !viewport.ShowVolumeBars || !viewport.VolumeBarColumnX.HasValue)
@@ -908,7 +1001,7 @@ public class SkiaRenderer : IDisposable
             }
 
             // Calculate proportional width (no min constraint)
-            var segmentWidth = order.Quantity * pixelsPerUnit;
+            var segmentWidth = (double)(double)order.Quantity * pixelsPerUnit;
 
             // Apply minimum rendering width
             var renderWidth = (float)Math.Max(RenderConfig.MinSegmentWidthPx, segmentWidth);
@@ -929,7 +1022,7 @@ public class SkiaRenderer : IDisposable
                 canvas.DrawRect(visibleStartX, y + 4, visibleWidth, barHeight, paint);
 
                 // Draw exact quantity text (no K/M formatting)
-                var qtyText = order.Quantity.ToString("N0");  // e.g., "1,234,567"
+                var qtyText = FormatQuantity(order.Quantity);
                 var textWidth = _segmentTextPaint.MeasureText(qtyText);
 
                 // Only draw text if segment is wide enough and text is in visible area
@@ -959,7 +1052,52 @@ public class SkiaRenderer : IDisposable
         canvas.Restore();
     }
 
-    private void DrawBidLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)
+    /// <summary>
+    /// Format quantity for display (smart formatting: integers with commas, decimals with trimmed zeros)
+    /// </summary>
+    private string FormatQuantity(decimal quantity)
+    {
+        // If quantity is below threshold, show "<threshold" instead
+        if (quantity > 0 && quantity < _config.MinQuantityThreshold)
+        {
+            var decimalPlaces = GetDecimalPlaces(_config.MinQuantityThreshold);
+            if (decimalPlaces == 0)
+            {
+                return $"<{_config.MinQuantityThreshold}";
+            }
+            return $"<{_config.MinQuantityThreshold.ToString($"F{decimalPlaces}")}";
+        }
+
+        if (quantity % 1 == 0)
+        {
+            // Integer: use thousands separator (e.g., "1,234")
+            return quantity.ToString("N0");
+        }
+        else
+        {
+            // Decimal: show decimal places, trim trailing zeros (e.g., "123.45")
+            return quantity.ToString("0.################").TrimEnd('0').TrimEnd('.');
+        }
+    }
+
+    private string FormatPrice(decimal price)
+    {
+        // Format price with 2 decimal places (standard for prices)
+        return price.ToString("F2");
+    }
+
+    private int GetDecimalPlaces(decimal threshold)
+    {
+        if (threshold >= 1.0m) return 0;
+        var str = threshold.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var dotIndex = str.IndexOf('.');
+        if (dotIndex == -1) return 0;
+
+        var fractionalPart = str.Substring(dotIndex + 1).TrimEnd('0');
+        return fractionalPart.Length;
+    }
+
+    private void DrawBidLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null)
     {
         // Calculate text baseline (centered vertically in row)
         var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
@@ -974,17 +1112,17 @@ public class SkiaRenderer : IDisposable
         {
             canvas.DrawText(
                 $"({level.NumOrders})",
-                viewport.BidOrderCountColumnX + (viewport.ColumnWidth / 2),
+                viewport.BidOrderCountColumnX + (RenderConfig.ColumnWidth / 2),
                 textY,
                 _textPaint);
         }
 
-        // Bid quantity (skip if empty)
+        // Bid quantity (skip if empty) - uses dynamic width
         if (!isEmpty)
         {
             canvas.DrawText(
-                level.Quantity.ToString("N0"),
-                viewport.BidQtyColumnX + (viewport.ColumnWidth / 2),
+                FormatQuantity(level.Quantity),
+                viewport.BidQtyColumnX + (viewport.QtyColWidth / 2),
                 textY,
                 _textPaint);
         }
@@ -992,7 +1130,7 @@ public class SkiaRenderer : IDisposable
         // Price (always show, even if empty)
         canvas.DrawText(
             level.Price.ToString("F2"),
-            viewport.PriceColumnX + (viewport.ColumnWidth / 2),
+            viewport.PriceColumnX + (RenderConfig.ColumnWidth / 2),
             textY,
             _textPaint);
 
@@ -1019,7 +1157,7 @@ public class SkiaRenderer : IDisposable
         }
     }
 
-    private void DrawAskLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)
+    private void DrawAskLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null)
     {
         // Calculate text baseline (centered vertically in row)
         var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
@@ -1032,16 +1170,16 @@ public class SkiaRenderer : IDisposable
         // Price (always show, even if empty)
         canvas.DrawText(
             level.Price.ToString("F2"),
-            viewport.PriceColumnX + (viewport.ColumnWidth / 2),
+            viewport.PriceColumnX + (RenderConfig.ColumnWidth / 2),
             textY,
             _textPaint);
 
-        // Ask quantity (skip if empty)
+        // Ask quantity (skip if empty) - uses dynamic width
         if (!isEmpty)
         {
             canvas.DrawText(
-                level.Quantity.ToString("N0"),
-                viewport.AskQtyColumnX + (viewport.ColumnWidth / 2),
+                FormatQuantity(level.Quantity),
+                viewport.AskQtyColumnX + (viewport.QtyColWidth / 2),
                 textY,
                 _textPaint);
         }
@@ -1051,7 +1189,7 @@ public class SkiaRenderer : IDisposable
         {
             canvas.DrawText(
                 $"({level.NumOrders})",
-                viewport.AskOrderCountColumnX + (viewport.ColumnWidth / 2),
+                viewport.AskOrderCountColumnX + (RenderConfig.ColumnWidth / 2),
                 textY,
                 _textPaint);
         }
@@ -1079,7 +1217,7 @@ public class SkiaRenderer : IDisposable
         }
     }
 
-    private void DrawBidLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)
+    private void DrawBidLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null)
     {
         // Draw only quantity data (price already drawn in Step 1)
         var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
@@ -1090,17 +1228,17 @@ public class SkiaRenderer : IDisposable
         {
             canvas.DrawText(
                 $"({level.NumOrders})",
-                viewport.BidOrderCountColumnX + (viewport.ColumnWidth / 2),
+                viewport.BidOrderCountColumnX + (RenderConfig.ColumnWidth / 2),
                 textY,
                 _textPaint);
         }
 
-        // Bid quantity (skip if empty)
+        // Bid quantity (skip if empty) - uses dynamic width
         if (!isEmpty)
         {
             canvas.DrawText(
-                level.Quantity.ToString("N0"),
-                viewport.BidQtyColumnX + (viewport.ColumnWidth / 2),
+                FormatQuantity(level.Quantity),
+                viewport.BidQtyColumnX + (viewport.QtyColWidth / 2),
                 textY,
                 _textPaint);
         }
@@ -1128,18 +1266,18 @@ public class SkiaRenderer : IDisposable
         }
     }
 
-    private void DrawAskLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, long maxVolume, float y, Order[]? orders = null)
+    private void DrawAskLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null)
     {
         // Draw only quantity data (price already drawn in Step 1)
         var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
         var isEmpty = level.Quantity == 0;
 
-        // Ask quantity (skip if empty)
+        // Ask quantity (skip if empty) - uses dynamic width
         if (!isEmpty)
         {
             canvas.DrawText(
-                level.Quantity.ToString("N0"),
-                viewport.AskQtyColumnX + (viewport.ColumnWidth / 2),
+                FormatQuantity(level.Quantity),
+                viewport.AskQtyColumnX + (viewport.QtyColWidth / 2),
                 textY,
                 _textPaint);
         }
@@ -1149,7 +1287,7 @@ public class SkiaRenderer : IDisposable
         {
             canvas.DrawText(
                 $"({level.NumOrders})",
-                viewport.AskOrderCountColumnX + (viewport.ColumnWidth / 2),
+                viewport.AskOrderCountColumnX + (RenderConfig.ColumnWidth / 2),
                 textY,
                 _textPaint);
         }
@@ -1183,10 +1321,10 @@ public class SkiaRenderer : IDisposable
         canvas.DrawRect(0, y, viewport.Width, RenderConfig.RowHeight, _highlightPaint);
     }
 
-    private float CalculateVolumeBarWidth(long quantity, long maxVolume, float maxWidth)
+    private float CalculateVolumeBarWidth(decimal quantity, decimal maxVolume, float maxWidth)
     {
         if (maxVolume == 0) return 0;
-        return (float)quantity / maxVolume * maxWidth;
+        return (float)(quantity / maxVolume) * maxWidth;
     }
 
     /// <summary>
@@ -1195,7 +1333,7 @@ public class SkiaRenderer : IDisposable
     /// </summary>
     private void CalculateBaseScale(OrderBookSnapshot snapshot)
     {
-        long maxOrderQty = 0;
+        decimal maxOrderQty = 0;
 
         var minQty = _config.MboOrderSizeFilter;
 
@@ -1233,7 +1371,7 @@ public class SkiaRenderer : IDisposable
 
         if (maxOrderQty > 0)
         {
-            var newBaseScale = (double)RenderConfig.TargetMaxSegmentWidth / maxOrderQty;
+            var newBaseScale = (double)RenderConfig.TargetMaxSegmentWidth / (double)maxOrderQty;
 
             var changeRatio = Math.Abs(newBaseScale - _segmentState.BasePixelsPerUnit)
                              / _segmentState.BasePixelsPerUnit;
@@ -1269,7 +1407,7 @@ public class SkiaRenderer : IDisposable
                     {
                         continue;
                     }
-                    totalWidth += (order.Quantity * pixelsPerUnit) + RenderConfig.SegmentGapPx;
+                    totalWidth += ((double)order.Quantity * pixelsPerUnit) + RenderConfig.SegmentGapPx;
                 }
                 maxWidth = Math.Max(maxWidth, totalWidth);
             }
@@ -1286,7 +1424,7 @@ public class SkiaRenderer : IDisposable
                     {
                         continue;
                     }
-                    totalWidth += (order.Quantity * pixelsPerUnit) + RenderConfig.SegmentGapPx;
+                    totalWidth += ((double)order.Quantity * pixelsPerUnit) + RenderConfig.SegmentGapPx;
                 }
                 maxWidth = Math.Max(maxWidth, totalWidth);
             }

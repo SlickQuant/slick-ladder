@@ -12,11 +12,11 @@ public struct OrderUpdate
     public long OrderId;
     public Side Side;
     public decimal Price;
-    public long Quantity;
+    public decimal Quantity;
     public long Priority;
     public bool IsOwnOrder;
 
-    public OrderUpdate(long orderId, Side side, decimal price, long quantity, long priority, bool isOwnOrder = false)
+    public OrderUpdate(long orderId, Side side, decimal price, decimal quantity, long priority, bool isOwnOrder = false)
     {
         OrderId = orderId;
         Side = side;
