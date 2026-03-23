@@ -177,11 +177,12 @@ export class CanvasRenderer {
             return quantity.toLocaleString('en-US', { maximumFractionDigits: 0 });
         }
 
-        // Decimal: show decimal places, trim trailing zeros (e.g., "123.45")
-        // Use toLocaleString with sufficient precision, then manually trim trailing zeros
+        // Decimal: show decimal places based on minQuantityThreshold precision, trim trailing zeros
+        // Use the threshold to determine maximum precision
+        const maxDecimalPlaces = this.getDecimalPlaces(this.minQuantityThreshold);
         const formatted = quantity.toLocaleString('en-US', {
             minimumFractionDigits: 0,
-            maximumFractionDigits: 8,  // Reasonable precision limit
+            maximumFractionDigits: maxDecimalPlaces,
             useGrouping: false  // No thousands separator for decimals to simplify trimming
         });
 
@@ -796,8 +797,8 @@ export class CanvasRenderer {
 
     private buildDensePackingLayout(snapshot: OrderBookSnapshot): DensePackingLayout {
         // Filter out levels with 0 or near-zero quantity to ensure they're never rendered in removeRow mode
-        const nonEmptyAsks = snapshot.asks.filter(l => l.quantity >= this.minQuantityThreshold);
-        const nonEmptyBids = snapshot.bids.filter(l => l.quantity >= this.minQuantityThreshold);
+        const nonEmptyAsks = snapshot.asks.filter(l => l.quantity > 0);
+        const nonEmptyBids = snapshot.bids.filter(l => l.quantity > 0);
         const midRow = Math.floor(this.visibleRows / 2);
         const totalLevels = nonEmptyAsks.length + nonEmptyBids.length;
 

@@ -204,7 +204,7 @@ export class PriceLadder {
         } else {
             // Quantity is 0 - remove level if it exists
             if (existed) {
-                console.log(`Removing ${update.side === Side.BID ? 'BID' : 'ASK'} level at price ${roundedPrice} (qty=0)`);
+                // console.log(`Removing ${update.side === Side.BID ? 'BID' : 'ASK'} level at price ${roundedPrice} (qty=0)`);
                 map.delete(roundedPrice);
                 isRemoval = true;
                 this.hasStructuralChange = true;
