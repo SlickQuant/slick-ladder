@@ -6,6 +6,7 @@ on:
       - 'v*.*.*'  # Triggers on version tags like v0.1.1, v1.0.0, etc.
 
 permissions:
+  id-token: write
   contents: write  # Required for creating releases
 
 jobs:
@@ -257,6 +258,10 @@ jobs:
 
           if [ $STATUS -ne 0 ] && echo "$OUTPUT" | grep -q "npm error code E404"; then
             echo "::error::npm publish returned E404. For @slickquant scoped packages, this usually means the token user does not have read/write access to the package or scope, or the token lacks package write and bypass-2FA permissions."
+          fi
+
+          if [ $STATUS -ne 0 ] && echo "$OUTPUT" | grep -q "npm error code EOTP"; then
+            echo "::error::npm publish returned EOTP. The token authenticated successfully, but npm requires 2FA for publishing. Use a granular token with Bypass 2FA enabled, or switch this workflow to npm trusted publishing."
           fi
 
           exit $STATUS
