@@ -198,6 +198,13 @@ jobs:
           scope: '@slickquant'
           always-auth: true
 
+      - name: Validate NPM token is present
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::NPM_TOKEN is empty or unavailable to this workflow. Check the GitHub Actions secret configuration."
+            exit 1
+          fi
+
       - name: Verify NPM token identity
         run: npm whoami --registry=https://registry.npmjs.org/
 
