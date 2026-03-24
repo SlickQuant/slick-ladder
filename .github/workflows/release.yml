@@ -196,31 +196,45 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Download NPM package artifact
+        uses: actions/download-artifact@v4
         with:
-          dotnet-version: '8.0.x'
-          dotnet-quality: 'ga'
+          name: npm-package
+          path: artifacts/npm-package
 
-      - name: Create global.json to force SDK 8.0
+      - name: Resolve package metadata
+        id: package
         run: |
-          cat > global.json << 'EOF'
-          {
-            "sdk": {
-              "version": "8.0.100",
-              "rollForward": "latestFeature"
-            }
-          }
-          EOF
+          PACKAGE_NAME=$(node -p "require('./src/web/package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./src/web/package.json').version")
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
 
-      - name: Verify .NET version
-        run: dotnet --version
+          if [ "$PACKAGE_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag version v${TAG_VERSION} does not match src/web/package.json version ${PACKAGE_VERSION}"
+            exit 1
+          fi
 
-      - name: Install .NET WASM workload
-        run: dotnet workload install wasm-tools
+          mapfile -t TARBALLS < <(find artifacts/npm-package -maxdepth 1 -name '*.tgz' | sort)
+          if [ "${#TARBALLS[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one npm tarball in artifacts/npm-package, found ${#TARBALLS[@]}"
+            printf '%s\n' "${TARBALLS[@]}"
+            exit 1
+          fi
 
-      - name: Install dependencies
-        run: npm ci
+          echo "package_name=${PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "package_version=${PACKAGE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tarball=${TARBALLS[0]}" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to NPM
-        run: npm run publish
+      - name: Check whether version already exists on NPM
+        id: npm-check
+        run: |
+          if npm view "${{ steps.package.outputs.package_name }}@${{ steps.package.outputs.package_version }}" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Package ${{ steps.package.outputs.package_name }}@${{ steps.package.outputs.package_version }} is already published. Skipping publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish tarball to NPM
+        if: steps.npm-check.outputs.exists != 'true'
+        run: npm publish "${{ steps.package.outputs.tarball }}" --access public

@@ -786,8 +786,26 @@ public class SkiaRenderer : IDisposable
         int visibleRows,
         int midRow)
     {
-        var nonEmptyAsks = snapshot.Asks.Where(l => l.Quantity > 0).ToArray();
-        var nonEmptyBids = snapshot.Bids.Where(l => l.Quantity > 0).ToArray();
+        // Filter out levels with 0 quantity and deduplicate by price (keep last occurrence with most recent state)
+        var askDict = new Dictionary<decimal, BookLevel>();
+        foreach (var level in snapshot.Asks)
+        {
+            if (level.Quantity > 0)
+            {
+                askDict[level.Price] = level;
+            }
+        }
+        var nonEmptyAsks = askDict.Values.ToArray();
+
+        var bidDict = new Dictionary<decimal, BookLevel>();
+        foreach (var level in snapshot.Bids)
+        {
+            if (level.Quantity > 0)
+            {
+                bidDict[level.Price] = level;
+            }
+        }
+        var nonEmptyBids = bidDict.Values.ToArray();
         var scrollOffset = viewport.DensePackingScrollOffset;
         var totalLevels = nonEmptyAsks.Length + nonEmptyBids.Length;
 

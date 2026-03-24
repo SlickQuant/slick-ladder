@@ -261,7 +261,14 @@ export class MBOManager {
      */
     getBidLevels(): BookLevel[] {
         const levels: BookLevel[] = [];
+        const seenPrices = new Set<number>();
         for (const [price, level] of this.bidLevels) {
+            // Safety check: skip if we've already seen this price (shouldn't happen with Map)
+            if (seenPrices.has(price)) {
+                console.warn(`Duplicate bid level detected at price ${price}`);
+                continue;
+            }
+            seenPrices.add(price);
             levels.push({
                 price: price,
                 quantity: level.totalQuantity,
@@ -280,7 +287,14 @@ export class MBOManager {
      */
     getAskLevels(): BookLevel[] {
         const levels: BookLevel[] = [];
+        const seenPrices = new Set<number>();
         for (const [price, level] of this.askLevels) {
+            // Safety check: skip if we've already seen this price (shouldn't happen with Map)
+            if (seenPrices.has(price)) {
+                console.warn(`Duplicate ask level detected at price ${price}`);
+                continue;
+            }
+            seenPrices.add(price);
             levels.push({
                 price: price,
                 quantity: level.totalQuantity,

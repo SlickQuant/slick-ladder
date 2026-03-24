@@ -797,8 +797,22 @@ export class CanvasRenderer {
 
     private buildDensePackingLayout(snapshot: OrderBookSnapshot): DensePackingLayout {
         // Filter out levels with 0 or near-zero quantity to ensure they're never rendered in removeRow mode
-        const nonEmptyAsks = snapshot.asks.filter(l => l.quantity > 0);
-        const nonEmptyBids = snapshot.bids.filter(l => l.quantity > 0);
+        // Also deduplicate by price (keep the last occurrence, which has the most recent state)
+        const askMap = new Map<number, BookLevel>();
+        for (const level of snapshot.asks) {
+            if (level.quantity > 0) {
+                askMap.set(level.price, level);
+            }
+        }
+        const nonEmptyAsks = Array.from(askMap.values());
+
+        const bidMap = new Map<number, BookLevel>();
+        for (const level of snapshot.bids) {
+            if (level.quantity > 0) {
+                bidMap.set(level.price, level);
+            }
+        }
+        const nonEmptyBids = Array.from(bidMap.values());
         const midRow = Math.floor(this.visibleRows / 2);
         const totalLevels = nonEmptyAsks.length + nonEmptyBids.length;
 
