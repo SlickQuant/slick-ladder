@@ -240,16 +240,40 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish tarball to NPM via trusted publishing
+      - name: Exchange GitHub OIDC token for npm publish token
         if: steps.npm-check.outputs.exists != 'true'
         run: |
-          set +e
-          OUTPUT=$(npm publish "${{ steps.package.outputs.tarball }}" --access public 2>&1)
-          STATUS=$?
-          echo "$OUTPUT"
+          set -euo pipefail
 
-          if [ $STATUS -ne 0 ] && echo "$OUTPUT" | grep -q "ENEEDAUTH\|Unable to authenticate"; then
-            echo "::error::Trusted publishing authentication failed. In npm package settings, add a GitHub Actions trusted publisher for repository SlickQuant/slick-ladder and workflow filename release.yml. npm requires an exact, case-sensitive match."
+          OIDC_RESPONSE=$(curl -sSf \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org")
+          OIDC_TOKEN=$(printf '%s' "$OIDC_RESPONSE" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).value")
+
+          ENCODED_PACKAGE_NAME=$(node -p "encodeURIComponent('${{ steps.package.outputs.package_name }}')")
+          EXCHANGE_RESPONSE=$(curl -sS -w '\n%{http_code}' -X POST \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${ENCODED_PACKAGE_NAME}")
+
+          EXCHANGE_BODY=$(printf '%s' "$EXCHANGE_RESPONSE" | sed '$d')
+          EXCHANGE_STATUS=$(printf '%s' "$EXCHANGE_RESPONSE" | tail -n 1)
+          echo "$EXCHANGE_BODY"
+
+          if [ "$EXCHANGE_STATUS" != "201" ]; then
+            if [ "$EXCHANGE_STATUS" = "404" ]; then
+              echo "::error::npm OIDC token exchange returned 404. This usually means the package trusted publisher is not configured correctly on npmjs.com for repository SlickQuant/slick-ladder and workflow filename release.yml, or npm CLI trusted publishing is hitting the current nested-package bug."
+            elif [ "$EXCHANGE_STATUS" = "401" ]; then
+              echo "::error::npm OIDC token exchange returned 401. Check that this job has id-token: write and is running on a GitHub-hosted runner."
+            else
+              echo "::error::npm OIDC token exchange failed with status ${EXCHANGE_STATUS}."
+            fi
+            exit 1
           fi
 
-          exit $STATUS
+          NPM_PUBLISH_TOKEN=$(printf '%s' "$EXCHANGE_BODY" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).token")
+          echo "::add-mask::${NPM_PUBLISH_TOKEN}"
+          echo "NODE_AUTH_TOKEN=${NPM_PUBLISH_TOKEN}" >> "$GITHUB_ENV"
+
+      - name: Publish tarball to NPM
+        if: steps.npm-check.outputs.exists != 'true'
+        run: npm publish "${{ steps.package.outputs.tarball }}" --access public
