@@ -186,28 +186,20 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     env:
       DOTNET_NOLOGO: 'true'
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
-          scope: '@slickquant'
-          always-auth: true
 
-      - name: Validate NPM token is present
+      - name: Verify runtime versions for trusted publishing
         run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::error::NPM_TOKEN is empty or unavailable to this workflow. Check the GitHub Actions secret configuration."
-            exit 1
-          fi
-
-      - name: Verify NPM token identity
-        run: npm whoami --registry=https://registry.npmjs.org/
+          node --version
+          npm --version
 
       - name: Download NPM package artifact
         uses: actions/download-artifact@v4
@@ -248,7 +240,7 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish tarball to NPM
+      - name: Publish tarball to NPM via trusted publishing
         if: steps.npm-check.outputs.exists != 'true'
         run: |
           set +e
@@ -256,12 +248,8 @@ jobs:
           STATUS=$?
           echo "$OUTPUT"
 
-          if [ $STATUS -ne 0 ] && echo "$OUTPUT" | grep -q "npm error code E404"; then
-            echo "::error::npm publish returned E404. For @slickquant scoped packages, this usually means the token user does not have read/write access to the package or scope, or the token lacks package write and bypass-2FA permissions."
-          fi
-
-          if [ $STATUS -ne 0 ] && echo "$OUTPUT" | grep -q "npm error code EOTP"; then
-            echo "::error::npm publish returned EOTP. The token authenticated successfully, but npm requires 2FA for publishing. Use a granular token with Bypass 2FA enabled, or switch this workflow to npm trusted publishing."
+          if [ $STATUS -ne 0 ] && echo "$OUTPUT" | grep -q "ENEEDAUTH\|Unable to authenticate"; then
+            echo "::error::Trusted publishing authentication failed. In npm package settings, add a GitHub Actions trusted publisher for repository SlickQuant/slick-ladder and workflow filename release.yml. npm requires an exact, case-sensitive match."
           fi
 
           exit $STATUS
