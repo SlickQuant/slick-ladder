@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-03-24
+
 ### Fixed
 - **RemoveRow mode duplicate levels**: Fixed rendering bug where duplicate price levels could appear after partial fills in MBO mode (e.g., same price showing both old and new quantities)
 - Added deduplication logic in both TypeScript and C# renderers to ensure only one row per price level
