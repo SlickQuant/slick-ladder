@@ -195,6 +195,11 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+          scope: '@slickquant'
+          always-auth: true
+
+      - name: Verify NPM token identity
+        run: npm whoami --registry=https://registry.npmjs.org/
 
       - name: Download NPM package artifact
         uses: actions/download-artifact@v4
@@ -237,4 +242,14 @@ jobs:
 
       - name: Publish tarball to NPM
         if: steps.npm-check.outputs.exists != 'true'
-        run: npm publish "${{ steps.package.outputs.tarball }}" --access public
+        run: |
+          set +e
+          OUTPUT=$(npm publish "${{ steps.package.outputs.tarball }}" --access public 2>&1)
+          STATUS=$?
+          echo "$OUTPUT"
+
+          if [ $STATUS -ne 0 ] && echo "$OUTPUT" | grep -q "npm error code E404"; then
+            echo "::error::npm publish returned E404. For @slickquant scoped packages, this usually means the token user does not have read/write access to the package or scope, or the token lacks package write and bypass-2FA permissions."
+          fi
+
+          exit $STATUS
