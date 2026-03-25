@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-03-25
+
 ### Fixed
 - **RemoveRow mode stale rendering**: Fixed critical bug where rows below a removed level weren't redrawn, causing stale data to display until scroll
   - When a level is removed (e.g., fully consumed by market order), all rows below now properly shift up and redraw immediately
