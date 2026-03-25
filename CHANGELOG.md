@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-03-25
+
 ### Fixed
 - **RemoveRow mode structural changes**: Simplified rendering logic for add/remove operations to ensure correctness
   - Structural changes (add/remove levels) now trigger full redraw instead of complex incremental dirty tracking
