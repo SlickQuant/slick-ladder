@@ -291,7 +291,6 @@ jobs:
           {
             echo "//registry.npmjs.org/:_authToken=${PUBLISH_TOKEN}"
             echo "registry=https://registry.npmjs.org/"
-            echo "always-auth=true"
           } > "${NPMRC_FILE}"
           export NPM_CONFIG_USERCONFIG="${NPMRC_FILE}"
 
