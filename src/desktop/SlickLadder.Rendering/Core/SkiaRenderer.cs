@@ -576,7 +576,7 @@ public class SkiaRenderer : IDisposable
         if (viewport.RemovalMode == LevelRemovalMode.RemoveRow && snapshot.StructuralChange && denseLayout.HasValue)
         {
             var minRow = visibleRows;
-            var hasRow = false;
+            var hasStructuralChange = false;
 
             foreach (var change in snapshot.DirtyChanges)
             {
@@ -585,23 +585,42 @@ public class SkiaRenderer : IDisposable
                     continue;
                 }
 
-                var rowIndex = GetDenseRowIndexForChange(change, denseLayout.Value);
-                if (rowIndex.HasValue)
+                hasStructuralChange = true;
+
+                if (change.IsRemoval)
                 {
-                    minRow = Math.Min(minRow, rowIndex.Value);
-                    hasRow = true;
+                    // For removals, find where the level would have been if it still existed
+                    // We need to redraw from that point down since everything shifts up
+                    var estimatedRow = EstimateRowForRemovedLevel(change, denseLayout.Value);
+                    if (estimatedRow.HasValue)
+                    {
+                        minRow = Math.Min(minRow, estimatedRow.Value);
+                    }
+                }
+                else if (change.IsAddition)
+                {
+                    // For additions, get the actual row where it was added
+                    var rowIndex = GetDenseRowIndexForChange(change, denseLayout.Value);
+                    if (rowIndex.HasValue)
+                    {
+                        minRow = Math.Min(minRow, rowIndex.Value);
+                    }
                 }
             }
 
-            if (!hasRow)
+            // If we found any structural changes, redraw from minRow to bottom
+            if (hasStructuralChange && minRow <= visibleRows)
             {
+                for (int row = minRow; row <= visibleRows; row++)
+                {
+                    dirtyRows.Add(row);
+                }
+            }
+            else if (hasStructuralChange)
+            {
+                // Structural change occurred but outside visible area - still do full redraw to be safe
                 RenderFull(canvas, snapshot, viewport, maxVolume, visibleRows, midRow, tickSize, referencePrice);
                 return;
-            }
-
-            for (int row = minRow; row <= visibleRows; row++)
-            {
-                dirtyRows.Add(row);
             }
         }
 
@@ -892,6 +911,54 @@ public class SkiaRenderer : IDisposable
         }
 
         return null;
+    }
+
+    private static int? EstimateRowForRemovedLevel(DirtyLevelChange change, DensePackingLayout layout)
+    {
+        // For a removed level, estimate where it would have appeared in the current layout
+        // This helps us determine which rows need to be redrawn (everything from this point down)
+
+        if (change.Side == Side.ASK)
+        {
+            // Find where this price would be inserted in the sorted ask array
+            var insertIndex = LowerBoundPrice(layout.NonEmptyAsks, change.Price);
+
+            // If the removed price would have been before the start of visible asks, affect row 0
+            if (insertIndex <= layout.StartAskIndex)
+            {
+                return layout.FirstRowIndex;
+            }
+
+            // If the removed price would be in the visible range
+            if (insertIndex < layout.StartAskIndex + layout.AskRowsToRender)
+            {
+                var rowOffset = (layout.NonEmptyAsks.Length - 1 - layout.StartAskIndex) - insertIndex + 1;
+                return layout.FirstRowIndex + rowOffset;
+            }
+
+            // If beyond visible asks, it might affect the bid section
+            return layout.FirstRowIndex + layout.AskRowsToRender;
+        }
+        else
+        {
+            // BID side
+            var insertIndex = LowerBoundPrice(layout.NonEmptyBids, change.Price);
+
+            // If the removed price would have been before visible bids
+            if (insertIndex <= layout.StartBidIndex)
+            {
+                return layout.FirstRowIndex + layout.AskRowsToRender;
+            }
+
+            // If in visible bid range
+            if (insertIndex < layout.StartBidIndex + layout.BidRowsToRender)
+            {
+                var bidRowOffset = (layout.NonEmptyBids.Length - 1 - layout.StartBidIndex) - insertIndex + 1;
+                return layout.FirstRowIndex + layout.AskRowsToRender + bidRowOffset;
+            }
+
+            return null;
+        }
     }
 
     private static bool TryGetDenseLevelForRow(int rowIndex, DensePackingLayout layout, out BookLevel level, out Side side)

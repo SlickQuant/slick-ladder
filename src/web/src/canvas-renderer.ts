@@ -647,28 +647,41 @@ export class CanvasRenderer {
 
         if (this.removalMode === 'removeRow' && snapshot.structuralChange && denseLayout) {
             let minRow = this.visibleRows;
-            let hasRow = false;
+            let hasStructuralChange = false;
 
             for (const change of snapshot.dirtyChanges) {
                 if (!change.isRemoval && !change.isAddition) {
                     continue;
                 }
 
-                const rowIndex = this.getDenseRowIndexForChange(change, denseLayout);
-                if (rowIndex !== null) {
-                    minRow = Math.min(minRow, rowIndex);
-                    hasRow = true;
+                hasStructuralChange = true;
+
+                if (change.isRemoval) {
+                    // For removals, find where the level would have been if it still existed
+                    // We need to redraw from that point down since everything shifts up
+                    const estimatedRow = this.estimateRowForRemovedLevel(change, denseLayout);
+                    if (estimatedRow !== null) {
+                        minRow = Math.min(minRow, estimatedRow);
+                    }
+                } else if (change.isAddition) {
+                    // For additions, get the actual row where it was added
+                    const rowIndex = this.getDenseRowIndexForChange(change, denseLayout);
+                    if (rowIndex !== null) {
+                        minRow = Math.min(minRow, rowIndex);
+                    }
                 }
             }
 
-            if (!hasRow) {
+            // If we found any structural changes, redraw from minRow to bottom
+            if (hasStructuralChange && minRow <= this.visibleRows) {
+                for (let row = minRow; row <= this.visibleRows; row++) {
+                    this.markRowDirty(row);
+                }
+            } else if (hasStructuralChange) {
+                // Structural change occurred but outside visible area - still do full redraw to be safe
                 this.renderFull(snapshot, referencePrice);
                 this.markAllDirty();
                 return;
-            }
-
-            for (let row = minRow; row <= this.visibleRows; row++) {
-                this.markRowDirty(row);
             }
         }
 
@@ -890,6 +903,46 @@ export class CanvasRenderer {
         }
 
         return null;
+    }
+
+    private estimateRowForRemovedLevel(change: DirtyLevelChange, layout: DensePackingLayout): number | null {
+        // For a removed level, estimate where it would have appeared in the current layout
+        // This helps us determine which rows need to be redrawn (everything from this point down)
+
+        if (change.side === Side.ASK) {
+            // Find where this price would be inserted in the sorted ask array
+            const insertIndex = this.lowerBoundPrice(layout.nonEmptyAsks, change.price);
+
+            // If the removed price would have been before the start of visible asks, affect row 0
+            if (insertIndex <= layout.startAskIndex) {
+                return layout.firstRowIndex;
+            }
+
+            // If the removed price would be in the visible range
+            if (insertIndex < layout.startAskIndex + layout.askRowsToRender) {
+                const rowOffset = (layout.nonEmptyAsks.length - 1 - layout.startAskIndex) - insertIndex + 1;
+                return layout.firstRowIndex + rowOffset;
+            }
+
+            // If beyond visible asks, it might affect the bid section
+            return layout.firstRowIndex + layout.askRowsToRender;
+        } else {
+            // BID side
+            const insertIndex = this.lowerBoundPrice(layout.nonEmptyBids, change.price);
+
+            // If the removed price would have been before visible bids
+            if (insertIndex <= layout.startBidIndex) {
+                return layout.firstRowIndex + layout.askRowsToRender;
+            }
+
+            // If in visible bid range
+            if (insertIndex < layout.startBidIndex + layout.bidRowsToRender) {
+                const bidRowOffset = (layout.nonEmptyBids.length - 1 - layout.startBidIndex) - insertIndex + 1;
+                return layout.firstRowIndex + layout.askRowsToRender + bidRowOffset;
+            }
+
+            return null;
+        }
     }
 
     private tryGetDenseLevelForRow(rowIndex: number, layout: DensePackingLayout): { level: BookLevel; side: Side } | null {
