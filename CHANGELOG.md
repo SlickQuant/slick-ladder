@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **RemoveRow mode structural changes**: Simplified rendering logic for add/remove operations to ensure correctness
+  - Structural changes (add/remove levels) now trigger full redraw instead of complex incremental dirty tracking
+  - Fixes stale rendering when levels are added (e.g., new limit order) or removed (e.g., market order fills)
+  - Fixes duplicate price levels appearing after partial fills until scroll
+  - Removed complex `estimateRowForRemovedLevel` logic in favor of reliable full redraw approach
+  - Full redraws are still very fast (< 1ms) and only triggered on structural changes, not quantity updates
+  - Added dirty change deduplication to prevent duplicate processing within same frame
+  - Added explicit sorting after deduplication in `buildDensePackingLayout` to ensure correct price ordering
+  - Fixed off-by-one error in `markRowDirty` bounds check (`rowIndex >= visibleRows` instead of `>`)
+  - Synchronized across TypeScript (`canvas-renderer.ts`) and C# (`SkiaRenderer.cs`) renderers
+
 ## [0.1.5] - 2026-03-25
 
 ### Fixed
