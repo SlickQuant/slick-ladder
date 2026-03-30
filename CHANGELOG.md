@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-03-30
+
+### Fixed
+- **Inverted trade side on click**: Clicking the BID quantity column now correctly fires `Side.BID` (BUY) and ASK column fires `Side.ASK` (SELL) — was reversed across all platforms (Web, WPF, Avalonia)
+- **Empty row clicks now invoke `onTrade`**: Clicking a quantity column on an empty row previously silently returned; now fires the callback with `price = null` so consumers can handle it explicitly
+  - `TradeRequest.Price` is now `decimal?` in C#; `onTrade` signature is `(price: number | null, side: Side)` in TypeScript
+- **`screenXToColumn` ignores dynamic column widths**: Fixed hit detection to use actual pixel positions of bid/ask quantity columns instead of a fixed `Math.floor(x / COL_WIDTH)` calculation
+
 ## [0.1.6] - 2026-03-25
 
 ### Fixed
