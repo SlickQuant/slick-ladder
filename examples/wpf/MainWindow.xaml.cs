@@ -55,9 +55,10 @@ public partial class MainWindow : Window
 
     private void OnTradeExecuted(TradeRequest trade)
     {
-        var action = trade.Side == SlickLadder.Core.Models.Side.ASK ? "BUY" : "SELL";
-        System.Diagnostics.Debug.WriteLine($"{action} @ ${trade.Price:F2}");
-        MessageBox.Show($"{action} @ ${trade.Price:F2}", "Trade Clicked");
+        var action = trade.Side == SlickLadder.Core.Models.Side.BID ? "BUY" : "SELL";
+        var priceStr = trade.Price.HasValue ? $"${trade.Price:F2}" : "empty level";
+        System.Diagnostics.Debug.WriteLine($"{action} @ {priceStr}");
+        MessageBox.Show($"{action} @ {priceStr}", "Trade Clicked");
     }
 
     private void UpdateMetrics(object? sender, EventArgs e)

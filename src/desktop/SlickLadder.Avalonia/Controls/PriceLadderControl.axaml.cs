@@ -229,7 +229,7 @@ public partial class PriceLadderControl : UserControl
 
             // System.Diagnostics.Debug.WriteLine($"Viewport: height={_parent._viewport.Height}, visibleRows={visibleRows}, midRow={midRow}");
 
-            decimal clickedPrice;
+            decimal? clickedPrice = null;
 
             if (_parent._viewport.RemovalMode == LevelRemovalMode.RemoveRow)
             {
@@ -242,8 +242,8 @@ public partial class PriceLadderControl : UserControl
 
                 var virtualTopRow = nonEmptyAsks.Length - midRow + scrollOffset;
 
-                int startAskIndex, askRowsToRender;
-                int startBidIndex, bidRowsToRender;
+                int startAskIndex = 0, askRowsToRender = 0;
+                int startBidIndex = 0, bidRowsToRender = 0;
                 float topOffset = 0;
 
                 if (virtualTopRow < 0)
@@ -273,7 +273,7 @@ public partial class PriceLadderControl : UserControl
                 }
                 else
                 {
-                    return; // Scrolled past all data
+                    // Scrolled past all data — clickedPrice stays null, fall through
                 }
 
                 var firstRowIndex = (int)(topOffset / RenderConfig.RowHeight);
@@ -301,41 +301,37 @@ public partial class PriceLadderControl : UserControl
 
                 // System.Diagnostics.Debug.WriteLine($"Dense Click Debug: clickY={clickY}, topOffset={topOffset}, rowIndex={rowIndex}, firstRowIndex={firstRowIndex}, relativeRow={relativeRow}, askRows={askRowsToRender}, startAskIdx={startAskIndex}");
 
-                if (relativeRow < 0)
+                if (relativeRow >= 0)
                 {
-                    return; // Clicked above visible data
-                }
-
-                if (relativeRow < askRowsToRender)
-                {
-                    // Clicked on an ask row
-                    var askIndex = nonEmptyAsks.Length - 1 - startAskIndex - relativeRow;
-                    var expectedRenderY = topOffset + (relativeRow * RenderConfig.RowHeight);
-                    // System.Diagnostics.Debug.WriteLine($"Ask click: askIndex={askIndex}, nonEmptyAsks.Length={nonEmptyAsks.Length}, expectedRenderY={expectedRenderY}");
-                    if (askIndex < 0 || askIndex >= nonEmptyAsks.Length)
+                    if (relativeRow < askRowsToRender)
                     {
-                        return;
+                        // Clicked on an ask row
+                        var askIndex = nonEmptyAsks.Length - 1 - startAskIndex - relativeRow;
+                        if (askIndex >= 0 && askIndex < nonEmptyAsks.Length)
+                        {
+                            var level = nonEmptyAsks[askIndex];
+                            clickedPrice = level.Price;
+                        }
+                        // else: out-of-bounds ask index — clickedPrice stays null
                     }
-                    var level = nonEmptyAsks[askIndex];
-                    // System.Diagnostics.Debug.WriteLine($"Selected ask: price={level.Price}, qty={level.Quantity}");
-                    clickedPrice = level.Price;
-                }
-                else
-                {
-                    // Clicked on a bid row
-                    var bidRow = relativeRow - askRowsToRender;
-                    if (bidRow >= bidRowsToRender)
+                    else
                     {
-                        return; // Clicked below visible data
+                        // Clicked on a bid row
+                        var bidRow = relativeRow - askRowsToRender;
+                        if (bidRow < bidRowsToRender)
+                        {
+                            var bidIndex = nonEmptyBids.Length - 1 - startBidIndex - bidRow;
+                            if (bidIndex >= 0 && bidIndex < nonEmptyBids.Length)
+                            {
+                                var level = nonEmptyBids[bidIndex];
+                                clickedPrice = level.Price;
+                            }
+                            // else: out-of-bounds bid index — clickedPrice stays null
+                        }
+                        // else: clicked below visible data — clickedPrice stays null
                     }
-                    var bidIndex = nonEmptyBids.Length - 1 - startBidIndex - bidRow;
-                    if (bidIndex < 0 || bidIndex >= nonEmptyBids.Length)
-                    {
-                        return;
-                    }
-                    var level = nonEmptyBids[bidIndex];
-                    clickedPrice = level.Price;
                 }
+                // else: clicked above visible data — clickedPrice stays null
             }
             else
             {
@@ -363,22 +359,19 @@ public partial class PriceLadderControl : UserControl
                     {
                         clickedPrice = bidLevel.Price;
                     }
-                    else
-                    {
-                        return; // Clicked on empty row
-                    }
+                    // else: empty row — clickedPrice stays null
                 }
             }
 
             // Determine trade side based on which column was clicked
-            // Click on BID qty column = BUY (Side.ASK)
-            // Click on ASK qty column = SELL (Side.BID)
-            var tradeSide = clickedBidQty
-                ? SlickLadder.Core.Models.Side.ASK
-                : SlickLadder.Core.Models.Side.BID;
+            // Click on BID qty column = BUY (Side.BID)
+            // Click on ASK qty column = SELL (Side.ASK)
+            var side = clickedBidQty
+                ? SlickLadder.Core.Models.Side.BID
+                : SlickLadder.Core.Models.Side.ASK;
 
-            // Notify ViewModel of click with price, side
-            _parent._viewModel.HandlePriceClick(clickedPrice, tradeSide);
+            // Notify ViewModel of click with price (null if empty row), side
+            _parent._viewModel.HandlePriceClick(clickedPrice, side);
         }
 
         private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)

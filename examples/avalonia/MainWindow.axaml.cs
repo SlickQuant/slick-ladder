@@ -110,8 +110,9 @@ public partial class MainWindow : Window
 
     private void OnTradeExecuted(TradeRequest trade)
     {
-        var action = trade.Side == SlickLadder.Core.Models.Side.ASK ? "BUY" : "SELL";
-        System.Diagnostics.Debug.WriteLine($"{action} @ ${trade.Price:F2}");
+        var action = trade.Side == SlickLadder.Core.Models.Side.BID ? "BUY" : "SELL";
+        var priceStr = trade.Price.HasValue ? $"${trade.Price:F2}" : "empty level";
+        System.Diagnostics.Debug.WriteLine($"{action} @ {priceStr}");
 
         // Show message box on UI thread
         Dispatcher.UIThread.Post(async () =>
@@ -123,7 +124,7 @@ public partial class MainWindow : Window
                 Height = 100,
                 Content = new TextBlock
                 {
-                    Text = $"{action} @ ${trade.Price:F2}",
+                    Text = $"{action} @ {priceStr}",
                     HorizontalAlignment = global::Avalonia.Layout.HorizontalAlignment.Center,
                     VerticalAlignment = global::Avalonia.Layout.VerticalAlignment.Center
                 }

@@ -20,7 +20,7 @@ export class InteractionHandler {
     private static readonly dragSuppressThresholdPx = 3;
 
     // Callbacks
-    public onPriceClick?: (price: number, side: Side) => void;
+    public onPriceClick?: (price: number | null, side: Side) => void;
     public onPriceHover?: (price: number | null) => void;
     public onScroll?: (delta: number) => void;
     public onRenderNeeded?: () => void;
@@ -58,26 +58,20 @@ export class InteractionHandler {
         const rowIndex = this.renderer.screenYToRow(y);
         const levelInfo = this.renderer.rowToLevelInfo(rowIndex);
 
-        if (levelInfo !== null) {
-            // Get column indices
-            const clickedColumn = this.renderer.screenXToColumn(x);
-            const bidQtyColumn = this.renderer.getBidQtyColumn();
-            const askQtyColumn = this.renderer.getAskQtyColumn();
+        // Get column indices
+        const clickedColumn = this.renderer.screenXToColumn(x);
+        const bidQtyColumn = this.renderer.getBidQtyColumn();
+        const askQtyColumn = this.renderer.getAskQtyColumn();
 
-            // console.log(`Click: column ${clickedColumn}, bidQty=${bidQtyColumn}, askQty=${askQtyColumn}, price ${levelInfo.price}, qty ${levelInfo.quantity}`);
-
-            // Only trigger trade if clicking on quantity columns
-            if (clickedColumn === bidQtyColumn) {
-                // Click on BID qty column = BUY (you want to buy at this ASK price)
-                console.log('Action: BUY');
-                this.onPriceClick?.(levelInfo.price, Side.ASK);
-            } else if (clickedColumn === askQtyColumn) {
-                // Click on ASK qty column = SELL (you want to sell at this BID price)
-                console.log('Action: SELL');
-                this.onPriceClick?.(levelInfo.price, Side.BID);
-            } else {
-                console.log('Action: none (clicked outside quantity columns)');
-            }
+        // Only trigger trade if clicking on quantity columns
+        if (clickedColumn === bidQtyColumn) {
+            // Click on BID qty column = BUY (you want to buy at this price)
+            const price = levelInfo !== null ? levelInfo.price : null;
+            this.onPriceClick?.(price, Side.BID);
+        } else if (clickedColumn === askQtyColumn) {
+            // Click on ASK qty column = SELL (you want to sell at this price)
+            const price = levelInfo !== null ? levelInfo.price : null;
+            this.onPriceClick?.(price, Side.ASK);
         }
     }
 

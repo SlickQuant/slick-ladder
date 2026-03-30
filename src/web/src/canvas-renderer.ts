@@ -1483,6 +1483,11 @@ export class CanvasRenderer {
      * Convert screen X coordinate to column index
      */
     public screenXToColumn(x: number): number {
+        const cols = this.getColumnPositions();
+        // Determine which column x falls in based on actual pixel positions
+        if (x >= cols.bidQtyX && x < cols.bidQtyX + this.qtyColWidth) return this.getBidQtyColumn();
+        if (x >= cols.askQtyX && x < cols.askQtyX + this.qtyColWidth) return this.getAskQtyColumn();
+        // Fallback: index-based (for order count, price, bar columns)
         return Math.floor(x / COL_WIDTH);
     }
 

@@ -12,10 +12,10 @@ namespace SlickLadder.Rendering.ViewModels;
 /// </summary>
 public class TradeRequest
 {
-    public decimal Price { get; }
+    public decimal? Price { get; }
     public Side Side { get; }
 
-    public TradeRequest(decimal price, Side side)
+    public TradeRequest(decimal? price, Side side)
     {
         Price = price;
         Side = side;
@@ -94,7 +94,7 @@ public class PriceLadderViewModel : ReactiveObject
     /// <summary>
     /// Handle price level click (for click-to-trade)
     /// </summary>
-    public void HandlePriceClick(decimal price, Side side)
+    public void HandlePriceClick(decimal? price, Side side)
     {
         // Fire the trade event
         OnTrade?.Invoke(new TradeRequest(price, side));

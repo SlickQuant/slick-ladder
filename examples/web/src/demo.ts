@@ -114,9 +114,10 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 mboOrderSizeFilter,
                 minQuantityThreshold,
                 onTrade: (price, side) => {
-                    const action = side === Side.BID ? 'SELL' : 'BUY';
-                    console.log(`${action} @ $${price.toFixed(2)}`);
-                    alert(`${action} @ $${price.toFixed(2)}`);
+                    const action = side === Side.BID ? 'BUY' : 'SELL';
+                    const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
+                    console.log(`${action} @ ${priceStr}`);
+                    alert(`${action} @ ${priceStr}`);
                 },
                 onPriceHover: (price) => {
                     const tooltip = document.getElementById('tooltip');
@@ -192,9 +193,10 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             mboOrderSizeFilter,
             minQuantityThreshold,
             onTrade: (price, side) => {
-                const action = side === Side.ASK ? 'BUY' : 'SELL';
-                console.log(`${action} @ $${price.toFixed(2)}`);
-                alert(`${action} @ $${price.toFixed(2)}`);
+                const action = side === Side.BID ? 'BUY' : 'SELL';
+                const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
+                console.log(`${action} @ ${priceStr}`);
+                alert(`${action} @ ${priceStr}`);
             },
             onPriceHover: (price) => {
                 const tooltip = document.getElementById('tooltip');
