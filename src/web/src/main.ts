@@ -82,7 +82,7 @@ export class PriceLadder {
             minQuantityThreshold: config.minQuantityThreshold ?? DEFAULT_MIN_QUANTITY_THRESHOLD,
             removalMode: config.removalMode || 'removeRow',
             colors: config.colors || DEFAULT_COLORS,
-            onTrade: config.onTrade || (() => {}),
+            onLevelClick: config.onLevelClick || (() => {}),
             onPriceHover: config.onPriceHover || (() => {})
         };
         this.dataMode = this.config.mode;
@@ -130,7 +130,7 @@ export class PriceLadder {
 
     private setupInteractions(): void {
         this.interactionHandler.onPriceClick = (price, side) => {
-            this.config.onTrade?.(price, side);
+            this.config.onLevelClick?.(price, side);
         };
 
         this.interactionHandler.onPriceHover = (price) => {

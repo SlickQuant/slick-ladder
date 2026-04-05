@@ -88,7 +88,7 @@ public partial class MainWindow : Window
         priceLadder.DataContext = _viewModel;
 
         // Subscribe to trade events
-        _viewModel.OnTrade += OnTradeExecuted;
+        _viewModel.OnLevelClick += OnLevelClickExecuted;
 
         // Create market data simulator (pass tick size from ViewModel)
         var tickSize = 0.01m; // Default tick size
@@ -108,7 +108,7 @@ public partial class MainWindow : Window
         _metricsTimer.Start();
     }
 
-    private void OnTradeExecuted(TradeRequest trade)
+    private void OnLevelClickExecuted(LevelClickEventArgs trade)
     {
         var action = trade.Side == SlickLadder.Core.Models.Side.BID ? "BUY" : "SELL";
         var priceStr = trade.Price.HasValue ? $"${trade.Price:F2}" : "empty level";
@@ -345,7 +345,7 @@ public partial class MainWindow : Window
             }
 
             // Subscribe to trade events on new ViewModel
-            _viewModel.OnTrade += OnTradeExecuted;
+            _viewModel.OnLevelClick += OnLevelClickExecuted;
 
             _viewModel.Core.SetDataMode(isMBOMode ? DataMode.MBO : DataMode.PriceLevel);
 

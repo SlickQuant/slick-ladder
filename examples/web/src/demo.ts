@@ -113,7 +113,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 showOrderCount,
                 mboOrderSizeFilter,
                 minQuantityThreshold,
-                onTrade: (price, side) => {
+                onLevelClick: (price, side) => {
                     const action = side === Side.BID ? 'BUY' : 'SELL';
                     const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
                     console.log(`${action} @ ${priceStr}`);
@@ -192,7 +192,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             showOrderCount,
             mboOrderSizeFilter,
             minQuantityThreshold,
-            onTrade: (price, side) => {
+            onLevelClick: (price, side) => {
                 const action = side === Side.BID ? 'BUY' : 'SELL';
                 const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
                 console.log(`${action} @ ${priceStr}`);

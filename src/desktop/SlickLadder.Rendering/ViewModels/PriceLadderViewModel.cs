@@ -8,14 +8,14 @@ using SlickLadder.Core.Models;
 namespace SlickLadder.Rendering.ViewModels;
 
 /// <summary>
-/// Trade request data for click-to-trade functionality
+/// Event args for a price level click
 /// </summary>
-public class TradeRequest
+public class LevelClickEventArgs
 {
     public decimal? Price { get; }
     public Side Side { get; }
 
-    public TradeRequest(decimal? price, Side side)
+    public LevelClickEventArgs(decimal? price, Side side)
     {
         Price = price;
         Side = side;
@@ -32,9 +32,9 @@ public class PriceLadderViewModel : ReactiveObject
     private OrderBookSnapshot? _currentSnapshot;
 
     /// <summary>
-    /// Event fired when user clicks to trade (price, side, quantity)
+    /// Event fired when user clicks a price level
     /// </summary>
-    public event Action<TradeRequest>? OnTrade;
+    public event Action<LevelClickEventArgs>? OnLevelClick;
 
     public OrderBookSnapshot? CurrentSnapshot
     {
@@ -92,12 +92,11 @@ public class PriceLadderViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// Handle price level click (for click-to-trade)
+    /// Handle price level click
     /// </summary>
     public void HandlePriceClick(decimal? price, Side side)
     {
-        // Fire the trade event
-        OnTrade?.Invoke(new TradeRequest(price, side));
+        OnLevelClick?.Invoke(new LevelClickEventArgs(price, side));
     }
 
     /// <summary>

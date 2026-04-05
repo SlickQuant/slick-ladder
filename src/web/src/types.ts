@@ -91,7 +91,7 @@ export interface PriceLadderConfig {
     removalMode?: 'showEmpty' | 'removeRow';
     minQuantityThreshold?: number; // Minimum quantity to display (filters out 0 and near-zero quantities), default: 0.0001
     colors?: CanvasColors;
-    onTrade?: (price: number | null, side: Side) => void;
+    onLevelClick?: (price: number | null, side: Side) => void;
     onPriceHover?: (price: number | null) => void;
 }
 

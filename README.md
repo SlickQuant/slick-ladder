@@ -178,7 +178,7 @@ const ladder = new PriceLadder({
     showVolumeBars: true,
     showOrderCount: true,
     colors: customColors,
-    onTrade: (price, side) => {
+    onLevelClick: (price, side) => {
         const action = side === Side.ASK ? 'BUY' : 'SELL';
         console.log(`${action} @ ${price}`);
     },
@@ -365,7 +365,7 @@ core.ProcessPriceLevelUpdate(update);
 | `mboOrderSizeFilter` | `number` | `0` | Minimum order size to display in MBO mode |
 | `removalMode` | `'showEmpty' \| 'removeRow'` | `'removeRow'` | How to handle empty price levels |
 | `colors` | `CanvasColors` | (see below) | Custom color scheme |
-| `onTrade` | `function` | - | Callback when price is clicked |
+| `onLevelClick` | `function` | - | Callback when price is clicked |
 | `onPriceHover` | `function` | - | Callback when price is hovered |
 
 ### Default Colors
@@ -446,14 +446,14 @@ interface RenderMetrics {
 
 ### Events (Web/TypeScript)
 
-#### onTrade
+#### onLevelClick
 Fired when a quantity column is clicked (unless `readOnly` is `true`).
 
 - Clicking on **BID qty column** triggers a BUY
 - Clicking on **ASK qty column** triggers a SELL
 
 ```typescript
-onTrade: (price: number, side: Side) => void
+onLevelClick: (price: number, side: Side) => void
 ```
 
 | Parameter | Type | Description |
@@ -470,18 +470,18 @@ onPriceHover: (price: number | null) => void
 
 ### Events (Desktop/C#)
 
-#### OnTrade
+#### OnLevelClick
 Subscribe to trade click events on the `PriceLadderViewModel`:
 
 ```csharp
-viewModel.OnTrade += (TradeRequest trade) =>
+viewModel.OnLevelClick += (LevelClickEventArgs trade) =>
 {
     var action = trade.Side == Side.ASK ? "BUY" : "SELL";
     Console.WriteLine($"{action} @ {trade.Price}");
 };
 ```
 
-**TradeRequest Properties:**
+**LevelClickEventArgs Properties:**
 
 | Property | Type | Description |
 |----------|------|-------------|
