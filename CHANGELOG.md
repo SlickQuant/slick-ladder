@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-04-06
+
 ### Added
 - **`hasOwnOrders` highlighting in PriceLevel mode**: When a `BookLevel` has `hasOwnOrders = true`, the quantity cell is highlighted with a 2px gold border (`#ffd700`) — consistent with the existing MBO own-order highlight style
   - Web (`canvas-renderer.ts`): `strokeRect` on bid/ask quantity cell when `level.hasOwnOrders` is true
