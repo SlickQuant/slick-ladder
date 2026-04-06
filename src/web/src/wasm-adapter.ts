@@ -1,4 +1,4 @@
-import { PriceLevel, OrderBookSnapshot, OrderUpdate, OrderUpdateType, PriceLadderConfig } from './types';
+import { PriceLevel, OrderBookSnapshot, OrderUpdate, OrderUpdateType, PriceLadderConfig, Side } from './types';
 import type { WorkerRequest, WorkerResponse } from './wasm-types';
 import { PriceLadder } from './main';
 import { CanvasRenderer } from './canvas-renderer';
@@ -17,6 +17,8 @@ export class WasmPriceLadder extends PriceLadder {
     private priceBatchQueue: PriceLevel[][] = [];
     private orderBatchQueue: Array<Array<{ update: OrderUpdate; type: OrderUpdateType }>> = [];
     private lastSnapshot: OrderBookSnapshot | null = null;
+    // key: `${side}-${price}` — levels that should have hasOwnOrders=true
+    private ownOrderOverrides: Map<string, true> = new Map();
 
     constructor(config: PriceLadderConfig) {
         super(config);
@@ -277,6 +279,33 @@ export class WasmPriceLadder extends PriceLadder {
     }
 
     /**
+     * Mark a price level as having (or not having) own orders.
+     * Overrides base class: stores the override and immediately re-renders.
+     * The override is applied to each snapshot received from the WASM worker.
+     */
+    public override setHasOwnOrders(price: number, side: Side, value: boolean): void {
+        const key = `${side}-${price}`;
+        if (value) {
+            this.ownOrderOverrides.set(key, true);
+        } else {
+            this.ownOrderOverrides.delete(key);
+        }
+        if (this.lastSnapshot) {
+            this.applyOwnOrderOverrides(this.lastSnapshot);
+            this.renderer.render(this.lastSnapshot);
+        }
+    }
+
+    private applyOwnOrderOverrides(snapshot: OrderBookSnapshot): void {
+        for (const level of snapshot.bids) {
+            level.hasOwnOrders = this.ownOrderOverrides.has(`${level.side}-${level.price}`);
+        }
+        for (const level of snapshot.asks) {
+            level.hasOwnOrders = this.ownOrderOverrides.has(`${level.side}-${level.price}`);
+        }
+    }
+
+    /**
      * Drop pending batched updates (for testing/demo purposes)
      */
     public dropPendingUpdates(): void {
@@ -452,6 +481,9 @@ export class WasmPriceLadder extends PriceLadder {
             dirtyChanges: parsedData.DirtyChanges ?? parsedData.dirtyChanges,
             structuralChange: parsedData.StructuralChange ?? parsedData.structuralChange
         };
+
+        // Apply own-order overrides set via setHasOwnOrders()
+        this.applyOwnOrderOverrides(snapshot);
 
         // Store the last snapshot for re-rendering on viewport changes
         this.lastSnapshot = snapshot;

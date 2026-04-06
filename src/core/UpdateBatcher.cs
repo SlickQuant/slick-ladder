@@ -315,6 +315,25 @@ public class UpdateBatcher
     }
 
     /// <summary>
+    /// Emit a snapshot from current order book state without requiring pending updates.
+    /// Use after directly modifying order book data (e.g. SetHasOwnOrders).
+    /// </summary>
+    public void EmitCurrentSnapshot()
+    {
+        var midPrice = _orderBook.MidPrice ?? _orderBook.BestBid ?? _orderBook.BestAsk ?? 0m;
+        var centerPrice = SnapshotCenterPrice ?? RoundToTick(midPrice, _orderBook.TickSize);
+        var snapshot = _orderBook.GetSnapshot(centerPrice, SnapshotVisibleLevels, FillEmptyLevels);
+        snapshot.DirtyChanges = null;
+        snapshot.StructuralChange = false;
+        if (_mode == DataMode.MBO && _mboManager != null)
+        {
+            snapshot.BidOrders = _mboManager.GetBidOrders();
+            snapshot.AskOrders = _mboManager.GetAskOrders();
+        }
+        OnBatchFlushed?.Invoke(snapshot);
+    }
+
+    /// <summary>
     /// Start automatic batching with a background timer.
     /// Flushes every BATCH_INTERVAL_MICROSECONDS.
     /// </summary>

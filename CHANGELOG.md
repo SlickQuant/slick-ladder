@@ -7,8 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`hasOwnOrders` highlighting in PriceLevel mode**: When a `BookLevel` has `hasOwnOrders = true`, the quantity cell is highlighted with a 2px gold border (`#ffd700`) — consistent with the existing MBO own-order highlight style
+  - Web (`canvas-renderer.ts`): `strokeRect` on bid/ask quantity cell when `level.hasOwnOrders` is true
+  - Desktop (`SkiaRenderer.cs`): `DrawRect` with `_ownOrderBorderPaint` on bid/ask quantity cell when `level.HasOwnOrders` is true
+- **Own-order flag preservation**: `hasOwnOrders`/`HasOwnOrders` is now preserved across market data updates (previously reset to `false` on every update)
+  - Web: `processUpdate()` in `main.ts` carries the flag forward from the existing level
+  - Desktop: `OrderBook.UpdateLevel()` preserves the flag from the existing level in the sorted array
+- **`setHasOwnOrders` / `SetHasOwnOrders` API**:
+  - Web (`PriceLadder`): `setHasOwnOrders(price, side, value)` mutates the level in the local bid/ask map
+  - Web (`WasmPriceLadder`): overrides with an overlay map applied to every WASM snapshot, so the flag survives worker-driven updates
+  - Desktop (`PriceLadderCore`): `SetHasOwnOrders(price, side, value)` updates the `OrderBook` and immediately emits a fresh snapshot via `UpdateBatcher.EmitCurrentSnapshot()`
+- **Demo: click-to-mark own order** (Web, WPF, Avalonia): clicking the bid/ask quantity cell of a price level, after closing the confirmation pop-up, marks that level with `hasOwnOrders = true`; a random timer (2–8 s) then clears the flag to simulate order removal
+
 ### Changed
-- Ranamed onTrade to OnLevelClick. Reanmed TradeRequest to LevelClickEventArgs
+- Renamed `onTrade` to `OnLevelClick`. Renamed `TradeRequest` to `LevelClickEventArgs`
 
 ## [0.1.7] - 2026-03-30
 

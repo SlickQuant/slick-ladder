@@ -83,9 +83,10 @@ public class OrderBook
         bool isRemoval = false;
         if (side == Side.BID)
         {
-            existed = _bids.TryGetValue(price, out _);
+            existed = _bids.TryGetValue(price, out var existingBid);
             if (quantity > 0)
             {
+                if (existed) level.HasOwnOrders = existingBid.HasOwnOrders;
                 _bids.AddOrUpdate(price, level);
                 if (!existed)
                 {
@@ -105,9 +106,10 @@ public class OrderBook
         }
         else // ASK
         {
-            existed = _asks.TryGetValue(price, out _);
+            existed = _asks.TryGetValue(price, out var existingAsk);
             if (quantity > 0)
             {
+                if (existed) level.HasOwnOrders = existingAsk.HasOwnOrders;
                 _asks.AddOrUpdate(price, level);
                 if (!existed)
                 {
@@ -139,6 +141,20 @@ public class OrderBook
     public void UpdateLevel(PriceLevel priceLevel)
     {
         UpdateLevel(priceLevel.Price, priceLevel.Quantity, priceLevel.NumOrders, priceLevel.Side);
+    }
+
+    /// <summary>
+    /// Mark a price level as having (or not having) own orders.
+    /// The flag is preserved across subsequent market data updates.
+    /// </summary>
+    public void SetHasOwnOrders(decimal price, Side side, bool value)
+    {
+        var book = side == Side.BID ? _bids : _asks;
+        if (book.TryGetValue(price, out var level))
+        {
+            level.HasOwnOrders = value;
+            book.AddOrUpdate(price, level);
+        }
     }
 
     /// <summary>

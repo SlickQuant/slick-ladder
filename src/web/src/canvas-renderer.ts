@@ -1026,6 +1026,13 @@ export class CanvasRenderer {
             // bid_qty
             this.offscreenCtx.fillText(qtyText, cols.bidQtyX + this.qtyColWidth / 2, y + this.rowHeight / 2);
 
+            // Own order highlight in PriceLevel mode
+            if (level.hasOwnOrders) {
+                this.offscreenCtx.strokeStyle = this.colors.ownOrderBorder;
+                this.offscreenCtx.lineWidth = 2;
+                this.offscreenCtx.strokeRect(cols.bidQtyX, y + 1, this.qtyColWidth, this.rowHeight - 2);
+            }
+
             // price
             this.offscreenCtx.fillText(priceText, cols.priceX + this.priceColWidth / 2, y + this.rowHeight / 2);
 
@@ -1048,6 +1055,13 @@ export class CanvasRenderer {
 
             // ask_qty
             this.offscreenCtx.fillText(qtyText, cols.askQtyX + this.qtyColWidth / 2, y + this.rowHeight / 2);
+
+            // Own order highlight in PriceLevel mode
+            if (level.hasOwnOrders) {
+                this.offscreenCtx.strokeStyle = this.colors.ownOrderBorder;
+                this.offscreenCtx.lineWidth = 2;
+                this.offscreenCtx.strokeRect(cols.askQtyX, y + 1, this.qtyColWidth, this.rowHeight - 2);
+            }
 
             // ask_order_count (if enabled)
             if (cols.askOrderX >= 0) {

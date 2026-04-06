@@ -154,6 +154,16 @@ public class PriceLadderCore
     }
 
     /// <summary>
+    /// Mark a price level as having (or not having) own orders, then immediately emit a snapshot.
+    /// The flag is preserved across subsequent market data updates.
+    /// </summary>
+    public void SetHasOwnOrders(decimal price, Side side, bool value)
+    {
+        _orderBook.SetHasOwnOrders(price, side, value);
+        _batcher.EmitCurrentSnapshot();
+    }
+
+    /// <summary>
     /// Clear any queued updates without flushing.
     /// Use when stopping a data feed to drop in-flight updates.
     /// </summary>

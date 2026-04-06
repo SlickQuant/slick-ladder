@@ -186,13 +186,14 @@ export class PriceLadder {
         let isAddition = false;
         let isRemoval = false;
 
+        const existingLevel = map.get(roundedPrice);
         const level: BookLevel = {
             price: roundedPrice,
             quantity: update.quantity,
             numOrders: update.numOrders,
             side: update.side,
             isDirty: true,
-            hasOwnOrders: false
+            hasOwnOrders: existingLevel?.hasOwnOrders ?? false
         };
 
         if (update.quantity > 0) {
@@ -357,6 +358,19 @@ export class PriceLadder {
         };
 
         this.rafId = requestAnimationFrame(render);
+    }
+
+    /**
+     * Mark a price level as having (or not having) own orders.
+     * The flag is preserved across subsequent market data updates.
+     */
+    public setHasOwnOrders(price: number, side: Side, value: boolean): void {
+        const roundedPrice = this.roundToTick(price);
+        const map = side === Side.BID ? this.bids : this.asks;
+        const level = map.get(roundedPrice);
+        if (level) {
+            level.hasOwnOrders = value;
+        }
     }
 
     /**

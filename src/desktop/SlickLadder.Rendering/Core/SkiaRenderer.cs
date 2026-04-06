@@ -1132,6 +1132,12 @@ public class SkiaRenderer : IDisposable
                 _textPaint);
         }
 
+        // Own order highlight in PriceLevel mode
+        if (level.HasOwnOrders)
+        {
+            canvas.DrawRect(viewport.BidQtyColumnX, y + 1, viewport.QtyColWidth, RenderConfig.RowHeight - 2, _ownOrderBorderPaint);
+        }
+
         // Price (always show, even if empty)
         canvas.DrawText(
             level.Price.ToString("F2"),
@@ -1187,6 +1193,12 @@ public class SkiaRenderer : IDisposable
                 viewport.AskQtyColumnX + (viewport.QtyColWidth / 2),
                 textY,
                 _textPaint);
+        }
+
+        // Own order highlight in PriceLevel mode
+        if (level.HasOwnOrders)
+        {
+            canvas.DrawRect(viewport.AskQtyColumnX, y + 1, viewport.QtyColWidth, RenderConfig.RowHeight - 2, _ownOrderBorderPaint);
         }
 
         // Ask order count (if enabled and not empty)

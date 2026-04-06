@@ -59,6 +59,20 @@ public partial class MainWindow : Window
         var priceStr = trade.Price.HasValue ? $"${trade.Price:F2}" : "empty level";
         System.Diagnostics.Debug.WriteLine($"{action} @ {priceStr}");
         MessageBox.Show($"{action} @ {priceStr}", "Trade Clicked");
+
+        if (!trade.Price.HasValue || _viewModel == null) return;
+
+        _viewModel.Core.SetHasOwnOrders(trade.Price.Value, trade.Side, true);
+
+        // Randomly simulate order removal after 2-8 seconds
+        var delay = TimeSpan.FromMilliseconds(2000 + Random.Shared.Next(6000));
+        var removalTimer = new DispatcherTimer { Interval = delay };
+        removalTimer.Tick += (s, e) =>
+        {
+            removalTimer.Stop();
+            _viewModel?.Core.SetHasOwnOrders(trade.Price.Value, trade.Side, false);
+        };
+        removalTimer.Start();
     }
 
     private void UpdateMetrics(object? sender, EventArgs e)

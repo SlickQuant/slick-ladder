@@ -118,6 +118,11 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                     const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
                     console.log(`${action} @ ${priceStr}`);
                     alert(`${action} @ ${priceStr}`);
+                    if (price !== null && ladder) {
+                        ladder.setHasOwnOrders(price, side, true);
+                        const delay = 2000 + Math.random() * 6000;
+                        setTimeout(() => ladder?.setHasOwnOrders(price, side, false), delay);
+                    }
                 },
                 onPriceHover: (price) => {
                     const tooltip = document.getElementById('tooltip');
@@ -197,6 +202,11 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
                 console.log(`${action} @ ${priceStr}`);
                 alert(`${action} @ ${priceStr}`);
+                if (price !== null && ladder) {
+                    ladder.setHasOwnOrders(price, side, true);
+                    const delay = 2000 + Math.random() * 6000;
+                    setTimeout(() => ladder?.setHasOwnOrders(price, side, false), delay);
+                }
             },
             onPriceHover: (price) => {
                 const tooltip = document.getElementById('tooltip');
