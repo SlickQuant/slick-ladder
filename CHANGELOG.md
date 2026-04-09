@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-09
+
 ### Added
 - **`displayTickSize` config option (price level aggregation)**: When `displayTickSize > tickSize`, the ladder aggregates raw price levels into coarser display buckets before rendering. Quantities and order counts are summed; `hasOwnOrders` and `isDirty` are OR'd across merged levels.
   - Web (`aggregation.ts`): Pure `bucketPrice`, `aggregateLevels`, `remapDirtyChanges` utilities applied in `main.ts` and `wasm-adapter.ts` at snapshot time — raw data stores are unchanged
