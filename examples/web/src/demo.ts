@@ -89,6 +89,11 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const tickSizeSelect = document.getElementById('tick-size') as HTMLSelectElement;
             const tickSize = parseFloat(tickSizeSelect?.value ?? '0.01');
 
+            // Get current display tick size from dropdown
+            const displayTickSizeSelect = document.getElementById('display-tick-size') as HTMLSelectElement;
+            const rawDisplayTickSize = parseFloat(displayTickSizeSelect?.value ?? '0');
+            const displayTickSize = rawDisplayTickSize > 0 ? Math.max(tickSize, rawDisplayTickSize) : tickSize;
+
             // Get current data mode
             const dataModeSelect = document.getElementById('data-mode') as HTMLSelectElement;
             const dataMode = (dataModeSelect?.value as 'PriceLevel' | 'MBO') ?? 'PriceLevel';
@@ -108,6 +113,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 height: 600,
                 rowHeight: 24,
                 tickSize,
+                displayTickSize,
                 mode: dataMode,
                 showVolumeBars,
                 showOrderCount,
@@ -172,6 +178,11 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         const tickSizeSelect = document.getElementById('tick-size') as HTMLSelectElement;
         const tickSize = parseFloat(tickSizeSelect?.value ?? '0.01');
 
+        // Get current display tick size from dropdown
+        const displayTickSizeSelect2 = document.getElementById('display-tick-size') as HTMLSelectElement;
+        const rawDisplayTickSize2 = parseFloat(displayTickSizeSelect2?.value ?? '0');
+        const displayTickSize2 = rawDisplayTickSize2 > 0 ? Math.max(tickSize, rawDisplayTickSize2) : tickSize;
+
         // Get current data mode
         const dataModeSelect = document.getElementById('data-mode') as HTMLSelectElement;
         const dataMode = (dataModeSelect?.value as 'PriceLevel' | 'MBO') ?? 'PriceLevel';
@@ -191,6 +202,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             height: 600,
             rowHeight: 24,
             tickSize,
+            displayTickSize: displayTickSize2,
             mode: dataMode,
             readOnly: false,
             showVolumeBars,
@@ -718,8 +730,19 @@ function setupControls() {
         const backendSelect = document.getElementById('backend-select') as HTMLSelectElement;
         const currentBackend = backendSelect?.value as 'typescript' | 'wasm' ?? 'typescript';
 
-        // Reinitialize with new tick size
+        // Reinitialize with new tick size (also picks up current display tick size)
         await initializeBackend(currentBackend, container);
+    });
+
+    // Display tick size (aggregation) changing - live update, no recreation needed
+    const displayTickSizeSelect = document.getElementById('display-tick-size') as HTMLSelectElement;
+    displayTickSizeSelect?.addEventListener('change', () => {
+        if (!ladder) return;
+        const rawValue = parseFloat(displayTickSizeSelect.value);
+        const tickSize = ladder.getTickSize();
+        // 0 means "same as tick size"
+        const displayTickSize = rawValue > 0 ? Math.max(tickSize, rawValue) : tickSize;
+        ladder.updateConfig({ displayTickSize });
     });
 }
 

@@ -52,6 +52,7 @@ SlickLadder renders order book ladders across web, WASM, and desktop (WPF/Avalon
 
 ### Display Features
 - Configurable tick sizes (0.01, 0.05, 0.10, 0.25, 1.00)
+- **Display tick size aggregation**: group multiple raw price levels into coarser display buckets (e.g. show 0.10 rows when tick size is 0.01)
 - Toggle volume bars and order count columns
 - Own order highlighting with gold border
 - Price level scrolling with mouse wheel
@@ -202,6 +203,32 @@ ladder.setShowOrderCount(true);
 
 // Clean up when done
 ladder.destroy();
+```
+
+#### Display Tick Size (Aggregation)
+
+Group raw price levels into coarser display buckets without changing the underlying data:
+
+```typescript
+// Create ladder with 0.01 tick size but display at 0.10 granularity
+const ladder = new PriceLadder({
+    container: document.getElementById('ladder-container')!,
+    tickSize: 0.01,
+    displayTickSize: 0.10   // Show rows at 0.10 intervals; quantities are summed
+});
+
+// Change aggregation at runtime — no need to recreate the ladder
+ladder.updateConfig({ displayTickSize: 0.50 });
+
+// Revert to no aggregation
+ladder.updateConfig({ displayTickSize: 0.01 });
+```
+
+For desktop (WPF / Avalonia), set the property on the ViewModel and viewport:
+
+```csharp
+viewModel.DisplayTickSize = 0.10m;           // aggregates data
+priceLadder.GetViewport().DisplayTickSize = 0.10m; // updates price grid
 ```
 
 #### MBO Mode (Market-By-Order)
@@ -358,6 +385,7 @@ core.ProcessPriceLevelUpdate(update);
 | `rowHeight` | `number` | `24` | Height of each price row in pixels |
 | `visibleLevels` | `number` | `50` | Number of price levels to track |
 | `tickSize` | `number` | `0.01` | Minimum price increment |
+| `displayTickSize` | `number` | same as `tickSize` | Display bucket size — must be ≥ `tickSize`. When larger, raw levels are aggregated into coarser rows (quantities summed, `hasOwnOrders` OR'd). |
 | `mode` | `'PriceLevel' \| 'MBO'` | `'PriceLevel'` | Data visualization mode |
 | `readOnly` | `boolean` | `false` | Disable click interactions |
 | `showVolumeBars` | `boolean` | `true` | Show volume bar visualization |
@@ -397,6 +425,7 @@ const DEFAULT_COLORS = {
 | `setShowVolumeBars` | `boolean` | `void` | Toggle volume bars |
 | `setShowOrderCount` | `boolean` | `void` | Toggle order count columns |
 | `setRemovalMode` | `'showEmpty' \| 'removeRow'` | `void` | Set how empty price levels are displayed |
+| `updateConfig` | `{ tickSize?, displayTickSize? }` | `void` | Live-update tick size or display tick size without recreating the ladder |
 | `setReadOnly` | `boolean` | `void` | Enable/disable interactions |
 | `resize` | `width?, height?` | `void` | Resize the canvas |
 | `getMetrics` | - | `object` | Get performance metrics |
@@ -530,7 +559,7 @@ Market Data Feed
 Aggregates all orders at each price level into a single quantity.
 
 **Characteristics:**
-- One row per distinct price
+- One row per distinct price (or per display bucket when `displayTickSize > tickSize`)
 - Single volume bar per level
 - Lower memory footprint
 - Suitable for most trading applications

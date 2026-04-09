@@ -223,6 +223,35 @@
                             <ComboBoxItem Content="0.25 (Quarter)" Tag="0.25"/>
                             <ComboBoxItem Content="1.00 (Dollar)" Tag="1.00"/>
                         </ComboBox>
+
+                        <TextBlock Text="Display Tick Size (Aggregation):" Foreground="White" Margin="0,10,0,5"/>
+                        <ComboBox x:Name="DisplayTickSizeCombo"
+                                 Background="White"
+                                 Foreground="#000000"
+                                 BorderBrush="#444"
+                                 FontSize="13"
+                                 SelectedIndex="0"
+                                 SelectionChanged="DisplayTickSizeCombo_SelectionChanged">
+                            <ComboBox.Resources>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="Foreground" Value="#000000"/>
+                                    <Setter Property="Background" Value="White"/>
+                                    <Style.Triggers>
+                                        <Trigger Property="IsHighlighted" Value="True">
+                                            <Setter Property="Background" Value="#3b82f6"/>
+                                            <Setter Property="Foreground" Value="#ffffff"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </ComboBox.Resources>
+                            <ComboBoxItem Content="Same as tick size (no aggregation)" Tag="0"/>
+                            <ComboBoxItem Content="0.05" Tag="0.05"/>
+                            <ComboBoxItem Content="0.10" Tag="0.10"/>
+                            <ComboBoxItem Content="0.25" Tag="0.25"/>
+                            <ComboBoxItem Content="0.50" Tag="0.50"/>
+                            <ComboBoxItem Content="1.00" Tag="1.00"/>
+                            <ComboBoxItem Content="5.00" Tag="5.00"/>
+                        </ComboBox>
                     </StackPanel>
                 </GroupBox>
 

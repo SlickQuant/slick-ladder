@@ -83,6 +83,7 @@ export interface PriceLadderConfig {
     rowHeight?: number;
     visibleLevels?: number;
     tickSize?: number;
+    displayTickSize?: number; // Display bucket size >= tickSize. Default: same as tickSize (no aggregation)
     mode?: 'PriceLevel' | 'MBO';
     readOnly?: boolean;
     showVolumeBars?: boolean;

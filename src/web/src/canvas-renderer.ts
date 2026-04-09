@@ -38,6 +38,7 @@ export class CanvasRenderer {
     private lastShowOrderCount: boolean = true;
     private lastShowVolumeBars: boolean = true;
     private lastTickSize: number = 0.01;
+    private lastDisplayTickSize: number = 0.01;
     private lastDensePackingScrollOffset: number = 0;
     private lastReferencePrice: number = 0;
     private lastCenterPrice: number = 0;
@@ -70,6 +71,7 @@ export class CanvasRenderer {
 
     // Price configuration
     private tickSize: number;
+    private displayTickSize: number;
 
     // Segment rendering state
     private barColumnWidth: number;
@@ -85,7 +87,8 @@ export class CanvasRenderer {
         showOrderCount: boolean = true,
         tickSize: number = 0.01,
         mboOrderSizeFilter: number = DEFAULT_MBO_ORDER_SIZE_FILTER,
-        minQuantityThreshold: number = DEFAULT_MIN_QUANTITY_THRESHOLD
+        minQuantityThreshold: number = DEFAULT_MIN_QUANTITY_THRESHOLD,
+        displayTickSize: number = tickSize
     ) {
         this.canvas = canvas;
         this.width = width;
@@ -95,6 +98,7 @@ export class CanvasRenderer {
         this.showVolumeBars = showVolumeBars;
         this.showOrderCount = showOrderCount;
         this.tickSize = tickSize;
+        this.displayTickSize = Math.max(tickSize, displayTickSize);
         this.mboOrderSizeFilter = Math.max(0, mboOrderSizeFilter);
         this.minQuantityThreshold = minQuantityThreshold;
         this.visibleRows = Math.floor(height / rowHeight);
@@ -156,7 +160,7 @@ export class CanvasRenderer {
      * Format price based on tick size
      */
     private formatPrice(price: number): string {
-        return price.toFixed(this.getDecimalPlaces(this.tickSize));
+        return price.toFixed(this.getDecimalPlaces(this.displayTickSize));
     }
 
     /**
@@ -554,7 +558,7 @@ export class CanvasRenderer {
             referencePrice = 0;
         } else if (this.centerPrice === 0) {
             const midPrice = snapshot.midPrice ?? 100.0;
-            this.centerPrice = Math.round(midPrice / this.tickSize) * this.tickSize;
+            this.centerPrice = Math.round(midPrice / this.displayTickSize) * this.displayTickSize;
             referencePrice = this.centerPrice;
         } else {
             referencePrice = this.centerPrice;
@@ -575,7 +579,8 @@ export class CanvasRenderer {
         if (this.lastRemovalMode !== this.removalMode ||
             this.lastShowOrderCount !== this.showOrderCount ||
             this.lastShowVolumeBars !== this.showVolumeBars ||
-            this.lastTickSize !== this.tickSize) {
+            this.lastTickSize !== this.tickSize ||
+            this.lastDisplayTickSize !== this.displayTickSize) {
             return true;
         }
 
@@ -596,6 +601,7 @@ export class CanvasRenderer {
         this.lastShowOrderCount = this.showOrderCount;
         this.lastShowVolumeBars = this.showVolumeBars;
         this.lastTickSize = this.tickSize;
+        this.lastDisplayTickSize = this.displayTickSize;
         this.lastDensePackingScrollOffset = this.scrollOffset;
         this.lastReferencePrice = referencePrice;
         this.lastCenterPrice = this.centerPrice;
@@ -682,7 +688,7 @@ export class CanvasRenderer {
 
                 const denseResult = this.tryGetDenseLevelForRow(rowIndex, denseLayout);
                 if (denseResult) {
-                    const normalizedPrice = Math.round(denseResult.level.price / this.tickSize) * this.tickSize;
+                    const normalizedPrice = Math.round(denseResult.level.price / this.displayTickSize) * this.displayTickSize;
                     const orders = denseResult.side === Side.ASK
                         ? this.getOrdersForLevel(snapshot.askOrders, normalizedPrice, this.askOrdersByPriceKey)
                         : this.getOrdersForLevel(snapshot.bidOrders, normalizedPrice, this.bidOrdersByPriceKey);
@@ -690,8 +696,8 @@ export class CanvasRenderer {
                 }
             } else {
                 const rowOffset = rowIndex - midRow;
-                const price = referencePrice - (rowOffset * this.tickSize);
-                const roundedPrice = Math.round(price / this.tickSize) * this.tickSize;
+                const price = referencePrice - (rowOffset * this.displayTickSize);
+                const roundedPrice = Math.round(price / this.displayTickSize) * this.displayTickSize;
                 const priceKey = this.formatPrice(roundedPrice);
 
                 this.renderPriceOnly(rowIndex, roundedPrice);
@@ -734,7 +740,7 @@ export class CanvasRenderer {
 
         for (const level of snapshot.asks) {
             if (level.quantity > 0) {
-                const roundedPrice = Math.round(level.price / this.tickSize) * this.tickSize;
+                const roundedPrice = Math.round(level.price / this.displayTickSize) * this.displayTickSize;
                 const priceKey = this.formatPrice(roundedPrice);
                 levelMap.set(priceKey, level);
             }
@@ -742,7 +748,7 @@ export class CanvasRenderer {
 
         for (const level of snapshot.bids) {
             if (level.quantity > 0) {
-                const roundedPrice = Math.round(level.price / this.tickSize) * this.tickSize;
+                const roundedPrice = Math.round(level.price / this.displayTickSize) * this.displayTickSize;
                 const priceKey = this.formatPrice(roundedPrice);
                 levelMap.set(priceKey, level);
             }
@@ -762,7 +768,7 @@ export class CanvasRenderer {
                 const y = currentY + (i * this.rowHeight);
                 if (y >= 0 && y < this.height) {
                     const level = layout.nonEmptyAsks[askIndex];
-                    const normalizedPrice = Math.round(level.price / this.tickSize) * this.tickSize;
+                    const normalizedPrice = Math.round(level.price / this.displayTickSize) * this.displayTickSize;
                     const orders = this.getOrdersForLevel(snapshot.askOrders, normalizedPrice, this.askOrdersByPriceKey);
                     this.renderRow(Math.floor(y / this.rowHeight), level, orders);
                 }
@@ -777,7 +783,7 @@ export class CanvasRenderer {
                 const y = currentY + (i * this.rowHeight);
                 if (y >= 0 && y < this.height) {
                     const level = layout.nonEmptyBids[bidIndex];
-                    const normalizedPrice = Math.round(level.price / this.tickSize) * this.tickSize;
+                    const normalizedPrice = Math.round(level.price / this.displayTickSize) * this.displayTickSize;
                     const orders = this.getOrdersForLevel(snapshot.bidOrders, normalizedPrice, this.bidOrdersByPriceKey);
                     this.renderRow(Math.floor(y / this.rowHeight), level, orders);
                 }
@@ -911,7 +917,7 @@ export class CanvasRenderer {
 
     private priceToRowIndex(price: number, referencePrice: number, midRow: number): number {
         const priceDelta = price - referencePrice;
-        const rowOffset = -Math.round(priceDelta / this.tickSize);
+        const rowOffset = -Math.round(priceDelta / this.displayTickSize);
         return midRow + rowOffset;
     }
 
@@ -956,9 +962,9 @@ export class CanvasRenderer {
         for (let rowIndex = 0; rowIndex <= this.visibleRows; rowIndex++) {
             // Calculate what price this row represents
             const rowOffset = rowIndex - midRow;
-            const price = referencePrice - (rowOffset * this.tickSize);
-            // Round to tick size to avoid floating-point precision issues
-            const roundedPrice = Math.round(price / this.tickSize) * this.tickSize;
+            const price = referencePrice - (rowOffset * this.displayTickSize);
+            // Round to display tick size to avoid floating-point precision issues
+            const roundedPrice = Math.round(price / this.displayTickSize) * this.displayTickSize;
 
             // Render just the price label (no quantity/orders)
             this.renderPriceOnly(rowIndex, roundedPrice);
@@ -971,8 +977,8 @@ export class CanvasRenderer {
         // Step 3: Overlay data on rows that have levels
         for (let rowIndex = 0; rowIndex <= this.visibleRows; rowIndex++) {
             const rowOffset = rowIndex - midRow;
-            const price = referencePrice - (rowOffset * this.tickSize);
-            const roundedPrice = Math.round(price / this.tickSize) * this.tickSize;
+            const price = referencePrice - (rowOffset * this.displayTickSize);
+            const roundedPrice = Math.round(price / this.displayTickSize) * this.displayTickSize;
             const priceKey = this.formatPrice(roundedPrice);
 
             const level = levelsByPrice.get(priceKey);
@@ -1448,20 +1454,20 @@ export class CanvasRenderer {
         let orders = orderMap.get(price);
         if (orders) return orders;
 
-        const roundedPrice = Math.round(price / this.tickSize) * this.tickSize;
+        const roundedPrice = Math.round(price / this.displayTickSize) * this.displayTickSize;
         orders = orderMap.get(roundedPrice);
         if (orders) return orders;
 
-        const epsilon = Math.max(this.tickSize / 1000, 1e-6);
+        const epsilon = Math.max(this.displayTickSize / 1000, 1e-6);
         for (const [key, value] of orderMap.entries()) {
             if (Math.abs(key - price) <= epsilon) {
                 return value;
             }
         }
 
-        const targetTick = Math.round(roundedPrice / this.tickSize);
+        const targetTick = Math.round(roundedPrice / this.displayTickSize);
         for (const [key, value] of orderMap.entries()) {
-            const keyTick = Math.round(key / this.tickSize);
+            const keyTick = Math.round(key / this.displayTickSize);
             if (keyTick === targetTick) {
                 return value;
             }
@@ -1596,16 +1602,16 @@ export class CanvasRenderer {
                 : (this.currentSnapshot.midPrice ?? 50000);
 
             const rowOffset = rowIndex - midRow;
-            const price = referencePrice - (rowOffset * this.tickSize);
-            const roundedPrice = Math.round(price / this.tickSize) * this.tickSize;
+            const price = referencePrice - (rowOffset * this.displayTickSize);
+            const roundedPrice = Math.round(price / this.displayTickSize) * this.displayTickSize;
 
             // Find level at this price
-            const askLevel = this.currentSnapshot.asks.find(a => Math.abs(a.price - roundedPrice) < this.tickSize * 0.5);
+            const askLevel = this.currentSnapshot.asks.find(a => Math.abs(a.price - roundedPrice) < this.displayTickSize * 0.5);
             if (askLevel && askLevel.quantity > 0) {
                 return { price: askLevel.price, quantity: askLevel.quantity, side: Side.ASK };
             }
 
-            const bidLevel = this.currentSnapshot.bids.find(b => Math.abs(b.price - roundedPrice) < this.tickSize * 0.5);
+            const bidLevel = this.currentSnapshot.bids.find(b => Math.abs(b.price - roundedPrice) < this.displayTickSize * 0.5);
             if (bidLevel && bidLevel.quantity > 0) {
                 return { price: bidLevel.price, quantity: bidLevel.quantity, side: Side.BID };
             }
@@ -1738,13 +1744,13 @@ export class CanvasRenderer {
         if (this.centerPrice === 0 && this.currentSnapshot) {
             const midPrice = this.currentSnapshot.midPrice;
             if (midPrice !== null) {
-                // Round to tick size to ensure proper alignment
-                this.centerPrice = Math.round(midPrice / this.tickSize) * this.tickSize;
+                // Round to display tick size to ensure proper alignment
+                this.centerPrice = Math.round(midPrice / this.displayTickSize) * this.displayTickSize;
             }
         }
 
-        // Apply scroll delta and round to tick size
-        this.centerPrice = Math.round((this.centerPrice + delta) / this.tickSize) * this.tickSize;
+        // Apply scroll delta and round to display tick size
+        this.centerPrice = Math.round((this.centerPrice + delta) / this.displayTickSize) * this.displayTickSize;
 
         if (this.currentSnapshot) {
             this.render(this.currentSnapshot);
@@ -1754,6 +1760,16 @@ export class CanvasRenderer {
     /**
      * Set removal mode (affects how empty levels are handled)
      */
+    public setDisplayTickSize(value: number): void {
+        this.displayTickSize = Math.max(this.tickSize, value);
+        this.needsFullRedraw = true;
+        this.centerPrice = 0; // Reset so it re-snaps to new tick grid on next render
+    }
+
+    public forceFullRedraw(): void {
+        this.needsFullRedraw = true;
+    }
+
     public setRemovalMode(mode: 'showEmpty' | 'removeRow'): void {
         this.removalMode = mode;
         this.scrollOffset = 0; // Reset scroll when changing modes

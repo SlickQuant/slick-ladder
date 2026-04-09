@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private ComboBox? _dataModeCombo;
     private ComboBox? _removalModeCombo;
     private ComboBox? _tickSizeCombo;
+    private ComboBox? _displayTickSizeCombo;
     private TextBox? _minQuantityThresholdText;
     private TextBox? _mboOrderSizeFilterText;
 
@@ -56,6 +57,7 @@ public partial class MainWindow : Window
         _dataModeCombo = this.FindControl<ComboBox>("DataModeCombo");
         _removalModeCombo = this.FindControl<ComboBox>("RemovalModeCombo");
         _tickSizeCombo = this.FindControl<ComboBox>("TickSizeCombo");
+        _displayTickSizeCombo = this.FindControl<ComboBox>("DisplayTickSizeCombo");
         _minQuantityThresholdText = this.FindControl<TextBox>("MinQuantityThresholdText");
         _mboOrderSizeFilterText = this.FindControl<TextBox>("MboOrderSizeFilterText");
 
@@ -383,6 +385,16 @@ public partial class MainWindow : Window
             {
                 priceLadder.GetViewport().TickSize = tickSize;
 
+                // Re-apply display tick size (re-clamps to new tick size)
+                var rawDisplayValue = 0m;
+                if (_displayTickSizeCombo?.SelectedItem is ComboBoxItem displayItem && displayItem.Tag is string displayTag)
+                {
+                    rawDisplayValue = decimal.Parse(displayTag, CultureInfo.InvariantCulture);
+                }
+                var displayTickSize = rawDisplayValue > 0 ? Math.Max(tickSize, rawDisplayValue) : tickSize;
+                priceLadder.GetViewport().DisplayTickSize = displayTickSize;
+                _viewModel.DisplayTickSize = displayTickSize;
+
                 // Re-center viewport on a price aligned to the new tick size
                 var basePrice = 50000.00m;
                 var alignedPrice = Math.Round(basePrice / tickSize) * tickSize;
@@ -396,6 +408,29 @@ public partial class MainWindow : Window
                 if (_startButton != null) _startButton.IsEnabled = false;
                 if (_stopButton != null) _stopButton.IsEnabled = true;
             }
+        }
+    }
+
+    private void DisplayTickSizeCombo_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (_displayTickSizeCombo?.SelectedItem == null || _viewModel == null) return;
+
+        var selectedItem = (ComboBoxItem)_displayTickSizeCombo.SelectedItem;
+        if (selectedItem.Tag is not string tagStr) return;
+
+        var rawValue = decimal.Parse(tagStr, CultureInfo.InvariantCulture);
+        var priceLadder = this.FindControl<global::SlickLadder.Avalonia.Controls.PriceLadderControl>("PriceLadder");
+        var viewport = priceLadder?.GetViewport();
+        var tickSize = viewport?.TickSize ?? 0.01m;
+        var displayTickSize = rawValue > 0 ? Math.Max(tickSize, rawValue) : tickSize;
+
+        // Update ViewModel (controls data aggregation)
+        _viewModel.DisplayTickSize = displayTickSize;
+
+        // Update ViewportManager (controls rendering grid)
+        if (viewport != null)
+        {
+            viewport.DisplayTickSize = displayTickSize;
         }
     }
 

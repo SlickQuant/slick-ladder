@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`displayTickSize` config option (price level aggregation)**: When `displayTickSize > tickSize`, the ladder aggregates raw price levels into coarser display buckets before rendering. Quantities and order counts are summed; `hasOwnOrders` and `isDirty` are OR'd across merged levels.
+  - Web (`aggregation.ts`): Pure `bucketPrice`, `aggregateLevels`, `remapDirtyChanges` utilities applied in `main.ts` and `wasm-adapter.ts` at snapshot time — raw data stores are unchanged
+  - Desktop (`PriceLadderViewModel.cs`): `AggregateLevels` applied in `OnSnapshotReady` before the snapshot reaches the renderer; `ViewportManager.DisplayTickSize` drives the price grid step size
+  - `PriceLadder.updateConfig({ displayTickSize })` live-updates aggregation without recreating the ladder (web)
+  - Bids bucket with `Math.floor`, asks with `Math.ceil` — prevents bid and ask from collapsing into the same row when the spread straddles a bucket boundary
+  - Demo controls added to Web, WPF, and Avalonia demos (Display Tick Size dropdown with options: same as tick size, 0.05, 0.10, 0.25, 0.50, 1.00, 5.00)
+
+### Fixed
+- **Show Empty Rows + aggregation (desktop)**: The show-empty-rows price grid was generated at raw `tickSize` intervals even when `displayTickSize` was set coarser. Empty rows now step at `displayTickSize` intervals, matching web behaviour.
+
 ## [0.1.8] - 2026-04-06
 
 ### Added

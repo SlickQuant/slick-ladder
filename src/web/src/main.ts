@@ -17,6 +17,7 @@ import {
     DEFAULT_MIN_QUANTITY_THRESHOLD
 } from './types';
 import { MBOManager } from './mbo-manager';
+import { aggregateLevels, remapDirtyChanges } from './aggregation';
 
 /**
  * Main Price Ladder component for web.
@@ -74,6 +75,7 @@ export class PriceLadder {
             rowHeight: config.rowHeight || 24,
             visibleLevels: config.visibleLevels || 50,
             tickSize: config.tickSize || 0.01,
+            displayTickSize: Math.max(config.tickSize || 0.01, config.displayTickSize || config.tickSize || 0.01),
             mode: config.mode || 'PriceLevel',
             readOnly: config.readOnly || false,
             showVolumeBars,
@@ -111,7 +113,8 @@ export class PriceLadder {
             this.config.showOrderCount,
             this.config.tickSize,
             this.config.mboOrderSizeFilter,
-            this.config.minQuantityThreshold
+            this.config.minQuantityThreshold,
+            this.config.displayTickSize
         );
 
         // Set removal mode from config
@@ -285,15 +288,22 @@ export class PriceLadder {
      * Get current snapshot
      */
     private getSnapshot(): OrderBookSnapshot {
+        const dts = this.config.displayTickSize;
+        const ts = this.config.tickSize;
+        const isAggregating = dts > ts;
+
         if (this.dataMode === 'MBO') {
-            const bids = this.mboManager.getBidLevels();
-            const asks = this.mboManager.getAskLevels();
+            let bids = this.mboManager.getBidLevels();
+            let asks = this.mboManager.getAskLevels();
+            bids = aggregateLevels(bids, dts, ts, false);
+            asks = aggregateLevels(asks, dts, ts, true);
             const bestBid = bids.length > 0 ? bids[bids.length - 1].price : null;
             const bestAsk = asks.length > 0 ? asks[0].price : null;
             const midPrice = bestBid !== null && bestAsk !== null
                 ? (bestBid + bestAsk) / 2
                 : null;
             const dirtyState = this.mboManager.consumeDirtyState();
+            const dirtyChanges = remapDirtyChanges(dirtyState.dirtyChanges, dts, ts);
 
             return {
                 bestBid,
@@ -302,9 +312,9 @@ export class PriceLadder {
                 bids,
                 asks,
                 timestamp: Date.now(),
-                bidOrders: this.mboManager.getBidOrders(),
-                askOrders: this.mboManager.getAskOrders(),
-                dirtyChanges: dirtyState.dirtyChanges,
+                bidOrders: isAggregating ? null : this.mboManager.getBidOrders(),
+                askOrders: isAggregating ? null : this.mboManager.getAskOrders(),
+                dirtyChanges,
                 structuralChange: dirtyState.structuralChange
             };
         }
@@ -318,24 +328,29 @@ export class PriceLadder {
             .filter(level => level.quantity > 0)
             .sort((a, b) => a.price - b.price);
 
-        const bestBid = sortedBids.length > 0 ? sortedBids[sortedBids.length - 1].price : null;
-        const bestAsk = sortedAsks.length > 0 ? sortedAsks[0].price : null;
+        const bids = aggregateLevels(sortedBids, dts, ts, false);
+        const asks = aggregateLevels(sortedAsks, dts, ts, true);
+
+        const bestBid = bids.length > 0 ? bids[bids.length - 1].price : null;
+        const bestAsk = asks.length > 0 ? asks[0].price : null;
 
         const midPrice = bestBid !== null && bestAsk !== null
             ? (bestBid + bestAsk) / 2
             : null;
 
-        const dirtyChanges = this.dirtyChanges;
+        const rawDirtyChanges = this.dirtyChanges;
         const structuralChange = this.hasStructuralChange;
         this.dirtyChanges = [];
         this.hasStructuralChange = false;
+
+        const dirtyChanges = remapDirtyChanges(rawDirtyChanges, dts, ts);
 
         return {
             bestBid,
             bestAsk,
             midPrice,
-            bids: sortedBids,
-            asks: sortedAsks,
+            bids,
+            asks,
             timestamp: Date.now(),
             dirtyChanges,
             structuralChange
@@ -489,7 +504,8 @@ export class PriceLadder {
             this.config.showOrderCount,
             this.config.tickSize,
             this.config.mboOrderSizeFilter,
-            this.config.minQuantityThreshold
+            this.config.minQuantityThreshold,
+            this.config.displayTickSize
         );
 
         // Update interaction handler with new renderer
@@ -520,7 +536,8 @@ export class PriceLadder {
             this.config.showOrderCount,
             this.config.tickSize,
             this.config.mboOrderSizeFilter,
-            this.config.minQuantityThreshold
+            this.config.minQuantityThreshold,
+            this.config.displayTickSize
         );
 
         // Update interaction handler with new renderer
@@ -568,6 +585,21 @@ export class PriceLadder {
      */
     public getTickSize(): number {
         return this.config.tickSize;
+    }
+
+    /**
+     * Update display tick size at runtime without recreating the ladder.
+     */
+    public updateConfig(partial: Partial<Pick<PriceLadderConfig, 'tickSize' | 'displayTickSize'>>): void {
+        if (partial.tickSize !== undefined) {
+            this.config.tickSize = partial.tickSize;
+        }
+        const ts = this.config.tickSize;
+        const dts = Math.max(ts, partial.displayTickSize ?? this.config.displayTickSize ?? ts);
+        this.config.displayTickSize = dts;
+        this.renderer.setDisplayTickSize(dts);
+        this.dirtyChanges = [];
+        this.hasStructuralChange = false;
     }
 
     /**

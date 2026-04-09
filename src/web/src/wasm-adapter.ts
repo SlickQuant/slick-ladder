@@ -2,6 +2,7 @@ import { PriceLevel, OrderBookSnapshot, OrderUpdate, OrderUpdateType, PriceLadde
 import type { WorkerRequest, WorkerResponse } from './wasm-types';
 import { PriceLadder } from './main';
 import { CanvasRenderer } from './canvas-renderer';
+import { aggregateLevels, remapDirtyChanges } from './aggregation';
 
 /**
  * WASM-powered Price Ladder component
@@ -197,7 +198,8 @@ export class WasmPriceLadder extends PriceLadder {
             config.showOrderCount,
             config.tickSize,
             config.mboOrderSizeFilter,
-            config.minQuantityThreshold!
+            config.minQuantityThreshold!,
+            config.displayTickSize
         );
 
         // Update interaction handler with new renderer
@@ -230,7 +232,8 @@ export class WasmPriceLadder extends PriceLadder {
             config.showOrderCount,
             config.tickSize,
             config.mboOrderSizeFilter,
-            config.minQuantityThreshold!
+            config.minQuantityThreshold!,
+            config.displayTickSize
         );
 
         // Update interaction handler with new renderer
@@ -294,6 +297,45 @@ export class WasmPriceLadder extends PriceLadder {
             this.applyOwnOrderOverrides(this.lastSnapshot);
             this.renderer.render(this.lastSnapshot);
         }
+    }
+
+    /**
+     * Update display tick size at runtime.
+     * Overrides base class to re-aggregate and re-render the last WASM snapshot.
+     */
+    public override updateConfig(partial: Partial<Pick<PriceLadderConfig, 'tickSize' | 'displayTickSize'>>): void {
+        super.updateConfig(partial);
+        if (this.lastSnapshot) {
+            const config = (this as any).config;
+            const dts: number = config.displayTickSize;
+            const ts: number = config.tickSize;
+            if (dts > ts) {
+                this.lastSnapshot = this.applyAggregation(this.lastSnapshot, dts, ts);
+            }
+            this.renderer.render(this.lastSnapshot);
+        }
+    }
+
+    private applyAggregation(snapshot: OrderBookSnapshot, dts: number, ts: number): OrderBookSnapshot {
+        const bids = aggregateLevels(snapshot.bids, dts, ts, false);
+        const asks = aggregateLevels(snapshot.asks, dts, ts, true);
+        const bestBid = bids.length > 0 ? bids[bids.length - 1].price : null;
+        const bestAsk = asks.length > 0 ? asks[0].price : null;
+        const midPrice = bestBid !== null && bestAsk !== null ? (bestBid + bestAsk) / 2 : null;
+        const dirtyChanges = snapshot.dirtyChanges
+            ? remapDirtyChanges(snapshot.dirtyChanges, dts, ts)
+            : undefined;
+        return {
+            ...snapshot,
+            bids,
+            asks,
+            bestBid,
+            bestAsk,
+            midPrice,
+            bidOrders: null,
+            askOrders: null,
+            dirtyChanges
+        };
     }
 
     private applyOwnOrderOverrides(snapshot: OrderBookSnapshot): void {
@@ -485,9 +527,15 @@ export class WasmPriceLadder extends PriceLadder {
         // Apply own-order overrides set via setHasOwnOrders()
         this.applyOwnOrderOverrides(snapshot);
 
-        // Store the last snapshot for re-rendering on viewport changes
-        this.lastSnapshot = snapshot;
+        // Apply display tick size aggregation if configured
+        const config = (this as any).config;
+        const dts: number = config.displayTickSize ?? config.tickSize ?? 0.01;
+        const ts: number = config.tickSize ?? 0.01;
+        const aggregatedSnapshot = dts > ts ? this.applyAggregation(snapshot, dts, ts) : snapshot;
 
-        this.renderer.render(snapshot);
+        // Store the last snapshot for re-rendering on viewport changes
+        this.lastSnapshot = aggregatedSnapshot;
+
+        this.renderer.render(aggregatedSnapshot);
     }
 }

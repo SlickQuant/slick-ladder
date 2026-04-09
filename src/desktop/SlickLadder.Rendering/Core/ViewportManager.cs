@@ -72,6 +72,18 @@ public class ViewportManager
     // Price configuration
     public decimal TickSize { get; set; } = 0.01m;
 
+    /// <summary>
+    /// Display bucket size for aggregation. Must be >= TickSize.
+    /// When greater than TickSize, the ladder aggregates levels into coarser buckets.
+    /// Default: same as TickSize (no aggregation).
+    /// </summary>
+    public decimal DisplayTickSize
+    {
+        get => _displayTickSize;
+        set => _displayTickSize = value >= TickSize ? value : TickSize;
+    }
+    private decimal _displayTickSize = 0.01m;
+
     // Constants
     private const int RowHeight = RenderConfig.RowHeight;
 
@@ -82,8 +94,8 @@ public class ViewportManager
     {
         var halfLevels = VisibleLevels / 2;
         return (
-            CenterPrice - (halfLevels * TickSize),
-            CenterPrice + (halfLevels * TickSize)
+            CenterPrice - (halfLevels * DisplayTickSize),
+            CenterPrice + (halfLevels * DisplayTickSize)
         );
     }
 
@@ -94,7 +106,7 @@ public class ViewportManager
     public float PriceToPixel(decimal price)
     {
         var (minPrice, maxPrice) = GetVisibleRange();
-        var offsetFromMax = (maxPrice - price) / TickSize; // Invert: higher price = lower Y
+        var offsetFromMax = (maxPrice - price) / DisplayTickSize; // Invert: higher price = lower Y
         return (float)offsetFromMax * RowHeight;
     }
 
@@ -105,7 +117,7 @@ public class ViewportManager
     {
         var (minPrice, maxPrice) = GetVisibleRange();
         var levelIndex = (int)(pixelY / RowHeight);
-        return maxPrice - (levelIndex * TickSize); // Invert: top row = highest price
+        return maxPrice - (levelIndex * DisplayTickSize); // Invert: top row = highest price
     }
 
     /// <summary>
@@ -113,7 +125,7 @@ public class ViewportManager
     /// </summary>
     public void Scroll(int levelsDelta)
     {
-        CenterPrice += levelsDelta * TickSize;
+        CenterPrice += levelsDelta * DisplayTickSize;
     }
 
     /// <summary>

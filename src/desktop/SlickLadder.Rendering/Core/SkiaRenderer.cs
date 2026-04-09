@@ -41,6 +41,8 @@ public class SkiaRenderer : IDisposable
     private bool _lastShowOrderCount;
     private bool _lastShowVolumeBars;
     private decimal _lastTickSize;
+    private decimal _lastDisplayTickSize;
+    private decimal _currentDisplayTickSize = 0.01m; // Set at start of each Render() call
     private decimal _lastReferencePrice;
     private int _lastDensePackingScrollOffset;
     private decimal _lastCenterPrice;
@@ -148,6 +150,8 @@ public class SkiaRenderer : IDisposable
         var visibleRows = (viewport.Height + RenderConfig.RowHeight - 1) / RenderConfig.RowHeight;
         var midRow = visibleRows / 2;
         var tickSize = viewport.TickSize;
+        _currentDisplayTickSize = viewport.DisplayTickSize;
+        var displayTickSize = _currentDisplayTickSize;
         var referencePrice = viewport.CenterPrice != 0
             ? viewport.CenterPrice
             : (snapshot.MidPrice ?? 50000m);
@@ -161,11 +165,11 @@ public class SkiaRenderer : IDisposable
         var fullRedraw = ShouldFullRedraw(snapshot, viewport, referencePrice);
         if (fullRedraw)
         {
-            RenderFull(targetCanvas, snapshot, viewport, maxVolume, visibleRows, midRow, tickSize, referencePrice);
+            RenderFull(targetCanvas, snapshot, viewport, maxVolume, visibleRows, midRow, tickSize, displayTickSize, referencePrice);
         }
         else
         {
-            RenderDirty(targetCanvas, snapshot, viewport, maxVolume, visibleRows, midRow, tickSize, referencePrice);
+            RenderDirty(targetCanvas, snapshot, viewport, maxVolume, visibleRows, midRow, tickSize, displayTickSize, referencePrice);
         }
 
         using var image = _cachedSurface!.Snapshot();
@@ -379,7 +383,8 @@ public class SkiaRenderer : IDisposable
         if (_lastRemovalMode != viewport.RemovalMode ||
             _lastShowOrderCount != viewport.ShowOrderCount ||
             _lastShowVolumeBars != viewport.ShowVolumeBars ||
-            _lastTickSize != viewport.TickSize)
+            _lastTickSize != viewport.TickSize ||
+            _lastDisplayTickSize != viewport.DisplayTickSize)
         {
             return true;
         }
@@ -409,6 +414,7 @@ public class SkiaRenderer : IDisposable
         _lastShowOrderCount = viewport.ShowOrderCount;
         _lastShowVolumeBars = viewport.ShowVolumeBars;
         _lastTickSize = viewport.TickSize;
+        _lastDisplayTickSize = viewport.DisplayTickSize;
         _lastReferencePrice = referencePrice;
         _lastDensePackingScrollOffset = viewport.DensePackingScrollOffset;
         _lastCenterPrice = viewport.CenterPrice;
@@ -422,6 +428,7 @@ public class SkiaRenderer : IDisposable
         int visibleRows,
         int midRow,
         decimal tickSize,
+        decimal displayTickSize,
         decimal referencePrice)
     {
         canvas.Clear(_config.BackgroundColor);
@@ -471,14 +478,14 @@ public class SkiaRenderer : IDisposable
             for (int rowIndex = 0; rowIndex <= visibleRows; rowIndex++)
             {
                 var rowOffset = rowIndex - midRow;
-                var price = referencePrice - (rowOffset * tickSize);
-                price = Math.Round(price / tickSize) * tickSize;
+                var price = referencePrice - (rowOffset * displayTickSize);
+                price = Math.Round(price / displayTickSize) * displayTickSize;
 
                 var y = rowIndex * RenderConfig.RowHeight;
                 var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
 
                 canvas.DrawText(
-                    price.ToString("F2"),
+                    FormatPrice(price),
                     viewport.PriceColumnX + (viewport.PriceColWidth / 2),
                     textY,
                     _textPaint);
@@ -487,7 +494,7 @@ public class SkiaRenderer : IDisposable
             foreach (var level in snapshot.Asks)
             {
                 var priceDelta = level.Price - referencePrice;
-                var rowOffset = -(int)Math.Round(priceDelta / tickSize);
+                var rowOffset = -(int)Math.Round(priceDelta / displayTickSize);
                 var rowIndex = midRow + rowOffset;
 
                 if (rowIndex >= 0 && rowIndex <= visibleRows)
@@ -502,7 +509,7 @@ public class SkiaRenderer : IDisposable
             foreach (var level in snapshot.Bids)
             {
                 var priceDelta = level.Price - referencePrice;
-                var rowOffset = -(int)Math.Round(priceDelta / tickSize);
+                var rowOffset = -(int)Math.Round(priceDelta / displayTickSize);
                 var rowIndex = midRow + rowOffset;
 
                 if (rowIndex >= 0 && rowIndex <= visibleRows)
@@ -528,6 +535,7 @@ public class SkiaRenderer : IDisposable
         int visibleRows,
         int midRow,
         decimal tickSize,
+        decimal displayTickSize,
         decimal referencePrice)
     {
         if (snapshot.DirtyChanges == null || snapshot.DirtyChanges.Length == 0)
@@ -573,7 +581,7 @@ public class SkiaRenderer : IDisposable
             }
             else
             {
-                rowIndex = PriceToRowIndex(change.Price, referencePrice, tickSize, midRow);
+                rowIndex = PriceToRowIndex(change.Price, referencePrice, displayTickSize, midRow);
             }
 
             if (rowIndex.HasValue)
@@ -586,7 +594,7 @@ public class SkiaRenderer : IDisposable
         {
             // Structural changes (add/remove levels) cause rows to shift positions
             // The safest approach is to do a full redraw to ensure correctness
-            RenderFull(canvas, snapshot, viewport, maxVolume, visibleRows, midRow, tickSize, referencePrice);
+            RenderFull(canvas, snapshot, viewport, maxVolume, visibleRows, midRow, tickSize, displayTickSize, referencePrice);
             return;
         }
 
@@ -631,7 +639,7 @@ public class SkiaRenderer : IDisposable
             }
             else
             {
-                RenderShowEmptyRow(canvas, snapshot, viewport, maxVolume, rowIndex, y, midRow, tickSize, referencePrice);
+                RenderShowEmptyRow(canvas, snapshot, viewport, maxVolume, rowIndex, y, midRow, displayTickSize, referencePrice);
             }
         }
     }
@@ -681,16 +689,16 @@ public class SkiaRenderer : IDisposable
         int rowIndex,
         float y,
         int midRow,
-        decimal tickSize,
+        decimal displayTickSize,
         decimal referencePrice)
     {
         var rowOffset = rowIndex - midRow;
-        var price = referencePrice - (rowOffset * tickSize);
-        price = Math.Round(price / tickSize) * tickSize;
+        var price = referencePrice - (rowOffset * displayTickSize);
+        price = Math.Round(price / displayTickSize) * displayTickSize;
 
         var textY = y + (RenderConfig.RowHeight / 2) + (_textPaint.TextSize / 3);
         canvas.DrawText(
-            price.ToString("F2"),
+            FormatPrice(price),
             viewport.PriceColumnX + (RenderConfig.ColumnWidth / 2),
             textY,
             _textPaint);
@@ -1087,8 +1095,8 @@ public class SkiaRenderer : IDisposable
 
     private string FormatPrice(decimal price)
     {
-        // Format price with 2 decimal places (standard for prices)
-        return price.ToString("F2");
+        var decimalPlaces = GetDecimalPlaces(_currentDisplayTickSize);
+        return price.ToString($"F{decimalPlaces}");
     }
 
     private int GetDecimalPlaces(decimal threshold)

@@ -298,6 +298,15 @@ public partial class MainWindow : Window
         {
             PriceLadder.GetViewport().TickSize = tickSize;
 
+            // Re-apply display tick size (re-clamps to new tick size)
+            var rawDisplayValue = DisplayTickSizeCombo?.SelectedItem != null
+                ? decimal.Parse((string)((ComboBoxItem)DisplayTickSizeCombo.SelectedItem).Tag,
+                    System.Globalization.CultureInfo.InvariantCulture)
+                : 0m;
+            var displayTickSize = rawDisplayValue > 0 ? Math.Max(tickSize, rawDisplayValue) : tickSize;
+            PriceLadder.GetViewport().DisplayTickSize = displayTickSize;
+            _viewModel.DisplayTickSize = displayTickSize;
+
             // Re-center viewport on a price aligned to the new tick size
             var basePrice = 50000.00m;
             var alignedPrice = Math.Round(basePrice / tickSize) * tickSize;
@@ -310,6 +319,28 @@ public partial class MainWindow : Window
             _simulator?.Start();
             StartButton.IsEnabled = false;
             StopButton.IsEnabled = true;
+        }
+    }
+
+    private void DisplayTickSizeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DisplayTickSizeCombo?.SelectedItem == null || _viewModel == null) return;
+
+        var selectedItem = (ComboBoxItem)DisplayTickSizeCombo.SelectedItem;
+        var rawValue = decimal.Parse((string)selectedItem.Tag, System.Globalization.CultureInfo.InvariantCulture);
+
+        // 0 means "same as tick size" — get current tick size from viewport
+        var viewport = PriceLadder?.GetViewport();
+        var tickSize = viewport?.TickSize ?? 0.01m;
+        var displayTickSize = rawValue > 0 ? Math.Max(tickSize, rawValue) : tickSize;
+
+        // Update ViewModel (controls data aggregation)
+        _viewModel.DisplayTickSize = displayTickSize;
+
+        // Update ViewportManager (controls rendering grid)
+        if (viewport != null)
+        {
+            viewport.DisplayTickSize = displayTickSize;
         }
     }
 
