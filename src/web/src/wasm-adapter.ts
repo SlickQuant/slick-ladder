@@ -1,7 +1,6 @@
 import { PriceLevel, OrderBookSnapshot, OrderUpdate, OrderUpdateType, PriceLadderConfig, Side } from './types';
 import type { WorkerRequest, WorkerResponse } from './wasm-types';
 import { PriceLadder } from './main';
-import { CanvasRenderer } from './canvas-renderer';
 import { aggregateLevels, remapDirtyChanges } from './aggregation';
 
 /**
@@ -188,19 +187,7 @@ export class WasmPriceLadder extends PriceLadder {
         config.width = newWidth;
 
         // Recreate renderer with new settings
-        this.renderer = new CanvasRenderer(
-            (this as any).canvas,
-            config.width,
-            config.height,
-            config.rowHeight,
-            config.colors!,
-            config.showVolumeBars,
-            config.showOrderCount,
-            config.tickSize,
-            config.mboOrderSizeFilter,
-            config.minQuantityThreshold!,
-            config.displayTickSize
-        );
+        this.renderer = this.createRenderer();
 
         // Update interaction handler with new renderer
         const interactionHandler = (this as any).interactionHandler;
@@ -222,19 +209,7 @@ export class WasmPriceLadder extends PriceLadder {
         config.width = newWidth;
 
         // Recreate renderer with new settings
-        this.renderer = new CanvasRenderer(
-            (this as any).canvas,
-            config.width,
-            config.height,
-            config.rowHeight,
-            config.colors!,
-            config.showVolumeBars,
-            config.showOrderCount,
-            config.tickSize,
-            config.mboOrderSizeFilter,
-            config.minQuantityThreshold!,
-            config.displayTickSize
-        );
+        this.renderer = this.createRenderer();
 
         // Update interaction handler with new renderer
         const interactionHandler = (this as any).interactionHandler;

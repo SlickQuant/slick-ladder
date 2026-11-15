@@ -49,6 +49,9 @@ public partial class PriceLadderControl : UserControl
         SkiaCanvas.MouseWheel += OnMouseWheel;
         SkiaCanvas.MouseLeave += OnMouseLeave;
 
+        // Focusable so Space can re-center. The default focus visual shows for keyboard focus only
+        Focusable = true;
+
         // Listen for DataContext changes
         DataContextChanged += OnDataContextChanged;
     }
@@ -100,6 +103,16 @@ public partial class PriceLadderControl : UserControl
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)
     {
+        Focus();
+
+        // Middle button (wheel click): re-center
+        if (e.ChangedButton == MouseButton.Middle)
+        {
+            Recenter();
+            e.Handled = true;
+            return;
+        }
+
         if (_viewport == null || _viewModel == null || _viewModel.CurrentSnapshot == null) return;
 
         var pos = e.GetPosition(SkiaCanvas);
@@ -346,6 +359,14 @@ public partial class PriceLadderControl : UserControl
             return;
         }
 
+        // Auto-center pins the view, so vertical scroll is disabled. Still consume the wheel
+        // so a parent ScrollViewer doesn't scroll (matches preventDefault on web)
+        if (_viewport.AutoCenter)
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (_viewport.RemovalMode == LevelRemovalMode.RemoveRow)
         {
             // DENSE PACKING MODE: Row-based scrolling
@@ -389,6 +410,27 @@ public partial class PriceLadderControl : UserControl
         }
 
         // Mouse leave tracking can be added later when needed
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.Key == Key.Space)
+        {
+            Recenter();
+            e.Handled = true;
+        }
+        base.OnKeyDown(e);
+    }
+
+    /// <summary>
+    /// Move the bid/ask midpoint to the middle of the ladder once
+    /// </summary>
+    public void Recenter()
+    {
+        if (_viewport != null && _viewModel?.CurrentSnapshot is { } snapshot)
+        {
+            _viewport.Recenter(snapshot);
+        }
     }
 
     /// <summary>

@@ -80,6 +80,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const toggleOrdersCheckbox = document.getElementById('toggle-orders') as HTMLInputElement;
             const showVolumeBars = toggleBarsCheckbox?.checked ?? true;
             const showOrderCount = toggleOrdersCheckbox?.checked ?? false;
+            const autoCenter = getAutoCenter();
 
             // Get current removal mode from radio buttons
             const removalModeRadio = document.querySelector('input[name="removal-mode"]:checked') as HTMLInputElement;
@@ -117,6 +118,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 mode: dataMode,
                 showVolumeBars,
                 showOrderCount,
+                autoCenter,
                 mboOrderSizeFilter,
                 minQuantityThreshold,
                 onLevelClick: (price, side) => {
@@ -169,6 +171,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         const toggleOrdersCheckbox = document.getElementById('toggle-orders') as HTMLInputElement;
         const showVolumeBars = toggleBarsCheckbox?.checked ?? true;
         const showOrderCount = toggleOrdersCheckbox?.checked ?? false;
+        const autoCenter = getAutoCenter();
 
         // Get current removal mode from radio buttons
         const removalModeRadio = document.querySelector('input[name="removal-mode"]:checked') as HTMLInputElement;
@@ -207,6 +210,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             readOnly: false,
             showVolumeBars,
             showOrderCount,
+            autoCenter,
             mboOrderSizeFilter,
             minQuantityThreshold,
             onLevelClick: (price, side) => {
@@ -555,6 +559,11 @@ function roundToTick(price: number, tickSize: number): number {
     return Math.round(price / tickSize) * tickSize;
 }
 
+function getAutoCenter(): boolean {
+    const input = document.getElementById('toggle-auto-center') as HTMLInputElement | null;
+    return input?.checked ?? true;
+}
+
 function getMboOrderSizeFilter(): number {
     const input = document.getElementById('mbo-order-filter') as HTMLInputElement | null;
     if (!input) {
@@ -688,6 +697,11 @@ function setupControls() {
         if (ladder) {
             ladder.setShowOrderCount(checked);
         }
+    });
+
+    // Toggle auto center (when off: Space / middle-click re-centers)
+    document.getElementById('toggle-auto-center')?.addEventListener('change', () => {
+        ladder?.setAutoCenter(getAutoCenter());
     });
 
     mboOrderFilterInput?.addEventListener('input', () => {

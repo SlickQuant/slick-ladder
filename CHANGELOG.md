@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-14
+
+### Added
+- **Auto-center (default on)**: keeps the bid/ask midpoint on the ladder's middle row. In Remove Rows mode the best bid sits on the middle row with the best ask right above. Falls back to the best bid or ask when only one side exists. A half-tick midpoint rounds away from zero on both platforms.
+  - Web: `autoCenter` config option, `setAutoCenter()`, `getAutoCenter()`, `recenter()`
+  - Desktop: `ViewportManager.AutoCenter`, `ViewportManager.Recenter(snapshot)`, `PriceLadderControl.Recenter()`
+- **Manual re-center**: with auto-center off, press Space or click the middle mouse button on the ladder. A mouse press on the ladder gives it keyboard focus.
+- "Auto Center" checkbox in the Web, WPF and Avalonia demos
+- Web unit tests: `npm run test:web` (Node's built-in test runner against a stubbed DOM, no new dependencies)
+- CI workflow (`ci.yml`): web tests and .NET build + unit tests on every push and PR to `main`
+
+### Changed
+- **Behavior change: vertical wheel scroll is off by default**. Auto-center is on by default and pins the view, so the wheel no longer scrolls the ladder. The ladder still consumes the wheel event, so a surrounding scroll container doesn't scroll either. Set `autoCenter: false` (web) or `ViewportManager.AutoCenter = false` (desktop) to get the old behavior back.
+
+### Fixed
+- **Web: removal mode and scroll position lost on column toggle**: `setShowVolumeBars()` and `setShowOrderCount()` recreate the renderer, which dropped its removal mode (Show Empty Rows fell back to Remove Rows) and its scroll position. `setRemovalMode()` now records the mode in config, and `createRenderer()` re-applies it and copies the view position from the old renderer (WASM ladder included).
+- **Web: `destroy()` left canvas listeners attached**: it removed the unbound handler methods instead of the bound listeners it had added. It now keeps a list of the bound listeners and removes those.
+
 ## [0.2.0] - 2026-04-09
 
 ### Added

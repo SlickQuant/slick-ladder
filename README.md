@@ -55,7 +55,8 @@ SlickLadder renders order book ladders across web, WASM, and desktop (WPF/Avalon
 - **Display tick size aggregation**: group multiple raw price levels into coarser display buckets (e.g. show 0.10 rows when tick size is 0.01)
 - Toggle volume bars and order count columns
 - Own order highlighting with gold border
-- Price level scrolling with mouse wheel
+- Price level scrolling with mouse wheel (when auto-center is off)
+- Auto-center on the bid/ask midpoint, or re-center on demand with Space / middle-click
 - Hover highlighting and click interactions
 
 ### Built-in Metrics
@@ -353,6 +354,11 @@ core.ProcessOrderUpdate(new OrderUpdate {
     Quantity = 500,
     Priority = 1
 }, OrderUpdateType.Add);
+
+// Auto-center is on by default. Turn it off to scroll freely,
+// then Space, middle-click or Recenter() brings the spread back to the middle
+ladderControl.GetViewport()!.AutoCenter = false;
+ladderControl.Recenter();
 ```
 
 ### Desktop (Avalonia)
@@ -392,6 +398,7 @@ core.ProcessPriceLevelUpdate(update);
 | `showOrderCount` | `boolean` | `true` | Show order count columns |
 | `mboOrderSizeFilter` | `number` | `0` | Minimum order size to display in MBO mode |
 | `removalMode` | `'showEmpty' \| 'removeRow'` | `'removeRow'` | How to handle empty price levels |
+| `autoCenter` | `boolean` | `true` | Keep the bid/ask midpoint on the middle row. Wheel scroll is off while enabled. When disabled, Space or middle-click re-centers |
 | `colors` | `CanvasColors` | (see below) | Custom color scheme |
 | `onLevelClick` | `function` | - | Callback when price is clicked |
 | `onPriceHover` | `function` | - | Callback when price is hovered |
@@ -425,6 +432,9 @@ const DEFAULT_COLORS = {
 | `setShowVolumeBars` | `boolean` | `void` | Toggle volume bars |
 | `setShowOrderCount` | `boolean` | `void` | Toggle order count columns |
 | `setRemovalMode` | `'showEmpty' \| 'removeRow'` | `void` | Set how empty price levels are displayed |
+| `setAutoCenter` | `boolean` | `void` | Toggle auto-center (enabling re-centers immediately) |
+| `getAutoCenter` | - | `boolean` | Whether auto-center is on |
+| `recenter` | - | `void` | Move the bid/ask midpoint to the middle row once |
 | `updateConfig` | `{ tickSize?, displayTickSize? }` | `void` | Live-update tick size or display tick size without recreating the ladder |
 | `setReadOnly` | `boolean` | `void` | Enable/disable interactions |
 | `resize` | `width?, height?` | `void` | Resize the canvas |
@@ -712,6 +722,9 @@ dotnet run --project examples/avalonia/SlickLadder.Avalonia.Demo.csproj
 | `build:all` | Build everything |
 | `dev:demo` | Run web demo with hot reload |
 | `serve:demo` | Run web demo server |
+| `test:web` | Run web library unit tests (Node test runner, stubbed DOM) |
+
+On every push and PR to `main`, CI (`.github/workflows/ci.yml`) runs the web tests on Node 20 and 24 on Linux and Windows. It also builds the .NET solution and runs its unit tests on Windows, skipping the timing-based `PerformanceTests`.
 
 ### Demo Features
 
@@ -721,6 +734,7 @@ The demo applications include:
 - Tick size configuration
 - Update rate slider (10 - 10,000 updates/sec)
 - Volume bars and order count toggles
+- Auto-center toggle
 - Real-time performance metrics
 
 ## Contributing

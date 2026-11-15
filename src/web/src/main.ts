@@ -83,6 +83,7 @@ export class PriceLadder {
             mboOrderSizeFilter: Math.max(0, config.mboOrderSizeFilter ?? DEFAULT_MBO_ORDER_SIZE_FILTER),
             minQuantityThreshold: config.minQuantityThreshold ?? DEFAULT_MIN_QUANTITY_THRESHOLD,
             removalMode: config.removalMode || 'removeRow',
+            autoCenter: config.autoCenter ?? true,
             colors: config.colors || DEFAULT_COLORS,
             onLevelClick: config.onLevelClick || (() => {}),
             onPriceHover: config.onPriceHover || (() => {})
@@ -103,7 +104,27 @@ export class PriceLadder {
         this.resizeObserver.observe(this.container);
 
         // Create renderer
-        this.renderer = new CanvasRenderer(
+        this.renderer = this.createRenderer();
+
+        // Create interaction handler
+        this.interactionHandler = new InteractionHandler(
+            this.canvas,
+            this.renderer,
+            this.config.readOnly
+        );
+
+        this.setupInteractions();
+        this.startRenderLoop();
+    }
+
+    /**
+     * Create a renderer from the current config. Runtime settings (removal mode,
+     * auto-center) come from config and the view position from the renderer being
+     * replaced, so both survive renderer recreation.
+     */
+    protected createRenderer(): CanvasRenderer {
+        const previous = this.renderer as CanvasRenderer | undefined; // undefined on first create
+        const renderer = new CanvasRenderer(
             this.canvas,
             this.config.width,
             this.config.height,
@@ -116,19 +137,14 @@ export class PriceLadder {
             this.config.minQuantityThreshold,
             this.config.displayTickSize
         );
-
-        // Set removal mode from config
-        this.renderer.setRemovalMode(this.config.removalMode);
-
-        // Create interaction handler
-        this.interactionHandler = new InteractionHandler(
-            this.canvas,
-            this.renderer,
-            this.config.readOnly
-        );
-
-        this.setupInteractions();
-        this.startRenderLoop();
+        renderer.setRemovalMode(this.config.removalMode);
+        renderer.setAutoCenter(this.config.autoCenter);
+        if (previous) {
+            // Safe with auto-center on: the next render re-pins the view
+            renderer.setScrollOffset(previous.getScrollOffset());
+            renderer.setCenterPrice(previous.getCenterPrice());
+        }
+        return renderer;
     }
 
     private setupInteractions(): void {
@@ -494,19 +510,7 @@ export class PriceLadder {
         this.config.width = newWidth;
 
         // Recreate renderer with new settings
-        this.renderer = new CanvasRenderer(
-            this.canvas,
-            this.config.width,
-            this.config.height,
-            this.config.rowHeight,
-            this.config.colors!,
-            this.config.showVolumeBars,
-            this.config.showOrderCount,
-            this.config.tickSize,
-            this.config.mboOrderSizeFilter,
-            this.config.minQuantityThreshold,
-            this.config.displayTickSize
-        );
+        this.renderer = this.createRenderer();
 
         // Update interaction handler with new renderer
         this.interactionHandler.setRenderer(this.renderer);
@@ -526,19 +530,7 @@ export class PriceLadder {
         this.config.width = newWidth;
 
         // Recreate renderer with new settings
-        this.renderer = new CanvasRenderer(
-            this.canvas,
-            this.config.width,
-            this.config.height,
-            this.config.rowHeight,
-            this.config.colors!,
-            this.config.showVolumeBars,
-            this.config.showOrderCount,
-            this.config.tickSize,
-            this.config.mboOrderSizeFilter,
-            this.config.minQuantityThreshold,
-            this.config.displayTickSize
-        );
+        this.renderer = this.createRenderer();
 
         // Update interaction handler with new renderer
         this.interactionHandler.setRenderer(this.renderer);
@@ -577,7 +569,28 @@ export class PriceLadder {
      * Set removal mode (showEmpty or removeRow)
      */
     public setRemovalMode(mode: 'showEmpty' | 'removeRow'): void {
+        this.config.removalMode = mode;
         this.renderer.setRemovalMode(mode);
+    }
+
+    /**
+     * Keep the bid/ask midpoint centered. When off, the user scrolls freely and
+     * Space or middle-click re-centers.
+     */
+    public setAutoCenter(enabled: boolean): void {
+        this.config.autoCenter = enabled;
+        this.renderer.setAutoCenter(enabled);
+    }
+
+    public getAutoCenter(): boolean {
+        return this.config.autoCenter;
+    }
+
+    /**
+     * Move the bid/ask midpoint to the middle of the ladder once
+     */
+    public recenter(): void {
+        this.renderer.recenter();
     }
 
     /**

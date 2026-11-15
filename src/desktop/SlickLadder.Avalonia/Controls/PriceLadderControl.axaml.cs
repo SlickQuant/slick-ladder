@@ -45,6 +45,9 @@ public partial class PriceLadderControl : UserControl
             host.Content = _skiaCanvas;
         }
 
+        // Focusable so Space can re-center
+        Focusable = true;
+
         // Listen for DataContext changes
         DataContextChanged += OnDataContextChanged;
 
@@ -76,6 +79,27 @@ public partial class PriceLadderControl : UserControl
         if (DataContext is PriceLadderViewModel vm)
         {
             _viewModel = vm;
+        }
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        if (e.Key == Key.Space)
+        {
+            Recenter();
+            e.Handled = true;
+        }
+        base.OnKeyDown(e);
+    }
+
+    /// <summary>
+    /// Move the bid/ask midpoint to the middle of the ladder once
+    /// </summary>
+    public void Recenter()
+    {
+        if (_viewport != null && _viewModel?.CurrentSnapshot is { } snapshot)
+        {
+            _viewport.Recenter(snapshot);
         }
     }
 
@@ -189,6 +213,16 @@ public partial class PriceLadderControl : UserControl
 
         private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
         {
+            _parent.Focus();
+
+            // Middle button (wheel click): re-center
+            if (e.GetCurrentPoint(this).Properties.PointerUpdateKind == PointerUpdateKind.MiddleButtonPressed)
+            {
+                _parent.Recenter();
+                e.Handled = true;
+                return;
+            }
+
             if (_parent._viewport == null || _parent._viewModel == null || _parent._viewModel.CurrentSnapshot == null) return;
 
             var pos = e.GetPosition(this);
@@ -415,6 +449,14 @@ public partial class PriceLadderControl : UserControl
                     var snapshot = _parent._viewModel.CurrentSnapshot.Value;
                     _parent._renderer.AdjustSegmentScale(scaleDelta, snapshot, _parent._viewport);
                 }
+                e.Handled = true;
+                return;
+            }
+
+            // Auto-center pins the view, so vertical scroll is disabled. Still consume the wheel
+            // so a parent ScrollViewer doesn't scroll (matches preventDefault on web)
+            if (_parent._viewport.AutoCenter)
+            {
                 e.Handled = true;
                 return;
             }

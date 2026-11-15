@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+# A newer push to the same branch/PR cancels the run in progress
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-tests:
+    name: Web tests (Node ${{ matrix.node }}, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20', '24'] # 20 builds the release package, 24 publishes it (release.yml)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run web unit tests
+        run: npm run test:web
+
+  dotnet-tests:
+    name: .NET build and tests
+    # Windows: WPF only builds there, and SkiaSharp has no Linux native library
+    # without SkiaSharp.NativeAssets.Linux (AutoCenterTests render through SKSurface)
+    runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build solution (core, rendering, WPF, Avalonia, demos)
+        run: dotnet build slick-ladder.sln -c Release
+
+      - name: Run unit tests
+        # PerformanceTests assert wall-clock timings, too noisy for shared runners
+        run: dotnet test tests/SlickUI.Core.Tests -c Release --filter "FullyQualifiedName!~PerformanceTests"

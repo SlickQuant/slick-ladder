@@ -19,6 +19,9 @@ export class InteractionHandler {
     private suppressClick: boolean = false;
     private static readonly dragSuppressThresholdPx = 3;
 
+    // Bound listeners, kept so destroy() can remove them
+    private listeners: Array<[string, EventListener]> = [];
+
     // Callbacks
     public onPriceClick?: (price: number | null, side: Side) => void;
     public onPriceHover?: (price: number | null) => void;
@@ -34,13 +37,24 @@ export class InteractionHandler {
     }
 
     private setupEventListeners(): void {
-        this.canvas.addEventListener('click', this.handleClick.bind(this));
-        this.canvas.addEventListener('mousedown', this.handleMouseDown.bind(this));
-        this.canvas.addEventListener('mouseup', this.handleMouseUp.bind(this));
-        this.canvas.addEventListener('mousemove', this.handleMouseMove.bind(this));
-        this.canvas.addEventListener('mouseleave', this.handleMouseLeave.bind(this));
-        this.canvas.addEventListener('wheel', this.handleWheel.bind(this), { passive: false });
-        this.canvas.addEventListener('contextmenu', this.handleContextMenu.bind(this));
+        // Focusable so the canvas receives keydown (Space = re-center). The browser's
+        // focus ring (:focus-visible) shows for keyboard focus only, not mouse clicks
+        this.canvas.tabIndex = 0;
+        this.listen('keydown', this.handleKeyDown);
+        this.listen('click', this.handleClick);
+        this.listen('mousedown', this.handleMouseDown);
+        this.listen('mouseup', this.handleMouseUp);
+        this.listen('mousemove', this.handleMouseMove);
+        this.listen('mouseleave', this.handleMouseLeave);
+        this.listen('wheel', this.handleWheel);
+        this.listen('contextmenu', this.handleContextMenu);
+    }
+
+    // passive: false so handlers (wheel) can preventDefault
+    private listen<K extends keyof HTMLElementEventMap>(type: K, handler: (event: HTMLElementEventMap[K]) => void): void {
+        const listener = handler.bind(this) as EventListener;
+        this.canvas.addEventListener(type, listener, { passive: false });
+        this.listeners.push([type, listener]);
     }
 
     private handleClick(event: MouseEvent): void {
@@ -129,6 +143,16 @@ export class InteractionHandler {
     }
 
     private handleMouseDown(event: MouseEvent): void {
+        // Explicit focus: preventDefault below (drag, middle button) would otherwise block it
+        this.canvas.focus({ preventScroll: true });
+
+        // Middle button (wheel click): re-center, suppress browser autoscroll
+        if (event.button === 1) {
+            event.preventDefault();
+            this.renderer.recenter();
+            return;
+        }
+
         const rect = this.canvas.getBoundingClientRect();
         const x = event.clientX - rect.left;
 
@@ -170,6 +194,11 @@ export class InteractionHandler {
             return;
         }
 
+        // Auto-center pins the view, so vertical scroll is disabled
+        if (this.renderer.getAutoCenter()) {
+            return;
+        }
+
         // Regular scroll: Vertical navigation (existing behavior)
         const delta = Math.sign(event.deltaY);
 
@@ -186,6 +215,13 @@ export class InteractionHandler {
             const tickSize = this.renderer.getTickSize();
             const scrollAmount = scrollTicks * tickSize; // 5 ticks * tickSize
             this.renderer.scrollByPrice(scrollAmount);
+        }
+    }
+
+    private handleKeyDown(event: KeyboardEvent): void {
+        if (event.code === 'Space') {
+            event.preventDefault(); // Keep the page from scrolling
+            this.renderer.recenter();
         }
     }
 
@@ -212,12 +248,9 @@ export class InteractionHandler {
      * Clean up event listeners
      */
     public destroy(): void {
-        this.canvas.removeEventListener('click', this.handleClick);
-        this.canvas.removeEventListener('mousedown', this.handleMouseDown);
-        this.canvas.removeEventListener('mouseup', this.handleMouseUp);
-        this.canvas.removeEventListener('mousemove', this.handleMouseMove);
-        this.canvas.removeEventListener('mouseleave', this.handleMouseLeave);
-        this.canvas.removeEventListener('wheel', this.handleWheel);
-        this.canvas.removeEventListener('contextmenu', this.handleContextMenu);
+        for (const [type, listener] of this.listeners) {
+            this.canvas.removeEventListener(type, listener);
+        }
+        this.listeners = [];
     }
 }

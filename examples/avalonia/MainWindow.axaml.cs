@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private ComboBox? _updateRateCombo;
     private CheckBox? _showVolumeBarsCheckbox;
     private CheckBox? _showOrderCountCheckbox;
+    private CheckBox? _autoCenterCheckbox;
     private ComboBox? _dataModeCombo;
     private ComboBox? _removalModeCombo;
     private ComboBox? _tickSizeCombo;
@@ -54,6 +55,7 @@ public partial class MainWindow : Window
         _updateRateCombo = this.FindControl<ComboBox>("UpdateRateCombo");
         _showVolumeBarsCheckbox = this.FindControl<CheckBox>("ShowVolumeBarsCheckbox");
         _showOrderCountCheckbox = this.FindControl<CheckBox>("ShowOrderCountCheckbox");
+        _autoCenterCheckbox = this.FindControl<CheckBox>("AutoCenterCheckbox");
         _dataModeCombo = this.FindControl<ComboBox>("DataModeCombo");
         _removalModeCombo = this.FindControl<ComboBox>("RemovalModeCombo");
         _tickSizeCombo = this.FindControl<ComboBox>("TickSizeCombo");
@@ -69,6 +71,10 @@ public partial class MainWindow : Window
         if (_showOrderCountCheckbox != null)
         {
             _showOrderCountCheckbox.IsCheckedChanged += ShowOrderCountCheckbox_Changed;
+        }
+        if (_autoCenterCheckbox != null)
+        {
+            _autoCenterCheckbox.IsCheckedChanged += AutoCenterCheckbox_Changed;
         }
         if (_minQuantityThresholdText != null)
         {
@@ -216,6 +222,16 @@ public partial class MainWindow : Window
         if (priceLadder?.GetViewport() != null && _showOrderCountCheckbox != null)
         {
             priceLadder.GetViewport().ShowOrderCount = _showOrderCountCheckbox.IsChecked ?? false;
+        }
+    }
+
+    private void AutoCenterCheckbox_Changed(object? sender, RoutedEventArgs e)
+    {
+        var priceLadder = this.FindControl<global::SlickLadder.Avalonia.Controls.PriceLadderControl>("PriceLadder");
+        var viewport = priceLadder?.GetViewport();
+        if (viewport != null && _autoCenterCheckbox != null)
+        {
+            viewport.AutoCenter = _autoCenterCheckbox.IsChecked ?? true;
         }
     }
 

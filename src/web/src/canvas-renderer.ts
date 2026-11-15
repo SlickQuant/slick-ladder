@@ -11,6 +11,9 @@ type DensePackingLayout = {
     firstRowIndex: number;
 };
 
+// Tolerance (in ticks) for binary float error when snapping a price to the tick grid
+const TICK_EPSILON = 1e-6;
+
 /**
  * Ultra-fast Canvas 2D renderer optimized for <1ms rendering of dirty regions.
  * Uses dirty region tracking to minimize redraw operations.
@@ -67,6 +70,7 @@ export class CanvasRenderer {
     // Scroll state
     private scrollOffset: number = 0;              // Row-based scroll for dense packing
     private centerPrice: number = 0;               // Price-based scroll for show empty mode
+    private autoCenter: boolean = true;            // Keep bid/ask midpoint on the middle row
     private removalMode: 'showEmpty' | 'removeRow' = 'removeRow';
 
     // Price configuration
@@ -517,6 +521,10 @@ export class CanvasRenderer {
 
         this.clearDirtyState();
 
+        if (this.autoCenter) {
+            this.applyCenter(snapshot);
+        }
+
         const referencePrice = this.removalMode === 'showEmpty'
             ? this.resolveReferencePrice(snapshot)
             : 0;
@@ -558,7 +566,7 @@ export class CanvasRenderer {
             referencePrice = 0;
         } else if (this.centerPrice === 0) {
             const midPrice = snapshot.midPrice ?? 100.0;
-            this.centerPrice = Math.round(midPrice / this.displayTickSize) * this.displayTickSize;
+            this.centerPrice = this.snapToDisplayTick(midPrice);
             referencePrice = this.centerPrice;
         } else {
             referencePrice = this.centerPrice;
@@ -1745,16 +1753,63 @@ export class CanvasRenderer {
             const midPrice = this.currentSnapshot.midPrice;
             if (midPrice !== null) {
                 // Round to display tick size to ensure proper alignment
-                this.centerPrice = Math.round(midPrice / this.displayTickSize) * this.displayTickSize;
+                this.centerPrice = this.snapToDisplayTick(midPrice);
             }
         }
 
         // Apply scroll delta and round to display tick size
-        this.centerPrice = Math.round((this.centerPrice + delta) / this.displayTickSize) * this.displayTickSize;
+        this.centerPrice = this.snapToDisplayTick(this.centerPrice + delta);
 
         if (this.currentSnapshot) {
             this.render(this.currentSnapshot);
         }
+    }
+
+    /**
+     * Enable/disable auto-centering. Enabling re-centers immediately.
+     */
+    public setAutoCenter(enabled: boolean): void {
+        this.autoCenter = enabled;
+        if (enabled) {
+            this.recenter();
+        }
+    }
+
+    public getAutoCenter(): boolean {
+        return this.autoCenter;
+    }
+
+    /**
+     * Move the bid/ask midpoint to the middle row (both removal modes)
+     */
+    public recenter(): void {
+        this.scrollOffset = 0;
+        if (this.currentSnapshot) {
+            this.applyCenter(this.currentSnapshot);
+            this.render(this.currentSnapshot);
+        }
+    }
+
+    /**
+     * Reset row scroll and snap centerPrice to the midpoint (or the only side present)
+     */
+    private applyCenter(snapshot: OrderBookSnapshot): void {
+        this.scrollOffset = 0;
+        const target = snapshot.midPrice ?? snapshot.bestBid ?? snapshot.bestAsk;
+        if (target !== null) {
+            this.centerPrice = this.snapToDisplayTick(target);
+        }
+    }
+
+    /**
+     * Snap a price to the display tick grid, rounding half away from zero like C#
+     * MidpointRounding.AwayFromZero on decimal. TICK_EPSILON absorbs float error
+     * (100.05 / 0.1 = 1000.4999...) so half ticks land on the same row as desktop.
+     */
+    private snapToDisplayTick(price: number): number {
+        const ticks = price / this.displayTickSize;
+        const snapped = Math.floor(Math.abs(ticks) + 0.5 + TICK_EPSILON);
+        return (ticks < 0 ? -snapped : snapped) * this.displayTickSize;
     }
 
     /**

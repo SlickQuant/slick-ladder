@@ -152,6 +152,10 @@ public class SkiaRenderer : IDisposable
         var tickSize = viewport.TickSize;
         _currentDisplayTickSize = viewport.DisplayTickSize;
         var displayTickSize = _currentDisplayTickSize;
+        if (viewport.AutoCenter)
+        {
+            viewport.Recenter(snapshot);
+        }
         var referencePrice = viewport.CenterPrice != 0
             ? viewport.CenterPrice
             : (snapshot.MidPrice ?? 50000m);

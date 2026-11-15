@@ -90,6 +90,7 @@ export interface PriceLadderConfig {
     showOrderCount?: boolean;
     mboOrderSizeFilter?: number;
     removalMode?: 'showEmpty' | 'removeRow';
+    autoCenter?: boolean; // Keep the bid/ask midpoint on the middle row, default: true. When off, Space or middle-click re-centers
     minQuantityThreshold?: number; // Minimum quantity to display (filters out 0 and near-zero quantities), default: 0.0001
     colors?: CanvasColors;
     onLevelClick?: (price: number | null, side: Side) => void;

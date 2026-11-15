@@ -129,6 +129,15 @@
                                  Unchecked="ShowOrderCountCheckbox_Changed"
                                  Margin="0,0,0,10"/>
 
+                        <CheckBox x:Name="AutoCenterCheckbox"
+                                 Content="Auto Center"
+                                 Foreground="White"
+                                 IsChecked="True"
+                                 ToolTip="When off, press Space or middle-click the ladder to re-center"
+                                 Checked="AutoCenterCheckbox_Changed"
+                                 Unchecked="AutoCenterCheckbox_Changed"
+                                 Margin="0,0,0,10"/>
+
                         <TextBlock Text="Min Quantity Threshold" Foreground="White" Margin="0,0,0,5"/>
                         <TextBox x:Name="MinQuantityThresholdText"
                                  Text="0.0001"

@@ -128,6 +128,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private void AutoCenterCheckbox_Changed(object sender, RoutedEventArgs e)
+    {
+        var viewport = PriceLadder?.GetViewport();
+        if (viewport != null)
+        {
+            viewport.AutoCenter = AutoCenterCheckbox.IsChecked ?? true;
+        }
+    }
+
     private void MinQuantityThresholdText_Changed(object sender, TextChangedEventArgs e)
     {
         if (_simulator == null)

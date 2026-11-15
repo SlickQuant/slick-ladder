@@ -1,6 +1,6 @@
 {
   "name": "@slickquant/slick-ladder",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "SlickLadder - Ultra-low latency price ladder component",
   "private": true,
   "workspaces": [
@@ -17,6 +17,7 @@
     "serve:demo": "npm run serve --workspace=examples/web",
     "package": "npm run build:lib:full && npm pack --workspace=src/web",
     "publish": "npm publish --access public --workspace=src/web",
+    "test:web": "npm test --workspace=src/web",
     "test:npm": "cd tests/npm && npm test",
     "test:npm:browser": "cd tests/npm && npm run serve"
   },

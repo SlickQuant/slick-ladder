@@ -18,5 +18,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\core\SlickLadder.Core.csproj" />
+    <ProjectReference Include="..\..\src\desktop\SlickLadder.Rendering\SlickLadder.Rendering.csproj" />
   </ItemGroup>
 </Project>

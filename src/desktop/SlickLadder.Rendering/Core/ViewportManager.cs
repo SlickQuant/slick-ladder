@@ -1,3 +1,5 @@
+using SlickLadder.Core;
+
 namespace SlickLadder.Rendering.Core;
 
 /// <summary>
@@ -63,6 +65,9 @@ public class ViewportManager
 
     // Dense packing scroll state (row-based scrolling for RemoveRow mode)
     public int DensePackingScrollOffset { get; set; } = 0;
+
+    // Keep the bid/ask midpoint on the middle row. When off, Space or middle-click re-centers
+    public bool AutoCenter { get; set; } = true;
 
     // Feature toggles
     public bool ShowVolumeBars { get; set; } = true;
@@ -134,5 +139,19 @@ public class ViewportManager
     public void CenterOn(decimal price)
     {
         CenterPrice = price;
+    }
+
+    /// <summary>
+    /// Move the bid/ask midpoint (or the only side present) to the middle row in both removal modes.
+    /// Rounds half away from zero, matching snapToDisplayTick in canvas-renderer.ts.
+    /// </summary>
+    public void Recenter(in OrderBookSnapshot snapshot)
+    {
+        DensePackingScrollOffset = 0;
+        var target = snapshot.MidPrice ?? snapshot.BestBid ?? snapshot.BestAsk;
+        if (target.HasValue)
+        {
+            CenterPrice = Math.Round(target.Value / DisplayTickSize, MidpointRounding.AwayFromZero) * DisplayTickSize;
+        }
     }
 }
