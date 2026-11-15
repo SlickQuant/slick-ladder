@@ -6,8 +6,7 @@ on:
       - 'v*.*.*'  # Triggers on version tags like v0.1.1, v1.0.0, etc.
 
 permissions:
-  id-token: write
-  contents: write  # Required for creating releases
+  contents: read
 
 jobs:
   build-npm:
@@ -133,6 +132,8 @@ jobs:
     name: Create GitHub Release
     needs: [build-npm, build-desktop]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for creating releases
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -184,8 +185,11 @@ jobs:
     needs: [build-npm, create-release]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-    env:
-      DOTNET_NOLOGO: 'true'
+    # Trusted publishing (OIDC): no NPM_TOKEN, provenance is generated automatically.
+    # https://docs.npmjs.com/trusted-publishers
+    permissions:
+      id-token: write  # Required for OIDC
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -195,9 +199,14 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false  # No caching in release builds
 
-      - name: Verify runtime versions for trusted publishing
+      - name: Ensure npm supports trusted publishing (>= 11.5.1)
         run: |
+          REQUIRED=11.5.1
+          if [ "$(printf '%s\n%s\n' "$REQUIRED" "$(npm --version)" | sort -V | head -n1)" != "$REQUIRED" ]; then
+            npm install -g npm@^11.5.1
+          fi
           node --version
           npm --version
 
@@ -242,66 +251,8 @@ jobs:
 
       - name: Publish tarball to NPM
         if: steps.npm-check.outputs.exists != 'true'
-        env:
-          NPM_FALLBACK_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          set -euo pipefail
-
-          PUBLISH_TOKEN=""
-          AUTH_MODE=""
-          EXCHANGE_STATUS=""
-          EXCHANGE_BODY=""
-
-          OIDC_RESPONSE=$(curl -sSf \
-            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org")
-          OIDC_TOKEN=$(printf '%s' "$OIDC_RESPONSE" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).value")
-
-          ENCODED_PACKAGE_NAME=$(node -p "encodeURIComponent('${{ steps.package.outputs.package_name }}')")
-          EXCHANGE_RESPONSE=$(curl -sS -w '\n%{http_code}' -X POST \
-            -H "Authorization: Bearer ${OIDC_TOKEN}" \
-            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${ENCODED_PACKAGE_NAME}")
-
-          EXCHANGE_BODY=$(printf '%s' "$EXCHANGE_RESPONSE" | sed '$d')
-          EXCHANGE_STATUS=$(printf '%s' "$EXCHANGE_RESPONSE" | tail -n 1)
-
-          if [ "$EXCHANGE_STATUS" = "201" ]; then
-            PUBLISH_TOKEN=$(printf '%s' "$EXCHANGE_BODY" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).token")
-            AUTH_MODE="trusted-publishing"
-            echo "::notice::Using npm trusted publishing via OIDC."
-          elif [ -n "${NPM_FALLBACK_TOKEN:-}" ]; then
-            AUTH_MODE="token-fallback"
-            PUBLISH_TOKEN="${NPM_FALLBACK_TOKEN}"
-            echo "$EXCHANGE_BODY"
-            echo "::warning::npm OIDC exchange failed with status ${EXCHANGE_STATUS}. Falling back to NPM_TOKEN. This is a workaround for current npm trusted publishing 404 issues with scoped or nested packages."
-          else
-            echo "$EXCHANGE_BODY"
-            if [ "$EXCHANGE_STATUS" = "404" ]; then
-              echo "::error::npm OIDC token exchange returned 404. This can mean the trusted publisher config is mismatched on npmjs.com, and it also matches current npm OIDC bugs affecting scoped or nested packages."
-            elif [ "$EXCHANGE_STATUS" = "401" ]; then
-              echo "::error::npm OIDC token exchange returned 401. Check that this job has id-token: write and is running on a GitHub-hosted runner."
-            else
-              echo "::error::npm OIDC token exchange failed with status ${EXCHANGE_STATUS}."
-            fi
+          npm publish "${{ steps.package.outputs.tarball }}" --access public || {
+            echo "::error::npm publish failed. A 404/ENEEDAUTH usually means the npmjs.com trusted publisher config doesn't match: owner SlickQuant, repo slick-ladder, workflow release.yml, and 'npm publish' must be an allowed action."
             exit 1
-          fi
-
-          echo "::add-mask::${PUBLISH_TOKEN}"
-          NPMRC_FILE=$(mktemp)
-          {
-            echo "//registry.npmjs.org/:_authToken=${PUBLISH_TOKEN}"
-            echo "registry=https://registry.npmjs.org/"
-          } > "${NPMRC_FILE}"
-          export NPM_CONFIG_USERCONFIG="${NPMRC_FILE}"
-
-          set +e
-          OUTPUT=$(npm publish "${{ steps.package.outputs.tarball }}" --access public 2>&1)
-          STATUS=$?
-          set -e
-          echo "$OUTPUT"
-
-          if [ $STATUS -ne 0 ] && [ "$AUTH_MODE" = "token-fallback" ] && echo "$OUTPUT" | grep -q "npm error code EOTP"; then
-            echo "::error::Token fallback reached npm, but the token still requires interactive 2FA. Create a granular token with package write access and Bypass 2FA enabled."
-          fi
-
-          exit $STATUS
+          }
