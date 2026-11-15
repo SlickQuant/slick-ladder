@@ -198,7 +198,8 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          # No registry-url: it writes a placeholder _authToken that npm falls back to when the
+          # OIDC exchange fails, turning the real auth error into a misleading E404.
           package-manager-cache: false  # No caching in release builds
 
       - name: Ensure npm supports trusted publishing (>= 11.5.1)
@@ -249,10 +250,23 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Prints the claims npmjs.com matches against the trusted publisher config (never the token).
+      - name: Show OIDC claims for npm trusted publisher
+        if: steps.npm-check.outputs.exists != 'true'
+        run: |
+          curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm:registry.npmjs.org" | node -e "
+              const t = JSON.parse(require('fs').readFileSync(0, 'utf8')).value;
+              const c = JSON.parse(Buffer.from(t.split('.')[1], 'base64url'));
+              const pick = ['repository', 'repository_owner', 'workflow_ref', 'environment', 'ref', 'runner_environment'];
+              console.log(JSON.stringify(Object.fromEntries(pick.map(k => [k, c[k] ?? '(none)'])), null, 2));"
+
       - name: Publish tarball to NPM
         if: steps.npm-check.outputs.exists != 'true'
         run: |
           npm publish "${{ steps.package.outputs.tarball }}" --access public || {
-            echo "::error::npm publish failed. A 404/ENEEDAUTH usually means the npmjs.com trusted publisher config doesn't match: owner SlickQuant, repo slick-ladder, workflow release.yml, and 'npm publish' must be an allowed action."
+            # npm logs the registry's OIDC rejection reason only at verbose level, in the debug log.
+            grep -h 'oidc' ~/.npm/_logs/*-debug-*.log || true
+            echo "::error::npm publish failed. ENEEDAUTH means the OIDC token exchange was rejected (reason in the oidc lines above). Compare the claims from the previous step with the npmjs.com trusted publisher: owner SlickQuant, repo slick-ladder, workflow release.yml, environment empty."
             exit 1
           }
