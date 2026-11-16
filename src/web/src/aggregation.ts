@@ -1,4 +1,4 @@
-import { BookLevel, DirtyLevelChange, Side } from './types';
+import { BookLevel } from './types';
 
 /**
  * Returns the number of decimal places needed to represent a value.
@@ -48,28 +48,4 @@ export function aggregateLevels(levels: BookLevel[], displayTickSize: number, ti
         }
     }
     return Array.from(map.values());
-}
-
-/**
- * Remaps DirtyLevelChange prices to their display bucket prices and deduplicates.
- * Uses side-aware rounding: bids round down, asks round up.
- * No-op when displayTickSize <= tickSize.
- */
-export function remapDirtyChanges(
-    changes: DirtyLevelChange[],
-    displayTickSize: number,
-    tickSize: number
-): DirtyLevelChange[] {
-    if (displayTickSize <= tickSize) return changes;
-    const seen = new Set<string>();
-    const result: DirtyLevelChange[] = [];
-    for (const c of changes) {
-        const bp = bucketPrice(c.price, displayTickSize, c.side === Side.ASK);
-        const key = `${c.side}_${bp}`;
-        if (!seen.has(key)) {
-            seen.add(key);
-            result.push({ ...c, price: bp });
-        }
-    }
-    return result;
 }

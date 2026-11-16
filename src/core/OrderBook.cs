@@ -14,8 +14,6 @@ public class OrderBook
     private readonly SortedArray<decimal, BookLevel> _bids;
     private readonly SortedArray<decimal, BookLevel> _asks;
     private readonly BitArray _dirtyLevels;
-    private readonly List<DirtyLevelChange> _dirtyChanges;
-    private bool _hasStructuralChange;
     private readonly int _maxLevels;
     private readonly decimal _tickSize;
 
@@ -66,7 +64,6 @@ public class OrderBook
         _bids = new SortedArray<decimal, BookLevel>(maxLevels);
         _asks = new SortedArray<decimal, BookLevel>(maxLevels);
         _dirtyLevels = new BitArray(maxLevels * 2); // Bids + Asks
-        _dirtyChanges = new List<DirtyLevelChange>(maxLevels);
     }
 
     /// <summary>
@@ -78,58 +75,17 @@ public class OrderBook
         var level = new BookLevel(price, quantity, numOrders, side);
         level.IsDirty = true;
 
-        bool existed;
-        bool isAddition = false;
-        bool isRemoval = false;
-        if (side == Side.BID)
+        var levels = side == Side.BID ? _bids : _asks;
+        var existed = levels.TryGetValue(price, out var existing);
+        if (quantity > 0)
         {
-            existed = _bids.TryGetValue(price, out var existingBid);
-            if (quantity > 0)
-            {
-                if (existed) level.HasOwnOrders = existingBid.HasOwnOrders;
-                _bids.AddOrUpdate(price, level);
-                if (!existed)
-                {
-                    _hasStructuralChange = true;
-                    isAddition = true;
-                }
-            }
-            else
-            {
-                // Quantity 0 means remove level
-                if (existed && _bids.Remove(price))
-                {
-                    _hasStructuralChange = true;
-                    isRemoval = true;
-                }
-            }
+            if (existed) level.HasOwnOrders = existing.HasOwnOrders;
+            levels.AddOrUpdate(price, level);
         }
-        else // ASK
+        else if (existed)
         {
-            existed = _asks.TryGetValue(price, out var existingAsk);
-            if (quantity > 0)
-            {
-                if (existed) level.HasOwnOrders = existingAsk.HasOwnOrders;
-                _asks.AddOrUpdate(price, level);
-                if (!existed)
-                {
-                    _hasStructuralChange = true;
-                    isAddition = true;
-                }
-            }
-            else
-            {
-                if (existed && _asks.Remove(price))
-                {
-                    _hasStructuralChange = true;
-                    isRemoval = true;
-                }
-            }
-        }
-
-        if (quantity > 0 || existed)
-        {
-            _dirtyChanges.Add(new DirtyLevelChange(price, side, isRemoval, isAddition));
+            // Quantity 0 means remove level
+            levels.Remove(price);
         }
 
         MarkDirty(price, side);
@@ -245,8 +201,6 @@ public class OrderBook
     public void ClearDirtyFlags()
     {
         _dirtyLevels.SetAll(false);
-        _dirtyChanges.Clear();
-        _hasStructuralChange = false;
 
         // Clear dirty flags on all levels
         ClearDirtyFlagsInternal(_bids);
@@ -307,16 +261,7 @@ public class OrderBook
         _bids.Clear();
         _asks.Clear();
         _dirtyLevels.SetAll(false);
-        _dirtyChanges.Clear();
-        _hasStructuralChange = false;
     }
-
-    public DirtyLevelChange[] GetDirtyChanges()
-    {
-        return _dirtyChanges.Count == 0 ? Array.Empty<DirtyLevelChange>() : _dirtyChanges.ToArray();
-    }
-
-    public bool HasStructuralChange => _hasStructuralChange;
 
     /// <summary>
     /// Mark a price level as dirty for rendering
@@ -464,26 +409,4 @@ public struct OrderBookSnapshot
     /// Individual orders per price level for asks (null in PriceLevel mode, populated in MBO mode)
     /// </summary>
     public Dictionary<decimal, Managers.Order[]>? AskOrders;
-
-    public DirtyLevelChange[]? DirtyChanges;
-
-    public bool StructuralChange;
-}
-
-public readonly struct DirtyLevelChange
-{
-    public readonly decimal Price;
-    public readonly Side Side;
-    public readonly bool IsRemoval;
-    public readonly bool IsAddition;
-
-    public DirtyLevelChange(decimal price, Side side, bool isRemoval, bool isAddition)
-    {
-        Price = price;
-        Side = side;
-        IsRemoval = isRemoval;
-        IsAddition = isAddition;
-    }
-
-    public bool IsStructural => IsRemoval || IsAddition;
 }

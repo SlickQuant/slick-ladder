@@ -66,7 +66,15 @@ public partial class PriceLadderControl : UserControl
 
     private void OnCompositionTargetRendering(object? sender, EventArgs e)
     {
-        // Trigger repaint at display refresh rate (60 FPS)
+        // Counted per UI frame, so idle frames that skip the repaint still show in FPS
+        _metrics.RecordFrame();
+
+        // Repaint at display refresh rate (60 FPS), but only when the book or view changed:
+        // WPF keeps showing the last frame, so idle ladders cost nothing
+        if (_viewModel?.CurrentSnapshot is { } snapshot && !_renderer!.NeedsRender(snapshot, _viewport!))
+        {
+            return;
+        }
         SkiaCanvas?.InvalidateVisual();
     }
 
@@ -80,25 +88,24 @@ public partial class PriceLadderControl : UserControl
         if (_viewModel?.CurrentSnapshot == null)
         {
             canvas.Clear(new SkiaSharp.SKColor(15, 15, 15)); // #0f0f0f
+            _renderer!.Invalidate(); // The clear wiped the frame the renderer left in the surface
             return;
         }
 
         var snapshot = _viewModel.CurrentSnapshot.Value;
 
+        // SKElement keeps its bitmap between paints and only this control draws into it, so the
+        // renderer updates changed rows in place instead of copying a cached frame
         if (_metrics.TraceRenderTimings)
         {
             var start = Stopwatch.GetTimestamp();
-            _renderer!.Render(canvas, snapshot, _viewport);
+            _renderer!.RenderRetained(e.Surface, snapshot, _viewport);
             _metrics.RecordRenderTime(Stopwatch.GetTimestamp() - start, in snapshot);
         }
         else
         {
-            // Use shared renderer (no scrolling support - matches web version)
-            _renderer!.Render(canvas, snapshot, _viewport);
+            _renderer!.RenderRetained(e.Surface, snapshot, _viewport);
         }
-
-        // Track FPS
-        _metrics.RecordFrame();
     }
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)

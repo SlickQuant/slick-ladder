@@ -266,8 +266,6 @@ public class UpdateBatcher
             SnapshotVisibleLevels,
             FillEmptyLevels
         );
-        snapshot.DirtyChanges = _orderBook.GetDirtyChanges();
-        snapshot.StructuralChange = _orderBook.HasStructuralChange;
 
         // In MBO mode, add individual orders to snapshot
         if (_mode == DataMode.MBO && _mboManager != null)
@@ -323,8 +321,6 @@ public class UpdateBatcher
         var midPrice = _orderBook.MidPrice ?? _orderBook.BestBid ?? _orderBook.BestAsk ?? 0m;
         var centerPrice = SnapshotCenterPrice ?? RoundToTick(midPrice, _orderBook.TickSize);
         var snapshot = _orderBook.GetSnapshot(centerPrice, SnapshotVisibleLevels, FillEmptyLevels);
-        snapshot.DirtyChanges = null;
-        snapshot.StructuralChange = false;
         if (_mode == DataMode.MBO && _mboManager != null)
         {
             snapshot.BidOrders = _mboManager.GetBidOrders();

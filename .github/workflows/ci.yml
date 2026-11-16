@@ -38,6 +38,8 @@ jobs:
 
       - name: Run web unit tests
         run: npm run test:web
+        env:
+          SLICK_SKIP_PERF: '1' # Multi-ladder perf test asserts frame times, too noisy for shared runners
 
   dotnet-tests:
     name: .NET build and tests
@@ -59,5 +61,6 @@ jobs:
         run: dotnet build slick-ladder.sln -c Release
 
       - name: Run unit tests
-        # PerformanceTests assert wall-clock timings, too noisy for shared runners
+        # Skips both timing classes: MultiLadderPerformanceTests' frame budgets assume a desktop CPU, and
+        # PerformanceTests still times single cold passes, which shared-runner noise pushes past its limits
         run: dotnet test tests/SlickUI.Core.Tests -c Release --filter "FullyQualifiedName!~PerformanceTests"

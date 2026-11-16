@@ -63,17 +63,6 @@ export interface OrderBookSnapshot {
     // MBO mode: Individual orders per price level (null in PriceLevel mode)
     bidOrders?: Map<number, Order[]> | null;
     askOrders?: Map<number, Order[]> | null;
-
-    // Dirty row tracking (mirrors desktop DirtyLevelChange)
-    dirtyChanges?: DirtyLevelChange[];
-    structuralChange?: boolean;
-}
-
-export interface DirtyLevelChange {
-    price: number;
-    side: Side;
-    isRemoval: boolean;
-    isAddition: boolean;
 }
 
 export interface PriceLadderConfig {

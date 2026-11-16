@@ -1,4 +1,5 @@
-import { Side, Order, OrderUpdate, OrderUpdateType, BookLevel, OrderBookSnapshot, DirtyLevelChange } from './types';
+import { Side, Order, OrderUpdate, OrderUpdateType, BookLevel } from './types';
+import { SortedLevels } from './sorted-levels';
 
 /**
  * OrderLevel: Represents all individual orders at a specific price level.
@@ -10,7 +11,8 @@ class OrderLevel {
     public orders: Map<number, Order>; // OrderId → Order
     public totalQuantity: number;
     public orderCount: number;
-    public isDirty: boolean;
+    public readonly book: BookLevel;   // This level in snapshots, kept current by markChanged
+    private ordersArray: Order[] | null = null; // Snapshot copy of orders, kept until they change
 
     constructor(price: number, side: Side) {
         this.price = price;
@@ -18,14 +20,69 @@ class OrderLevel {
         this.orders = new Map();
         this.totalQuantity = 0;
         this.orderCount = 0;
-        this.isDirty = true;
+        this.book = { price, quantity: 0, numOrders: 0, side, isDirty: true, hasOwnOrders: false };
     }
 
     /**
-     * Get all orders as array (for rendering individual orders)
+     * Get all orders as array (for rendering individual orders). The same array until the orders
+     * change, so the renderer can tell an unchanged level by reference
      */
     getOrdersArray(): Order[] {
-        return Array.from(this.orders.values());
+        return this.ordersArray ??= Array.from(this.orders.values());
+    }
+
+    /**
+     * Call after changing orders
+     */
+    markChanged(): void {
+        this.book.quantity = this.totalQuantity;
+        this.book.numOrders = this.orderCount;
+        this.book.isDirty = true;
+        this.ordersArray = null;
+    }
+}
+
+/**
+ * One side of the book: its levels by price, the same levels in price order, and the price →
+ * orders map snapshots carry. The map is kept between snapshots and updated only for levels that
+ * changed, so a snapshot costs nothing for a quiet level
+ */
+class BookSide {
+    readonly levels = new Map<number, OrderLevel>();
+    readonly sorted = new SortedLevels();
+    private readonly ordersByPrice = new Map<number, Order[]>();
+    private readonly changed = new Set<OrderLevel>();
+
+    // The level at price, created if needed
+    level(price: number, side: Side): OrderLevel {
+        let level = this.levels.get(price);
+        if (!level) {
+            level = new OrderLevel(price, side);
+            this.levels.set(price, level);
+            this.sorted.add(level.book);
+        }
+        return level;
+    }
+
+    // Call after changing a level's orders
+    levelChanged(level: OrderLevel): void {
+        level.markChanged();
+        this.changed.add(level);
+    }
+
+    removeLevel(level: OrderLevel): void {
+        this.levels.delete(level.price);
+        this.sorted.remove(level.price);
+        this.ordersByPrice.delete(level.price);
+        this.changed.delete(level);
+    }
+
+    orders(): Map<number, Order[]> {
+        for (const level of this.changed) {
+            this.ordersByPrice.set(level.price, level.getOrdersArray());
+        }
+        this.changed.clear();
+        return this.ordersByPrice;
     }
 }
 
@@ -41,17 +98,12 @@ class OrderLevel {
  * - Aggregation: Automatically updates BookLevel on each order change
  */
 export class MBOManager {
-    private bidLevels: Map<number, OrderLevel>;
-    private askLevels: Map<number, OrderLevel>;
-    private orderIndex: Map<number, { price: number; side: Side }>; // OrderId → location
+    private bids = new BookSide();
+    private asks = new BookSide();
+    private orderIndex: Map<number, { price: number; side: Side }> = new Map(); // OrderId → location
 
-    private dirtyChanges: DirtyLevelChange[] = [];
-    private hasStructuralChange: boolean = false;
-
-    constructor() {
-        this.bidLevels = new Map();
-        this.askLevels = new Map();
-        this.orderIndex = new Map();
+    private bookSide(side: Side): BookSide {
+        return side === Side.BID ? this.bids : this.asks;
     }
 
     /**
@@ -61,15 +113,8 @@ export class MBOManager {
     processOrderAdd(update: OrderUpdate): BookLevel {
         const price = update.price;
         const side = update.side;
-        const levels = side === Side.BID ? this.bidLevels : this.askLevels;
-
-        // Find or create OrderLevel at price
-        let level = levels.get(price);
-        const existed = !!level;
-        if (!level) {
-            level = new OrderLevel(price, side);
-            levels.set(price, level);
-        }
+        const bookSide = this.bookSide(side);
+        const level = bookSide.level(price, side);
 
         // Add order to level
         const order: Order = {
@@ -83,22 +128,12 @@ export class MBOManager {
         // Update cached aggregates
         level.totalQuantity += update.quantity;
         level.orderCount++;
-        level.isDirty = true;
+        bookSide.levelChanged(level);
 
         // Index for fast lookup
         this.orderIndex.set(update.orderId, { price, side });
 
-        this.recordDirtyChange(price, side, false, !existed);
-
-        // Return aggregated BookLevel
-        return {
-            price,
-            quantity: level.totalQuantity,
-            numOrders: level.orderCount,
-            side,
-            isDirty: true,
-            hasOwnOrders: false
-        };
+        return level.book;
     }
 
     /**
@@ -113,8 +148,8 @@ export class MBOManager {
             return null;
         }
 
-        const levels = location.side === Side.BID ? this.bidLevels : this.askLevels;
-        const level = levels.get(location.price);
+        const bookSide = this.bookSide(location.side);
+        const level = bookSide.levels.get(location.price);
         if (!level) {
             // Level disappeared - should not happen, but handle gracefully
             this.orderIndex.delete(update.orderId);
@@ -130,28 +165,18 @@ export class MBOManager {
         }
 
         // Update quantity delta
-        const quantityDelta = update.quantity - existingOrder.quantity;
-        level.totalQuantity += quantityDelta;
-        level.isDirty = true;
+        level.totalQuantity += update.quantity - existingOrder.quantity;
 
         // Update order (preserve isOwnOrder from existing order)
-        const modifiedOrder: Order = {
+        level.orders.set(update.orderId, {
             orderId: update.orderId,
             quantity: update.quantity,
             priority: existingOrder.priority,
             isOwnOrder: existingOrder.isOwnOrder
-        };
-        level.orders.set(update.orderId, modifiedOrder);
+        });
+        bookSide.levelChanged(level);
 
-        // Return aggregated BookLevel
-        return {
-            price: location.price,
-            quantity: level.totalQuantity,
-            numOrders: level.orderCount,
-            side: location.side,
-            isDirty: true,
-            hasOwnOrders: false
-        };
+        return level.book;
     }
 
     /**
@@ -167,8 +192,8 @@ export class MBOManager {
         }
         this.orderIndex.delete(update.orderId);
 
-        const levels = location.side === Side.BID ? this.bidLevels : this.askLevels;
-        const level = levels.get(location.price);
+        const bookSide = this.bookSide(location.side);
+        const level = bookSide.levels.get(location.price);
         if (!level) {
             // Level disappeared - should not happen
             return null;
@@ -185,39 +210,17 @@ export class MBOManager {
         level.totalQuantity -= existingOrder.quantity;
         level.orderCount--;
         level.orders.delete(update.orderId);
-        level.isDirty = true;
+        bookSide.levelChanged(level);
 
-        const isRemoval = level.orderCount === 0;
-
-        // If level empty, remove from book
-        if (isRemoval) {
-            levels.delete(location.price);
-            this.recordDirtyChange(location.price, location.side, true, false);
-            // Return BookLevel with qty=0 to signal removal
-            return {
-                price: location.price,
-                quantity: 0,
-                numOrders: 0,
-                side: location.side,
-                isDirty: true,
-                hasOwnOrders: false
-            };
-        } else {
-            this.recordDirtyChange(location.price, location.side, false, false);
-            // Return updated BookLevel
-            return {
-                price: location.price,
-                quantity: level.totalQuantity,
-                numOrders: level.orderCount,
-                side: location.side,
-                isDirty: true,
-                hasOwnOrders: false
-            };
+        // If level empty, remove from book (its BookLevel now has qty=0)
+        if (level.orderCount === 0) {
+            bookSide.removeLevel(level);
         }
+        return level.book;
     }
 
     /**
-     * Process OrderUpdate with specified type.
+     * Process OrderUpdate with specified type. Null when it changed nothing
      */
     processOrderUpdate(update: OrderUpdate, type: OrderUpdateType): BookLevel | null {
         switch (type) {
@@ -233,117 +236,49 @@ export class MBOManager {
     }
 
     /**
-     * Get individual orders for bid levels (for rendering).
-     * Returns a map of price → Order[]
+     * Individual orders by price for bid levels (for rendering). The same map every time,
+     * brought up to date
      */
     getBidOrders(): Map<number, Order[]> {
-        const result = new Map<number, Order[]>();
-        for (const [price, level] of this.bidLevels) {
-            result.set(price, level.getOrdersArray());
-        }
-        return result;
+        return this.bids.orders();
     }
 
     /**
-     * Get individual orders for ask levels (for rendering).
-     * Returns a map of price → Order[]
+     * Individual orders by price for ask levels (for rendering). The same map every time,
+     * brought up to date
      */
     getAskOrders(): Map<number, Order[]> {
-        const result = new Map<number, Order[]>();
-        for (const [price, level] of this.askLevels) {
-            result.set(price, level.getOrdersArray());
-        }
-        return result;
+        return this.asks.orders();
     }
 
     /**
-     * Get aggregated BookLevels for bids (highest to lowest)
+     * Bid levels ascending by price, for a snapshot (the array stays unchanged)
      */
     getBidLevels(): BookLevel[] {
-        const levels: BookLevel[] = [];
-        const seenPrices = new Set<number>();
-        for (const [price, level] of this.bidLevels) {
-            // Safety check: skip if we've already seen this price (shouldn't happen with Map)
-            if (seenPrices.has(price)) {
-                console.warn(`Duplicate bid level detected at price ${price}`);
-                continue;
-            }
-            seenPrices.add(price);
-            levels.push({
-                price: price,
-                quantity: level.totalQuantity,
-                numOrders: level.orderCount,
-                side: Side.BID,
-                isDirty: level.isDirty,
-                hasOwnOrders: false
-            });
-        }
-        // Sort by price ascending to match OrderBook snapshot ordering
-        return levels.sort((a, b) => a.price - b.price);
+        return this.bids.sorted.share();
     }
 
     /**
-     * Get aggregated BookLevels for asks (lowest to highest)
+     * Ask levels ascending by price, for a snapshot (the array stays unchanged)
      */
     getAskLevels(): BookLevel[] {
-        const levels: BookLevel[] = [];
-        const seenPrices = new Set<number>();
-        for (const [price, level] of this.askLevels) {
-            // Safety check: skip if we've already seen this price (shouldn't happen with Map)
-            if (seenPrices.has(price)) {
-                console.warn(`Duplicate ask level detected at price ${price}`);
-                continue;
-            }
-            seenPrices.add(price);
-            levels.push({
-                price: price,
-                quantity: level.totalQuantity,
-                numOrders: level.orderCount,
-                side: Side.ASK,
-                isDirty: level.isDirty,
-                hasOwnOrders: false
-            });
-        }
-        // Sort by price ascending (lowest first)
-        return levels.sort((a, b) => a.price - b.price);
+        return this.asks.sorted.share();
     }
 
     /**
-     * Get current order book snapshot
+     * One side's current levels ascending by price, to read now (it changes with the book)
      */
-    getSnapshot(): OrderBookSnapshot {
-        const bids = this.getBidLevels();
-        const asks = this.getAskLevels();
-
-        const bestBid = bids.length > 0 ? bids[0].price : null;
-        const bestAsk = asks.length > 0 ? asks[0].price : null;
-        const midPrice = (bestBid !== null && bestAsk !== null) ? (bestBid + bestAsk) / 2 : null;
-
-        const dirtyState = this.consumeDirtyState();
-
-        return {
-            bestBid,
-            bestAsk,
-            midPrice,
-            bids,
-            asks,
-            timestamp: Date.now(),
-            bidOrders: this.getBidOrders(),
-            askOrders: this.getAskOrders(),
-            dirtyChanges: dirtyState.dirtyChanges,
-            structuralChange: dirtyState.structuralChange
-        };
+    levels(side: Side): readonly BookLevel[] {
+        return this.bookSide(side).sorted.levels;
     }
 
     /**
      * Reset all state
      */
     reset(): void {
-        this.bidLevels.clear();
-        this.askLevels.clear();
+        this.bids = new BookSide();
+        this.asks = new BookSide();
         this.orderIndex.clear();
-        this.dirtyChanges = [];
-        this.hasStructuralChange = false;
     }
 
     /**
@@ -357,27 +292,6 @@ export class MBOManager {
      * Get number of price levels
      */
     getLevelCount(): number {
-        return this.bidLevels.size + this.askLevels.size;
-    }
-
-    consumeDirtyState(): { dirtyChanges: DirtyLevelChange[]; structuralChange: boolean } {
-        const dirtyChanges = this.dirtyChanges;
-        const structuralChange = this.hasStructuralChange;
-        this.dirtyChanges = [];
-        this.hasStructuralChange = false;
-        return { dirtyChanges, structuralChange };
-    }
-
-    private recordDirtyChange(price: number, side: Side, isRemoval: boolean, isAddition: boolean): void {
-        if (isRemoval || isAddition) {
-            this.hasStructuralChange = true;
-        }
-
-        this.dirtyChanges.push({
-            price,
-            side,
-            isRemoval,
-            isAddition
-        });
+        return this.bids.levels.size + this.asks.levels.size;
     }
 }

@@ -612,19 +612,27 @@ SlickLadder is designed for high-frequency trading environments:
 
 ### Dirty Region Rendering
 
-Only changed rows are redrawn each frame:
-1. Updates mark affected price levels as "dirty"
-2. Renderer calculates minimal redraw region
-3. Only dirty rows are repainted
-4. Clean rows are preserved from previous frame
+Only changed rows are redrawn each frame. Both renderers (web `CanvasRenderer`, desktop `SkiaRenderer`) compare what each row should show with what they last drew, so changes from several flushes between frames all land. Rows that only moved are copied, a volume scale change redraws just the bar column, and a Show Empty Rows center move shifts the pixels. The result is pixel-identical to a full redraw.
+
+Idle ladders skip their frame: the web render loop builds no snapshot while the book and view are unchanged, and desktop hosts check `NeedsRender()`. A host whose surface keeps its pixels between paints (WPF `SKElement`) can call `RenderRetained()` to update it in place without copying a cached frame. `Invalidate()` forces a full redraw.
+
+On a GPU target (Avalonia with GPU rendering) the renderer keeps its frame as a texture on that GPU. Changed rows are drawn into it there, and the frame reaches the window as a GPU copy, so nothing is uploaded. The `GpuTargets_KeepUpAt60Fps` benchmark measures it.
+
+Snapshots are cheap too. Each side's levels stay sorted as levels come and go, so no snapshot sorts, and MBO order maps change only for the levels whose orders changed. Repeating text (prices, quantities, column widths) is formatted and measured once. Each render makes one pass over every level, then touches only the levels it draws.
 
 ### Benchmarks
 
-| Scenario | Updates/sec | CPU Usage | Frame Time |
-|----------|-------------|-----------|------------|
-| Light (100 updates/sec) | 100 | <5% | <1ms |
-| Normal (1,000 updates/sec) | 1,000 | ~10% | ~2ms |
-| Heavy (10,000 updates/sec) | 10,000 | ~25% | ~4ms |
+From the multi-ladder perf tests on a Ryzen 9 5900HX laptop. Each ladder has its own feed averaging 1-200 ticks per second with bursts. Frame time covers ingest and render for every ladder, average / p95.
+
+| Scenario | Updates/sec | Web (Node) | Desktop (raster) |
+|----------|-------------|------------|------------------|
+| 50 ladders, price levels | ~40,000 | 0.7 / 1.4ms | 5.8 / 7.9ms |
+| 100 ladders, price levels | ~82,000 | 1.5 / 1.9ms | 11.6 / 16.9ms |
+| 50 ladders, MBO | ~39,000 | 2.1 / 2.9ms | 8.3 / 18.9ms |
+| 100 ladders, MBO | ~80,000 | 5.9 / 7.8ms | 16.9 / 36.7ms |
+| 100 ladders, 500-level books | ~82,000 | 3.3 / 4.4ms | 5.7 / 8.2ms |
+
+The web test draws to a stubbed canvas, so the browser's own drawing isn't in it: in Edge, 100 price-level ladders take ~30ms per frame. On a GPU (Avalonia, each ladder in its own OpenGL surface), 50 and 100 ladders take ~14ms and ~26ms. Run the tests to get numbers for your machine.
 
 ## Project Structure
 
@@ -722,9 +730,11 @@ dotnet run --project examples/avalonia/SlickLadder.Avalonia.Demo.csproj
 | `build:all` | Build everything |
 | `dev:demo` | Run web demo with hot reload |
 | `serve:demo` | Run web demo server |
-| `test:web` | Run web library unit tests (Node test runner, stubbed DOM) |
+| `test:web` | Run web library unit tests and the multi-ladder perf test (Node test runner, stubbed DOM) |
 
-On every push and PR to `main`, CI (`.github/workflows/ci.yml`) runs the web tests on Node 20 and 24 on Linux and Windows. It also builds the .NET solution and runs its unit tests on Windows, skipping the timing-based `PerformanceTests`.
+The multi-ladder perf tests (`src/web/test/multi-ladder.perf.test.js`, `tests/SlickUI.Core.Tests/MultiLadderPerformanceTests.cs`) open 50 and 100 ladders, each fed by its own random-rate source: price levels, MBO orders, and books 500 levels deep. They fail when the average frame is over 16.7ms or p95 is over 1.5 times that. Set `SLICK_PERF_FRAME_BUDGET_MS` to change the budget, or `SLICK_SKIP_PERF=1` to skip the web one. On desktop, 100 MBO ladders and the GPU runs are measured but not held to the budget.
+
+On every push and PR to `main`, CI (`.github/workflows/ci.yml`) runs the web tests on Node 20 and 24 on Linux and Windows, without the perf test. It also builds the .NET solution and runs its unit tests on Windows, skipping the timing-based `*PerformanceTests`.
 
 ### Demo Features
 

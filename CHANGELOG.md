@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Multi-ladder performance tests (web and .NET): 50 and 100 ladders, each with its own random-rate feed, on a simulated 60 FPS clock, for price levels, MBO orders and books 500 levels deep. They check every ladder's book against its feed and fail when the average frame goes over 16.7ms or p95 over 1.5 times that (`SLICK_PERF_FRAME_BUDGET_MS` overrides). CI skips them like the other timing tests.
+- Desktop: `SkiaRenderer.NeedsRender()` (false when the snapshot and view haven't changed), `RenderRetained()` (update a surface that keeps its pixels between paints, without the cache copy) and `Invalidate()`
+- Web: `CanvasRenderer.needsRender()` and `recordFrame()` (counts a frame for `getMetrics().fps`, rendered or skipped)
+- Desktop GPU benchmark (`GpuTargets_KeepUpAt60Fps`): the multi-ladder scenario with each ladder drawn into its own OpenGL surface, like one Avalonia window per ladder on a GPU, with GPU time reported separately. It checks the books but not the frame budget.
+- Desktop: `PriceLadderViewModel` is `IDisposable`. Disposing it stops snapshots and completes `Spread`, `BidLevelCount` and `AskLevelCount`, and it's safe while a feed thread is flushing.
+- Desktop: `RenderMetrics.RecordFrame(long timestamp)` for a caller that has its own frame time (a `Stopwatch` timestamp)
+
+### Changed
+- **Desktop: much faster with many ladders**: 100 ladders went from ~53ms to ~10ms per frame in the multi-ladder test.
+  - `SkiaRenderer` keeps what each row shows and redraws only rows that differ. Rows that only moved are copied, a volume scale change redraws just the bar column, and a Show Empty Rows center move shifts the pixels. Text blobs are cached and grid lines are filled rects. Output is pixel-identical to a full redraw.
+  - The WPF and Avalonia controls repaint only when `NeedsRender()` says so, and the WPF control renders straight into its `SKElement` bitmap with `RenderRetained()`
+  - `PriceLadderViewModel` pushes `Spread`, `BidLevelCount` and `AskLevelCount` only when they change. `WhenAnyValue` ran ReactiveUI's change pipeline three times per flush, most of the ingest cost.
+  - Demo FPS counts UI frames, so it stays at the display rate while idle ladders skip their repaint
+  - One pass over each side's levels per render finds the largest quantity, the price column width and whether the levels are sorted. Show Empty Rows then reads only the levels around the visible prices.
+  - The segment scroll limit is found when dragging instead of every frame, which walked every order. 100 MBO ladders render in ~10ms instead of ~11ms.
+  - Text is drawn with `SKFont`, replacing `SKPaint`'s obsolete text properties. The pixels are identical.
+  - Prices, quantities and order counts are formatted once and reused, and an MBO side whose orders didn't change isn't scanned again for its largest order
+  - `RenderMetrics.RecordFrame()` keeps a running sum instead of averaging its whole window every frame
+- **Desktop: GPU frames stay on the GPU**: on a GPU canvas (Avalonia) `SkiaRenderer` keeps its frame as a texture there and draws changed rows into it, so no frame is uploaded. 100 ladders, each in its own window, went from ~47ms to ~30ms per frame in the GPU benchmark. A renderer disposed off its render thread, or never disposed, leaves the texture for the next render on that GPU to free.
+- **Web: rows compared like desktop**: `CanvasRenderer` keeps what each row shows and redraws only rows that differ, with the same row moves, bar-column redraws and Show Empty Rows shifts as `SkiaRenderer`. A volume scale change no longer redraws the whole ladder. Grid lines are 1px rects, as on desktop. Output matches a full redraw pixel for pixel (checked in Edge). 100 active ladders went from ~64ms to ~42ms per frame in Edge.
+- **Web: idle frames skipped**: the render loop builds a snapshot only when the book or view changed, so 100 idle ladders cost ~0.03ms per frame instead of ~2ms. `MBOManager` keeps a level's order array until its orders change.
+- **Web: cheaper snapshots and text**: each side's levels stay sorted as levels come and go, so snapshots don't sort, and levels are updated in place. MBO order maps change only for levels whose orders changed. Show Empty Rows places each level by its price instead of looking rows up in a map of formatted prices. Integer quantities are grouped by hand rather than through `Intl`, and price labels, column widths and column positions are cached. A render reads every level once (largest quantity, price column width, sort check), and Show Empty Rows binary-searches the levels around the visible prices. In the Node perf test, 100 ladders went from ~7ms to ~1.5ms per frame, 100 MBO ladders from ~17ms to ~6ms, and 100 books 500 levels deep from ~42ms to ~3.3ms. In Edge, 100 ladders went from ~40ms to ~30ms, and the rest is canvas drawing.
+  - `needsRender()` compares the view with the last render, like desktop `NeedsRender()`
+  - WASM snapshots keep a level's previous order array when its orders didn't change, so the renderer can tell by reference. The check reads the worker's orders in place instead of building each one.
+  - A queue of 8 or more orders keeps its largest order until the queue changes, so deep queues aren't scanned every frame for the segment scale
+
+### Removed
+- **Dirty-change hints on snapshots**: web `OrderBookSnapshot.dirtyChanges`, `structuralChange` and `DirtyLevelChange`, and on .NET `OrderBookSnapshot.DirtyChanges`, `StructuralChange`, `DirtyLevelChange`, `OrderBook.GetDirtyChanges()` and `HasStructuralChange`. Both renderers compare rows themselves, so nothing read them, and the WASM worker no longer writes them into every snapshot. Code that read them on web now gets `undefined`.
+
+### Fixed
+- **Web: slow rendering with many ladders**: `formatQuantity()` called `toLocaleString()` with options, which builds a new `Intl.NumberFormat` for every quantity cell. The formatters are now built once and give the same text. Rendering 100 ladders went from ~104ms to ~7ms per frame (Node, no-op canvas).
+- **Desktop: a row change lost between frames**: each flush's snapshot lists only its own changed rows, so with two flushes before a frame the first one's row kept its old value
+- **Stale volume bars** (web and desktop) when the largest quantity changed, since only the updated row was redrawn. On web, MBO order segments had the same problem when the largest order changed.
+- **Web: MBO order modify not shown**: `MBOManager` recorded no dirty change for a modify, so the order's row kept its old segments until something else repainted it
+- **Desktop: Show Empty Rows price off-center** on a row redrawn by itself (centered on the default column width, not the price column)
+- **Desktop: own-order border cut** when the row above it was redrawn
+- **Web: `setHasOwnOrders()` not shown** until something else redrew the row, since it changed the level in place without marking it
+- **Web: blank ladder after a container resize**: setting the canvas width cleared it, then only rows with changes were drawn
+- **Web: Show Empty Rows dropped levels sharing a row**: a bid and an ask on one price showed only the bid, and a second price rounding to the same row was lost. All of them are drawn now, as on desktop.
+- **Web: segment drag stopped short**: the drag limit was updated only when the segment scale changed by 20% or more, so a level that grew wider couldn't be dragged to its end. Both platforms now find the limit when dragging.
+- **Desktop: Remove Rows prices** always had two decimals and were centered on the default column width. They now use the display tick's decimals and the price column, like Show Empty Rows and web.
+
 ## [0.3.0] - 2026-11-14
 
 ### Added

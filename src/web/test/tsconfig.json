@@ -7,6 +7,6 @@
     "declarationMap": false,
     "sourceMap": false
   },
-  "files": ["../src/main.ts"],
+  "files": ["../src/main.ts", "../src/wasm-snapshot.ts"],
   "include": []
 }

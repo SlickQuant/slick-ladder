@@ -68,6 +68,14 @@ public partial class PriceLadderControl : UserControl
         {
             AvaloniaThreading.Dispatcher.UIThread.Post(() =>
             {
+                // Counted per UI frame, so idle frames that skip the repaint still show in FPS
+                _metrics.RecordFrame();
+
+                // Repaint only when the book or view changed: the compositor keeps the last frame
+                if (_viewModel?.CurrentSnapshot is { } snapshot && !_renderer!.NeedsRender(snapshot, _viewport!))
+                {
+                    return;
+                }
                 _skiaCanvas?.InvalidateVisual();
             }, AvaloniaThreading.DispatcherPriority.Render);
         };
@@ -205,9 +213,6 @@ public partial class PriceLadderControl : UserControl
                     // Use shared renderer (supports scrolling)
                     _parent._renderer!.Render(canvas, snapshot, _parent._viewport!);
                 }
-
-                // Track FPS
-                _parent._metrics.RecordFrame();
             }
         }
 

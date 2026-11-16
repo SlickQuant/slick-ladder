@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reactive.Linq;
+using System.Reactive.Subjects;
 using ReactiveUI;
 using SlickLadder.Core;
 using SlickLadder.Core.Models;
@@ -27,7 +27,7 @@ public class LevelClickEventArgs
 /// Shared ReactiveUI ViewModel for both WPF and Avalonia PriceLadder controls.
 /// Provides MVVM binding to the core business logic.
 /// </summary>
-public class PriceLadderViewModel : ReactiveObject
+public class PriceLadderViewModel : ReactiveObject, IDisposable
 {
     private readonly PriceLadderCore _core;
     private OrderBookSnapshot? _currentSnapshot;
@@ -39,11 +39,27 @@ public class PriceLadderViewModel : ReactiveObject
     /// </summary>
     public event Action<LevelClickEventArgs>? OnLevelClick;
 
+    // Every snapshot is new, so no equality check (RaiseAndSetIfChanged compares the struct by reflection)
     public OrderBookSnapshot? CurrentSnapshot
     {
         get => _currentSnapshot;
-        private set => this.RaiseAndSetIfChanged(ref _currentSnapshot, value);
+        private set
+        {
+            _currentSnapshot = value;
+            this.RaisePropertyChanged();
+        }
     }
+
+    // Derived values are pushed from the snapshot handler only when they change. WhenAnyValue on
+    // CurrentSnapshot would run ReactiveUI's change pipeline three times per flush, most of the
+    // ingest cost with many ladders
+    private readonly Subject<decimal> _spread = new();
+    private readonly Subject<int> _bidLevelCount = new();
+    private readonly Subject<int> _askLevelCount = new();
+    private decimal _lastSpread;
+    private int _lastBidLevelCount;
+    private int _lastAskLevelCount;
+    private int _disposed; // 1 once Dispose ran. A flush on the feed thread may be past the check
 
     // Observable properties
     public ObservableAsPropertyHelper<decimal> Spread { get; }
@@ -71,25 +87,58 @@ public class PriceLadderViewModel : ReactiveObject
         _core = new PriceLadderCore(maxLevels: 200, tickSize: tickSize);
 
         // Subscribe to snapshot updates from core
-        _core.OnSnapshotReady += snapshot =>
-        {
-            CurrentSnapshot = _displayTickSize > _tickSize
-                ? AggregateLevels(snapshot, _displayTickSize, _tickSize)
-                : snapshot;
-        };
+        _core.OnSnapshotReady += OnSnapshotReady;
 
         // Reactive properties derived from snapshot
-        Spread = this.WhenAnyValue(x => x.CurrentSnapshot)
-            .Select(_ => _core.GetSpread() ?? 0m)
-            .ToProperty(this, nameof(Spread));
+        Spread = _spread.ToProperty(this, nameof(Spread));
+        BidLevelCount = _bidLevelCount.ToProperty(this, nameof(BidLevelCount));
+        AskLevelCount = _askLevelCount.ToProperty(this, nameof(AskLevelCount));
+    }
 
-        BidLevelCount = this.WhenAnyValue(x => x.CurrentSnapshot)
-            .Select(s => s?.Bids.Length ?? 0)
-            .ToProperty(this, nameof(BidLevelCount));
+    private void OnSnapshotReady(OrderBookSnapshot snapshot)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return; // Flushed on another thread while Dispose unsubscribed
+        }
+        var current = _displayTickSize > _tickSize
+            ? AggregateLevels(snapshot, _displayTickSize, _tickSize)
+            : snapshot;
+        CurrentSnapshot = current;
+        PublishIfChanged(_spread, ref _lastSpread, _core.GetSpread() ?? 0m);
+        PublishIfChanged(_bidLevelCount, ref _lastBidLevelCount, current.Bids.Length);
+        PublishIfChanged(_askLevelCount, ref _lastAskLevelCount, current.Asks.Length);
+    }
 
-        AskLevelCount = this.WhenAnyValue(x => x.CurrentSnapshot)
-            .Select(s => s?.Asks.Length ?? 0)
-            .ToProperty(this, nameof(AskLevelCount));
+    /// <summary>
+    /// Stop taking snapshots and complete Spread, BidLevelCount and AskLevelCount, so their
+    /// subscribers are released. Safe while a feed thread flushes: the subjects are only completed,
+    /// and a flush already in the snapshot handler can still publish to them. A completed subject
+    /// drops the value, where a disposed one would throw
+    /// </summary>
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+        _core.OnSnapshotReady -= OnSnapshotReady;
+        _spread.OnCompleted();
+        _bidLevelCount.OnCompleted();
+        _askLevelCount.OnCompleted();
+        Spread.Dispose();
+        BidLevelCount.Dispose();
+        AskLevelCount.Dispose();
+    }
+
+    private static void PublishIfChanged<T>(Subject<T> subject, ref T last, T value) where T : IEquatable<T>
+    {
+        if (last.Equals(value))
+        {
+            return;
+        }
+        last = value;
+        subject.OnNext(value);
     }
 
     /// <summary>
@@ -151,21 +200,6 @@ public class PriceLadderViewModel : ReactiveObject
             ? (bestBid.Value + bestAsk.Value) / 2
             : (decimal?)null;
 
-        DirtyLevelChange[]? dirty = null;
-        if (snapshot.DirtyChanges != null)
-        {
-            var seen = new HashSet<string>();
-            var remapped = new List<DirtyLevelChange>();
-            foreach (var c in snapshot.DirtyChanges)
-            {
-                var bp = BucketPrice(c.Price, displayTickSize, c.Side == Side.ASK);
-                var key = $"{(int)c.Side}_{bp}";
-                if (seen.Add(key))
-                    remapped.Add(new DirtyLevelChange(bp, c.Side, c.IsRemoval, c.IsAddition));
-            }
-            dirty = remapped.ToArray();
-        }
-
         var result = snapshot; // copy the struct
         result.BestBid = bestBid;
         result.BestAsk = bestAsk;
@@ -174,7 +208,6 @@ public class PriceLadderViewModel : ReactiveObject
         result.Asks = asks;
         result.BidOrders = null;
         result.AskOrders = null;
-        result.DirtyChanges = dirty;
         return result;
     }
 

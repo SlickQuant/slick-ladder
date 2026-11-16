@@ -12,8 +12,12 @@ namespace SlickLadder.Rendering.Core;
 /// </summary>
 public class RenderMetrics
 {
-    private readonly Queue<long> _frameTimes = new();
-    private readonly int _windowSize = 60; // Track last 60 frames (1 second at 60 FPS)
+    // Last 60 frame durations (1 second at 60 FPS) in a ring, with their running sum. Every UI
+    // frame records one, idle or not, so the average never walks the window
+    private readonly double[] _frameTimes = new double[60];
+    private int _frameCount;
+    private int _nextFrame;
+    private double _frameTimeSum;
     private long _lastFrameTimestamp;
     private long _renderTraceFrameId;
 
@@ -22,30 +26,34 @@ public class RenderMetrics
     public bool TraceRenderTimings { get; set; } = ReadTraceSetting();
     public double SlowFrameThresholdMs { get; set; } = ReadSlowThresholdSetting();
 
-    public void RecordFrame()
+    public void RecordFrame() => RecordFrame(Stopwatch.GetTimestamp());
+
+    /// <summary>
+    /// A frame at a <see cref="Stopwatch.GetTimestamp"/> timestamp, for a caller that already has
+    /// one (a compositor frame time, or a test clock)
+    /// </summary>
+    public void RecordFrame(long timestamp)
     {
-        var now = DateTime.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
-
-        if (_lastFrameTimestamp > 0)
+        if (_lastFrameTimestamp != 0)
         {
-            var frameDuration = now - _lastFrameTimestamp;
-            _frameTimes.Enqueue(frameDuration);
-
-            // Keep only last N frames
-            while (_frameTimes.Count > _windowSize)
+            var frameMs = (timestamp - _lastFrameTimestamp) * 1000.0 / Stopwatch.Frequency;
+            if (_frameCount == _frameTimes.Length)
             {
-                _frameTimes.Dequeue();
+                _frameTimeSum -= _frameTimes[_nextFrame]; // The oldest frame leaves the window
             }
-
-            // Calculate metrics
-            if (_frameTimes.Count > 0)
+            else
             {
-                AverageFrameTime = _frameTimes.Average();
-                CurrentFps = AverageFrameTime > 0 ? 1000.0 / AverageFrameTime : 0;
+                _frameCount++;
             }
+            _frameTimes[_nextFrame] = frameMs;
+            _frameTimeSum += frameMs;
+            _nextFrame = (_nextFrame + 1) % _frameTimes.Length;
+
+            AverageFrameTime = _frameTimeSum / _frameCount;
+            CurrentFps = AverageFrameTime > 0 ? 1000.0 / AverageFrameTime : 0;
         }
 
-        _lastFrameTimestamp = now;
+        _lastFrameTimestamp = timestamp;
     }
 
     public void RecordRenderTime(long elapsedTicks, in OrderBookSnapshot snapshot)
@@ -89,7 +97,9 @@ public class RenderMetrics
 
     public void Reset()
     {
-        _frameTimes.Clear();
+        _frameCount = 0;
+        _nextFrame = 0;
+        _frameTimeSum = 0;
         _lastFrameTimestamp = 0;
         CurrentFps = 0;
         AverageFrameTime = 0;

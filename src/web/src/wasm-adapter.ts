@@ -1,7 +1,8 @@
 import { PriceLevel, OrderBookSnapshot, OrderUpdate, OrderUpdateType, PriceLadderConfig, Side } from './types';
 import type { WorkerRequest, WorkerResponse } from './wasm-types';
 import { PriceLadder } from './main';
-import { aggregateLevels, remapDirtyChanges } from './aggregation';
+import { aggregateLevels } from './aggregation';
+import { parseWasmSnapshot } from './wasm-snapshot';
 
 /**
  * WASM-powered Price Ladder component
@@ -17,6 +18,7 @@ export class WasmPriceLadder extends PriceLadder {
     private priceBatchQueue: PriceLevel[][] = [];
     private orderBatchQueue: Array<Array<{ update: OrderUpdate; type: OrderUpdateType }>> = [];
     private lastSnapshot: OrderBookSnapshot | null = null;
+    private lastWorkerSnapshot: OrderBookSnapshot | null = null; // Before aggregation
     // key: `${side}-${price}` — levels that should have hasOwnOrders=true
     private ownOrderOverrides: Map<string, true> = new Map();
 
@@ -297,9 +299,6 @@ export class WasmPriceLadder extends PriceLadder {
         const bestBid = bids.length > 0 ? bids[bids.length - 1].price : null;
         const bestAsk = asks.length > 0 ? asks[0].price : null;
         const midPrice = bestBid !== null && bestAsk !== null ? (bestBid + bestAsk) / 2 : null;
-        const dirtyChanges = snapshot.dirtyChanges
-            ? remapDirtyChanges(snapshot.dirtyChanges, dts, ts)
-            : undefined;
         return {
             ...snapshot,
             bids,
@@ -308,8 +307,7 @@ export class WasmPriceLadder extends PriceLadder {
             bestAsk,
             midPrice,
             bidOrders: null,
-            askOrders: null,
-            dirtyChanges
+            askOrders: null
         };
     }
 
@@ -439,65 +437,10 @@ export class WasmPriceLadder extends PriceLadder {
      * Render a snapshot received from WASM worker
      */
     private renderSnapshot(snapshotData: any): void {
-        // Parse JSON string if needed
-        let parsedData = snapshotData;
-        if (typeof snapshotData === 'string') {
-            parsedData = JSON.parse(snapshotData);
-        }
-
-        // Transform C# PascalCase to TypeScript camelCase
-        const bidsArray = parsedData.Bids ?? parsedData.bids ?? [];
-        const asksArray = parsedData.Asks ?? parsedData.asks ?? [];
-
-        // Transform BookLevel objects
-        const transformLevel = (level: any) => ({
-            price: level.Price ?? level.price,
-            quantity: level.Quantity ?? level.quantity,
-            numOrders: level.NumOrders ?? level.numOrders ?? 0,
-            side: level.Side ?? level.side,
-            isDirty: level.IsDirty ?? level.isDirty ?? false,
-            hasOwnOrders: level.HasOwnOrders ?? level.hasOwnOrders ?? false
-        });
-
-        // Transform order maps from plain objects to Maps (MBO mode)
-        const transformOrderMap = (orderMapData: any): Map<number, OrderUpdate[]> | null => {
-            if (!orderMapData) return null;
-
-            const orderMap = new Map<number, OrderUpdate[]>();
-            // Handle both PascalCase and camelCase property names
-            const entries = Object.entries(orderMapData);
-
-            for (const [priceStr, ordersArray] of entries) {
-                const price = parseFloat(priceStr);
-                const orders = (ordersArray as any[]).map((order: any) => ({
-                    orderId: order.OrderId ?? order.orderId,
-                    side: order.Side ?? order.side,
-                    price: order.Price ?? order.price,
-                    quantity: order.Quantity ?? order.quantity,
-                    priority: order.Priority ?? order.priority,
-                    isOwnOrder: order.IsOwnOrder ?? order.isOwnOrder ?? false
-                }));
-                orderMap.set(price, orders);
-            }
-
-            return orderMap;
-        };
-
-        const bidOrdersData = parsedData.BidOrders ?? parsedData.bidOrders;
-        const askOrdersData = parsedData.AskOrders ?? parsedData.askOrders;
-
-        const snapshot: OrderBookSnapshot = {
-            bestBid: parsedData.BestBid ?? parsedData.bestBid ?? null,
-            bestAsk: parsedData.BestAsk ?? parsedData.bestAsk ?? null,
-            midPrice: parsedData.MidPrice ?? parsedData.midPrice ?? null,
-            bids: bidsArray.map(transformLevel),
-            asks: asksArray.map(transformLevel),
-            timestamp: parsedData.Timestamp ?? parsedData.timestamp ?? Date.now(),
-            bidOrders: transformOrderMap(bidOrdersData),
-            askOrders: transformOrderMap(askOrdersData),
-            dirtyChanges: parsedData.DirtyChanges ?? parsedData.dirtyChanges,
-            structuralChange: parsedData.StructuralChange ?? parsedData.structuralChange
-        };
+        // Unchanged levels keep the last snapshot's order arrays (aggregation drops orders, so
+        // the unaggregated snapshot is the one kept)
+        const snapshot = parseWasmSnapshot(snapshotData, this.lastWorkerSnapshot);
+        this.lastWorkerSnapshot = snapshot;
 
         // Apply own-order overrides set via setHasOwnOrders()
         this.applyOwnOrderOverrides(snapshot);
@@ -511,6 +454,7 @@ export class WasmPriceLadder extends PriceLadder {
         // Store the last snapshot for re-rendering on viewport changes
         this.lastSnapshot = aggregatedSnapshot;
 
+        this.renderer.recordFrame();
         this.renderer.render(aggregatedSnapshot);
     }
 }
