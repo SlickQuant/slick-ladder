@@ -152,21 +152,17 @@ function decimalPlaces(value: number): number {
  */
 type LevelStats = {
     maxQuantity: number;
-    maxPrice: number; // 0 when no level is above 0
-    minPrice: number; // Infinity for no levels
     nonEmpty: number; // Levels with quantity
     nonEmptyAscending: boolean; // Those strictly ascending by price
     ascending: boolean; // All levels ascending by price, so the visible ones can be found by binary search
 };
 
 function createStats(): LevelStats {
-    return { maxQuantity: 0, maxPrice: 0, minPrice: Infinity, nonEmpty: 0, nonEmptyAscending: true, ascending: true };
+    return { maxQuantity: 0, nonEmpty: 0, nonEmptyAscending: true, ascending: true };
 }
 
 function scanLevels(levels: BookLevel[], stats: LevelStats): LevelStats {
     let maxQuantity = 0;
-    let maxPrice = 0;
-    let minPrice = Infinity;
     let nonEmpty = 0;
     let nonEmptyAscending = true;
     let ascending = true;
@@ -176,8 +172,6 @@ function scanLevels(levels: BookLevel[], stats: LevelStats): LevelStats {
         const level = levels[i];
         const price = level.price;
         const quantity = level.quantity;
-        if (price > maxPrice) maxPrice = price;
-        if (price < minPrice) minPrice = price;
         if (price < lastPrice) ascending = false;
         lastPrice = price;
         if (quantity > maxQuantity) maxQuantity = quantity;
@@ -188,8 +182,6 @@ function scanLevels(levels: BookLevel[], stats: LevelStats): LevelStats {
         }
     }
     stats.maxQuantity = maxQuantity;
-    stats.maxPrice = maxPrice;
-    stats.minPrice = minPrice;
     stats.nonEmpty = nonEmpty;
     stats.nonEmptyAscending = nonEmptyAscending;
     stats.ascending = ascending;
@@ -538,19 +530,28 @@ export class CanvasRenderer {
     }
 
     /**
-     * Calculate dynamic price column width based on price values
-     * Mirrors TypeScript implementation logic
+     * Price column width that fits the prices on this frame's rows (nextRows). Sizing it from the
+     * whole book would let a deep book's far levels widen it for prices that are never drawn. The
+     * widest text is the highest or the lowest price (which may carry a minus sign), so only those
+     * two are measured.
+     * Mirrors SkiaRenderer.CalculatePriceColumnWidth
      */
     private calculatePriceColumnWidth(): number {
-        // The maximum and minimum prices determine max digits
-        const maxPrice = Math.max(this.bidStats.maxPrice, this.askStats.maxPrice);
-        const minPrice = Math.min(this.bidStats.minPrice, this.askStats.minPrice);
+        let high = -Infinity;
+        let low = Infinity;
+        for (const row of this.nextRows) {
+            // Show Empty Rows draws the row's label, Remove Rows its one level's price
+            const price = !Number.isNaN(row.label) ? row.label
+                : row.ask.present ? row.ask.price : row.bid.present ? row.bid.price : NaN;
+            if (price > high) high = price;
+            if (price < low) low = price;
+        }
 
-        // If no levels, use default width
-        if (maxPrice === 0 || minPrice === Infinity) {
+        // No prices on screen
+        if (high < low) {
             return COL_WIDTH;
         }
-        return this.columnWidthFor(this.formatPrice(maxPrice));
+        return Math.max(this.columnWidthFor(this.formatPrice(high)), this.columnWidthFor(this.formatPrice(low)));
     }
 
     /**
@@ -739,20 +740,6 @@ export class CanvasRenderer {
         const maxQuantity = Math.max(this.bidStats.maxQuantity, this.askStats.maxQuantity);
         this.maxQuantity = this.showVolumeBars ? maxQuantity : 0;
 
-        // Calculate dynamic quantity column width
-        const newQtyColWidth = this.calculateQuantityColumnWidth(maxQuantity);
-        const newPriceColWidth = this.calculatePriceColumnWidth();
-
-        if (newQtyColWidth !== this.qtyColWidth || newPriceColWidth !== this.priceColWidth) {
-            this.qtyColWidth = newQtyColWidth;
-            this.priceColWidth = newPriceColWidth;
-            // Resize canvas to accommodate new column widths
-            const newCanvasWidth = this.calculateCanvasWidth();
-            if (newCanvasWidth !== this.width) {
-                this.resize(newCanvasWidth, this.height);
-            }
-        }
-
         // Recalculate base scale if order quantities changed
         this.calculateBaseScale();
 
@@ -766,9 +753,22 @@ export class CanvasRenderer {
             ? this.resolveReferencePrice(snapshot)
             : 0;
 
+        // Rows don't depend on column widths, so build them first and size the price column from them
+        this.buildRows(snapshot, referencePrice);
+        const newQtyColWidth = this.calculateQuantityColumnWidth(maxQuantity);
+        const newPriceColWidth = this.calculatePriceColumnWidth();
+        if (newQtyColWidth !== this.qtyColWidth || newPriceColWidth !== this.priceColWidth) {
+            this.qtyColWidth = newQtyColWidth;
+            this.priceColWidth = newPriceColWidth;
+            // Resize canvas to accommodate new column widths
+            const newCanvasWidth = this.calculateCanvasWidth();
+            if (newCanvasWidth !== this.width) {
+                this.resizeCanvas(newCanvasWidth, this.height);
+            }
+        }
+
         // Compare the rows this frame should show with what the canvas holds and redraw only the
         // ones that differ. A layout change (or a move that isn't whole rows) redraws everything
-        this.buildRows(snapshot, referencePrice);
         if (this.needsFullRedraw || this.layoutChanged() || this.rows.length !== this.nextRows.length ||
             !this.tryShiftRows(referencePrice)) {
             this.renderFull();
@@ -1727,6 +1727,19 @@ export class CanvasRenderer {
      * Resize the canvas
      */
     public resize(width: number, height: number): void {
+        this.resizeCanvas(width, height);
+        this.renderBackground();
+
+        if (this.currentSnapshot) {
+            this.render(this.currentSnapshot);
+        }
+    }
+
+    /**
+     * Resize the canvases without drawing. Their pixels are cleared, so the next render redraws
+     * everything
+     */
+    private resizeCanvas(width: number, height: number): void {
         this.width = width;
         this.height = height;
         this.visibleRows = Math.floor(height / this.rowHeight);
@@ -1745,12 +1758,7 @@ export class CanvasRenderer {
             this.offscreenCtx = ctx;
             this.setupContext(this.offscreenCtx);
         }
-
-        this.renderBackground();
-
-        if (this.currentSnapshot) {
-            this.render(this.currentSnapshot);
-        }
+        this.needsFullRedraw = true;
     }
 
     /**

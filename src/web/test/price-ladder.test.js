@@ -97,6 +97,44 @@ test('column positions follow the column widths', () => {
     assert.ok(renderer.priceColWidth > 70);
 });
 
+// Bug: the price column fit the highest price anywhere in the book, so a full exchange book
+// (Coinbase BTC-USD has asks out at 138,991,023.41) made it wide enough for prices never on
+// screen. Now it fits the prices on screen and changes as the view scrolls or re-centers
+for (const removalMode of ['removeRow', 'showEmpty']) {
+    test(`${removalMode}: price column fits the prices on screen`, () => {
+        const ladder = new PriceLadder({ container: fakeContainer(), removalMode, autoCenter: false });
+        for (let i = 0; i < 30; i++) {
+            ladder.processUpdate({ side: Side.BID, price: 64964.81 - i * 0.01, quantity: 1, numOrders: 1 });
+            ladder.processUpdate({ side: Side.ASK, price: 64964.82 + i * 0.01, quantity: 1, numOrders: 1 });
+        }
+        ladder.processUpdate({ side: Side.ASK, price: 138991023.41, quantity: 1, numOrders: 1 });
+        render(ladder);
+        const { renderer } = ladder;
+        const near = renderer.columnWidthFor('64964.82');
+        assert.equal(renderer.priceColWidth, near);
+
+        // Scrolled to the far ask, the column fits it. Re-centering narrows the column and canvas
+        if (removalMode === 'removeRow') {
+            renderer.setScrollOffset(-30);
+        } else {
+            renderer.setCenterPrice(138991023.41);
+        }
+        assert.equal(renderer.priceColWidth, renderer.columnWidthFor('138991023.41'));
+        const wide = ladder.canvas.width;
+        renderer.recenter();
+        assert.equal(renderer.priceColWidth, near);
+        assert.ok(ladder.canvas.width < wide, `canvas ${ladder.canvas.width} not narrower than ${wide}`);
+    });
+
+    // Bug: only the highest price was measured, starting from 0, so a book entirely below zero
+    // (a calendar spread) kept the default width and "-1234.50" was clipped
+    test(`${removalMode}: price column fits negative prices`, () => {
+        const { renderer } = createLadder({ removalMode }, -1234.75, -1234.50);
+        assert.equal(renderer.priceColWidth, renderer.columnWidthFor('-1234.50'));
+        assert.ok(renderer.priceColWidth > renderer.columnWidthFor('0.00'), 'wider than the default');
+    });
+}
+
 // Snapshots reuse sorted level arrays (updated as levels come and go, no per-frame sort) and MBO
 // order maps updated only for changed levels. Both must hold the feed's book after every batch,
 // and a snapshot's level list must stay as it was taken

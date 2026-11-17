@@ -40,9 +40,11 @@ public class IncrementalRenderTests
 
         public OrderBookSnapshot Snapshot { get; private set; }
 
-        public Book(DataMode mode = DataMode.PriceLevel)
+        // snapshotLevels: ticks around the mid a snapshot spans
+        public Book(DataMode mode = DataMode.PriceLevel, int snapshotLevels = 100)
         {
             _core.SetDataMode(mode);
+            _core.SetSnapshotViewport(null, snapshotLevels);
             _core.OnSnapshotReady += snapshot => Snapshot = snapshot;
         }
 
@@ -390,6 +392,70 @@ public class IncrementalRenderTests
         book.Flush(new PriceLevel(Side.BID, 123455.95m, 500, 2));
         ladder.Render(book.Snapshot);
 
+        ladder.AssertMatchesFullRedraw(book.Snapshot);
+    }
+
+    // Bug: the price column fit the highest price anywhere in the book, so a full exchange book
+    // (Coinbase BTC-USD has asks out at 138,991,023.41) made it wide enough for prices never on
+    // screen. Now it fits the prices on screen and changes as the view scrolls or re-centers.
+    // PriceLadderCore's snapshots only hold levels near the mid, so this test raises
+    // snapshotLevels to reach the far ask
+    [Theory]
+    [MemberData(nameof(Paths))]
+    public void PriceColumn_FitsPricesOnScreen(LevelRemovalMode mode, bool retained)
+    {
+        const decimal farAsk = 1_000_000.00m;
+        const int snapshotLevels = 200_000_000;
+        var levels = new List<PriceLevel>();
+        for (var i = 0; i < 30; i++)
+        {
+            levels.Add(new PriceLevel(Side.BID, 64964.81m - i * 0.01m, 1, 1));
+            levels.Add(new PriceLevel(Side.ASK, 64964.82m + i * 0.01m, 1, 1));
+        }
+        using var nearOnly = new Ladder(mode, retained);
+        nearOnly.Render(new Book(snapshotLevels: snapshotLevels).Flush(levels.ToArray()).Snapshot);
+        var near = nearOnly.Viewport.PriceColWidth;
+
+        levels.Add(new PriceLevel(Side.ASK, farAsk, 1, 1));
+        var book = new Book(snapshotLevels: snapshotLevels).Flush(levels.ToArray());
+        Assert.Contains(book.Snapshot.Asks, level => level.Price == farAsk);
+        using var ladder = new Ladder(mode, retained);
+        ladder.Render(book.Snapshot);
+        Assert.Equal(near, ladder.Viewport.PriceColWidth);
+
+        // Scrolled to the far ask, the column fits it. Re-centering narrows it again
+        ladder.Viewport.AutoCenter = false;
+        if (mode == LevelRemovalMode.RemoveRow)
+        {
+            ladder.Viewport.DensePackingScrollOffset = -30;
+        }
+        else
+        {
+            ladder.Viewport.CenterPrice = farAsk;
+        }
+        ladder.Render(book.Snapshot);
+        Assert.True(ladder.Viewport.PriceColWidth > near, "the far ask must widen the price column");
+
+        ladder.Viewport.AutoCenter = true;
+        ladder.Render(book.Snapshot);
+        Assert.Equal(near, ladder.Viewport.PriceColWidth);
+        ladder.AssertMatchesFullRedraw(book.Snapshot);
+    }
+
+    // Bug: only the highest price was measured, starting from 0, so a book entirely below zero
+    // (a calendar spread) kept the default width and clipped its prices
+    [Theory]
+    [MemberData(nameof(Paths))]
+    public void PriceColumn_FitsNegativePrices(LevelRemovalMode mode, bool retained)
+    {
+        using var positive = new Ladder(mode, retained);
+        positive.Render(new Book().Flush(new PriceLevel(Side.BID, 123456.50m, 10, 1), new PriceLevel(Side.ASK, 123456.75m, 10, 1)).Snapshot);
+        Assert.True(positive.Viewport.PriceColWidth > RenderConfig.ColumnWidth, "the digits must widen the price column");
+
+        var book = new Book().Flush(new PriceLevel(Side.BID, -123456.75m, 10, 1), new PriceLevel(Side.ASK, -123456.50m, 10, 1));
+        using var ladder = new Ladder(mode, retained);
+        ladder.Render(book.Snapshot);
+        Assert.True(ladder.Viewport.PriceColWidth > positive.Viewport.PriceColWidth, "the minus sign must widen it more");
         ladder.AssertMatchesFullRedraw(book.Snapshot);
     }
 

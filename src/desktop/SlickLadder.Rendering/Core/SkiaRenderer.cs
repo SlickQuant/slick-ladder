@@ -247,15 +247,6 @@ public class SkiaRenderer : IDisposable
 
         // Largest level sizes the quantity column and scales every volume bar
         var maxQuantity = Math.Max(_bidStats.MaxQuantity, _askStats.MaxQuantity);
-        var newQtyColWidth = CalculateQuantityColumnWidth(maxQuantity);
-        var newPriceColWidth = CalculatePriceColumnWidth();
-
-        if (Math.Abs(viewport.QtyColWidth - newQtyColWidth) > 0.5f || Math.Abs(viewport.PriceColWidth - newPriceColWidth) > 0.5f)
-        {
-            viewport.QtyColWidth = newQtyColWidth;
-            viewport.PriceColWidth = newPriceColWidth;
-            _needsFullRedraw = true; // Force full redraw when column widths change
-        }
 
         // Recalculate base scale if order quantities changed
         CalculateBaseScale(snapshot);
@@ -281,10 +272,22 @@ public class SkiaRenderer : IDisposable
             _debugOverlayAllRows = false;
         }
 
+        // The price column is sized from this frame's rows, so build them first. Bar lengths
+        // depend on the column widths, which is why a width change below rebuilds the rows
+        BuildRows(snapshot, viewport, maxVolume, visibleRows, midRow, displayTickSize, referencePrice);
+        var newQtyColWidth = CalculateQuantityColumnWidth(maxQuantity);
+        var newPriceColWidth = CalculatePriceColumnWidth(viewport.RemovalMode);
+        if (Math.Abs(viewport.QtyColWidth - newQtyColWidth) > 0.5f || Math.Abs(viewport.PriceColWidth - newPriceColWidth) > 0.5f)
+        {
+            viewport.QtyColWidth = newQtyColWidth;
+            viewport.PriceColWidth = newPriceColWidth;
+            _needsFullRedraw = true; // Force full redraw when column widths change
+            BuildRows(snapshot, viewport, maxVolume, visibleRows, midRow, displayTickSize, referencePrice);
+        }
+
         // Compare the rows this frame should show with what the cache holds and redraw only the
         // ones that differ. A layout change (or a move that isn't whole rows) redraws everything
         var layout = new LayoutState(viewport, _config, _segmentState);
-        BuildRows(snapshot, viewport, maxVolume, visibleRows, midRow, displayTickSize, referencePrice);
         if (_needsFullRedraw || layout != _lastLayout || _rows.Length != _nextRows.Length ||
             !TryShiftRows(viewport, referencePrice, displayTickSize))
         {
@@ -412,8 +415,6 @@ public class SkiaRenderer : IDisposable
     /// </summary>
     private readonly record struct LevelStats(
         decimal MaxQuantity,
-        decimal MaxPrice, // 0 when no level is above 0
-        decimal MinPrice, // decimal.MaxValue for no levels
         int NonEmpty, // Levels with quantity
         bool NonEmptyAscending, // Those strictly ascending by price
         bool Ascending) // All levels ascending by price, so the visible ones can be found by binary search
@@ -421,8 +422,6 @@ public class SkiaRenderer : IDisposable
         public static LevelStats Scan(BookLevel[] levels)
         {
             decimal maxQuantity = 0;
-            decimal maxPrice = 0;
-            var minPrice = decimal.MaxValue;
             var nonEmpty = 0;
             var nonEmptyAscending = true;
             var ascending = true;
@@ -431,8 +430,6 @@ public class SkiaRenderer : IDisposable
             foreach (ref readonly var level in levels.AsSpan())
             {
                 var price = level.Price;
-                if (price > maxPrice) maxPrice = price;
-                if (price < minPrice) minPrice = price;
                 if (price < lastPrice) ascending = false;
                 lastPrice = price;
                 if (level.Quantity > maxQuantity) maxQuantity = level.Quantity;
@@ -443,7 +440,7 @@ public class SkiaRenderer : IDisposable
                     nonEmpty++;
                 }
             }
-            return new LevelStats(maxQuantity, maxPrice, minPrice, nonEmpty, nonEmptyAscending, ascending);
+            return new LevelStats(maxQuantity, nonEmpty, nonEmptyAscending, ascending);
         }
     }
 
@@ -482,42 +479,45 @@ public class SkiaRenderer : IDisposable
             ? maxQty.ToString("N0")  // Integer: use thousands separators
             : maxQty.ToString("0.################").TrimEnd('0').TrimEnd('.');  // Decimal: trim trailing zeros
 
-        // Measure text width
-        var textWidth = _textBlobs.Get(maxQtyText).Width;
-
-        // Add padding (10px each side)
-        var requiredWidth = textWidth + 20;
-
-        // Return max of standard column width or required width
-        return Math.Max(RenderConfig.ColumnWidth, (float)Math.Ceiling(requiredWidth));
+        return ColumnWidthFor(maxQtyText);
     }
 
     /// <summary>
-    /// Calculate dynamic price column width based on price values
+    /// Price column width that fits the prices on this frame's rows (_nextRows). Sizing it from the
+    /// whole book would let a deep book's far levels widen it for prices that are never drawn. The
+    /// widest text is the highest or the lowest price (which may carry a minus sign), so only those
+    /// two are measured.
     /// Mirrors TypeScript calculatePriceColumnWidth() in canvas-renderer.ts
     /// </summary>
-    private float CalculatePriceColumnWidth()
+    private float CalculatePriceColumnWidth(LevelRemovalMode mode)
     {
-        // The maximum and minimum prices determine max digits
-        var maxPrice = Math.Max(_bidStats.MaxPrice, _askStats.MaxPrice);
-        var minPrice = Math.Min(_bidStats.MinPrice, _askStats.MinPrice);
-
-        if (maxPrice == 0 || minPrice == decimal.MaxValue)
+        var high = decimal.MinValue;
+        var low = decimal.MaxValue;
+        foreach (ref readonly var row in _nextRows.AsSpan())
         {
-            return RenderConfig.ColumnWidth;
+            // Show Empty Rows draws the row's label, Remove Rows its one level's price
+            decimal price;
+            if (mode == LevelRemovalMode.ShowEmpty) price = row.Label;
+            else if (row.Ask.Present) price = row.Ask.Level.Price;
+            else if (row.Bid.Present) price = row.Bid.Level.Price;
+            else continue;
+            if (price > high) high = price;
+            if (price < low) low = price;
         }
 
-        // Format the maximum price to get its text width
-        var maxPriceText = FormatPrice(maxPrice);
+        if (high < low)
+        {
+            return RenderConfig.ColumnWidth; // No prices on screen
+        }
+        return Math.Max(ColumnWidthFor(FormatPrice(high)), ColumnWidthFor(FormatPrice(low)));
+    }
 
-        // Measure text width
-        var textWidth = _textBlobs.Get(maxPriceText).Width;
-
-        // Add padding (10px each side)
-        var requiredWidth = textWidth + 20;
-
-        // Return max of standard column width or required width
-        return Math.Max(RenderConfig.ColumnWidth, (float)Math.Ceiling(requiredWidth));
+    /// <summary>
+    /// Width of a column that fits text: at least ColumnWidth, with 10px padding on each side
+    /// </summary>
+    private float ColumnWidthFor(string text)
+    {
+        return Math.Max(RenderConfig.ColumnWidth, (float)Math.Ceiling(_textBlobs.Get(text).Width + 20));
     }
 
     /// <summary>

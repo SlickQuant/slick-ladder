@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-17
+
 ### Added
 - Multi-ladder performance tests (web and .NET): 50 and 100 ladders, each with its own random-rate feed, on a simulated 60 FPS clock, for price levels, MBO orders and books 500 levels deep. They check every ladder's book against its feed and fail when the average frame goes over 16.7ms or p95 over 1.5 times that (`SLICK_PERF_FRAME_BUDGET_MS` overrides). CI skips them like the other timing tests.
 - Desktop: `SkiaRenderer.NeedsRender()` (false when the snapshot and view haven't changed), `RenderRetained()` (update a surface that keeps its pixels between paints, without the cache copy) and `Invalidate()`
@@ -21,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The WPF and Avalonia controls repaint only when `NeedsRender()` says so, and the WPF control renders straight into its `SKElement` bitmap with `RenderRetained()`
   - `PriceLadderViewModel` pushes `Spread`, `BidLevelCount` and `AskLevelCount` only when they change. `WhenAnyValue` ran ReactiveUI's change pipeline three times per flush, most of the ingest cost.
   - Demo FPS counts UI frames, so it stays at the display rate while idle ladders skip their repaint
-  - One pass over each side's levels per render finds the largest quantity, the price column width and whether the levels are sorted. Show Empty Rows then reads only the levels around the visible prices.
+  - One pass over each side's levels per render finds the largest quantity and whether the levels are sorted. Show Empty Rows then reads only the levels around the visible prices.
   - The segment scroll limit is found when dragging instead of every frame, which walked every order. 100 MBO ladders render in ~10ms instead of ~11ms.
   - Text is drawn with `SKFont`, replacing `SKPaint`'s obsolete text properties. The pixels are identical.
   - Prices, quantities and order counts are formatted once and reused, and an MBO side whose orders didn't change isn't scanned again for its largest order
@@ -49,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Web: Show Empty Rows dropped levels sharing a row**: a bid and an ask on one price showed only the bid, and a second price rounding to the same row was lost. All of them are drawn now, as on desktop.
 - **Web: segment drag stopped short**: the drag limit was updated only when the segment scale changed by 20% or more, so a level that grew wider couldn't be dragged to its end. Both platforms now find the limit when dragging.
 - **Desktop: Remove Rows prices** always had two decimals and were centered on the default column width. They now use the display tick's decimals and the price column, like Show Empty Rows and web.
+- **Price column too wide on deep books** (web and desktop): it fit the highest price anywhere in the book, so a full exchange book (Coinbase BTC-USD quotes asks out to 138,991,023.41) got room for 12 characters when the screen needed 8. It now fits the highest and lowest prices on the rows drawn, and follows scrolling and re-centering. A book entirely below zero no longer gets the default width, which clipped its prices.
 
 ## [0.3.0] - 2026-11-14
 
