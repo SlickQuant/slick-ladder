@@ -5,6 +5,9 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <Description>WPF price ladder (depth of market) control for Windows, drawn with SkiaSharp.</Description>
+    <PackageTags>$(PackageTags);wpf;skiasharp</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

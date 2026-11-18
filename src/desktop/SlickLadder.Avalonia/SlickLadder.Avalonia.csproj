@@ -4,12 +4,17 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <Description>Avalonia price ladder (depth of market) control for Windows, Linux and macOS, drawn with SkiaSharp.</Description>
+    <PackageTags>$(PackageTags);avalonia;skiasharp</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.2.0" />
     <PackageReference Include="Avalonia.Skia" Version="11.2.0" />
     <PackageReference Include="ReactiveUI.Avalonia" Version="14.7.1" />
+    <!-- Avalonia.Skia brings the 2.88 Linux native library, which doesn't match SkiaSharp 3 -->
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.119.1" />
   </ItemGroup>
 
   <ItemGroup>

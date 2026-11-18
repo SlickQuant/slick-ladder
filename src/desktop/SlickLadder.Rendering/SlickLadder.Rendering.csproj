@@ -4,6 +4,9 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <Description>SkiaSharp renderer for the SlickLadder price ladder, shared by the WPF and Avalonia controls.</Description>
+    <PackageTags>$(PackageTags);skiasharp</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

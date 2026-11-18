@@ -128,9 +128,44 @@ jobs:
           path: '${{ matrix.artifact-name }}.${{ matrix.archive-ext }}'
           retention-days: 5
 
+  build-nuget:
+    name: Build NuGet Packages
+    runs-on: windows-latest  # SlickLadder.WPF targets net8.0-windows
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # Only the IsPackable library projects produce packages, versioned from src/web/package.json
+      - name: Pack
+        run: dotnet pack slick-ladder.sln -c Release -o nupkgs
+
+      - name: Check package versions match the tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          ls nupkgs
+          for id in SlickLadder.Core SlickLadder.Rendering SlickLadder.Avalonia SlickLadder.WPF; do
+            if [ ! -f "nupkgs/${id}.${VERSION}.nupkg" ]; then
+              echo "::error::Missing nupkgs/${id}.${VERSION}.nupkg. Does src/web/package.json say ${VERSION}?"
+              exit 1
+            fi
+          done
+
+      - name: Upload NuGet package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: nupkgs/*
+          retention-days: 5
+
   create-release:
     name: Create GitHub Release
-    needs: [build-npm, build-desktop]
+    needs: [build-npm, build-desktop, build-nuget]
     runs-on: ubuntu-latest
     permissions:
       contents: write  # Required for creating releases
@@ -175,6 +210,8 @@ jobs:
             artifacts/SlickLadder-linux-x64/SlickLadder-linux-x64.tar.gz
             artifacts/SlickLadder-osx-x64/SlickLadder-osx-x64.tar.gz
             artifacts/SlickLadder-osx-arm64/SlickLadder-osx-arm64.tar.gz
+            artifacts/nuget-packages/*.nupkg
+            artifacts/nuget-packages/*.snupkg
           draft: true
           prerelease: false
         env:
@@ -270,3 +307,35 @@ jobs:
             echo "::error::npm publish failed. ENEEDAUTH means the OIDC token exchange was rejected (reason in the oidc lines above). Compare the claims from the previous step with the npmjs.com trusted publisher: owner SlickQuant, repo slick-ladder, workflow release.yml, environment empty."
             exit 1
           }
+
+  publish-nuget:
+    name: Publish to NuGet
+    needs: [build-nuget, create-release]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    # Trusted publishing (OIDC): NuGet/login trades the job's OIDC token for an API key valid 1 hour.
+    # https://learn.microsoft.com/nuget/nuget-org/trusted-publishing
+    permissions:
+      id-token: write  # Required for OIDC
+      contents: read
+    steps:
+      - name: Download NuGet package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-packages
+          path: nupkgs
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: NuGet login (OIDC to temporary API key)
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}  # nuget.org profile name, not the email
+
+      # Each .snupkg goes up with its .nupkg. A rerun skips versions already on nuget.org
+      - name: Push packages to NuGet
+        run: dotnet nuget push "nupkgs/*.nupkg" --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate

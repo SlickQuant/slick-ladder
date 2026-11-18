@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>true</IsPackable>
+    <Description>SlickLadder price ladder core: price level and market-by-order (MBO) books, update batching and snapshots, with no UI dependencies.</Description>
   </PropertyGroup>
 
   <!-- WASM Build Configuration -->

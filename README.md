@@ -113,8 +113,17 @@ dotnet run --project examples/avalonia/SlickLadder.Avalonia.Demo.csproj
 ### Web (npm)
 
 ```bash
-npm install slick-ladder
+npm install @slickquant/slick-ladder
 ```
+
+### Desktop (NuGet)
+
+```bash
+dotnet add package SlickLadder.Avalonia   # Avalonia (Windows, Linux, macOS)
+dotnet add package SlickLadder.WPF        # WPF (Windows)
+```
+
+Both bring in `SlickLadder.Rendering` and `SlickLadder.Core`. `SlickLadder.Core` alone has the order books and update batching with no UI.
 
 ### From Source
 

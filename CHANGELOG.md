@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **NuGet packages**: `SlickLadder.Core`, `SlickLadder.Rendering`, `SlickLadder.Avalonia` and `SlickLadder.WPF`, released with the npm package at the same version and published to nuget.org with trusted publishing. They come with Source Link and `.snupkg` symbols, and the GitHub release attaches both the packages and the symbols.
+
+### Fixed
+- **Avalonia on Linux**: Avalonia.Skia pulled in the 2.88 Linux native SkiaSharp library, which doesn't match SkiaSharp 3.119.1. `SlickLadder.Avalonia` now references `SkiaSharp.NativeAssets.Linux` 3.119.1, so the Linux demo and apps using the package get a matching library.
+
 ## [0.4.0] - 2026-11-17
 
 ### Added
