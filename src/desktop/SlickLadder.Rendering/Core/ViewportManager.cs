@@ -1,4 +1,5 @@
 using SlickLadder.Core;
+using SlickLadder.Core.Models;
 
 namespace SlickLadder.Rendering.Core;
 
@@ -30,6 +31,16 @@ public class ViewportManager
     public float AskOrderCountColumnX => RenderConfig.ColumnWidth + QtyColWidth + PriceColWidth + QtyColWidth; // After ask qty
 
     public float? VolumeBarColumnX => ShowVolumeBars ? GetFixedColumnsWidth() : null;
+
+    /// <summary>
+    /// Side of the quantity column under x, null outside both
+    /// </summary>
+    public Side? QtyColumnSideAt(float x)
+    {
+        if (x >= BidQtyColumnX && x < BidQtyColumnX + QtyColWidth) return Side.BID;
+        if (x >= AskQtyColumnX && x < AskQtyColumnX + QtyColWidth) return Side.ASK;
+        return null;
+    }
 
     private float GetFixedColumnsWidth()
     {

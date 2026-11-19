@@ -1,7 +1,7 @@
 // PriceLadder unit tests (node:test). Browser APIs are stubbed by the harness. Run: npm test (in src/web)
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { PriceLadder, Side, OrderUpdateType, fakeContainer, render } = require('../test-utils/ladder-harness');
+const { PriceLadder, Side, ClickButton, OrderUpdateType, fakeContainer, render } = require('../test-utils/ladder-harness');
 const { Feed, OrderFeed, seededRandom, TICK_SIZE } = require('../test-utils/random-feed');
 
 // Default book: bid 100.00 / ask 100.02 -> mid 100.01
@@ -405,4 +405,56 @@ test('auto-center off: wheel scrolls, Space and middle-click re-center', () => {
     ladder.renderer.setCenterPrice(105);
     listeners.mousedown(event({ button: 1, clientX: 0, clientY: 0 }));
     assertNear(ladder.renderer.getCenterPrice(), 100.01);
+});
+
+// Level clicks carry the mouse button. A middle-click on a qty column re-centers unless
+// onLevelClick returns true (handled)
+function clickLadder(onLevelClick, config = {}) {
+    const ladder = createLadder({ autoCenter: false, onLevelClick, ...config });
+    const { bidQtyX, askQtyX } = ladder.renderer.getColumnPositions();
+    return { ladder, bidX: bidQtyX + 1, askX: askQtyX + 1, listeners: ladder.canvas.listeners };
+}
+
+test('level click passes the mouse button, back/forward buttons are ignored', () => {
+    const calls = [];
+    const { ladder, bidX, askX, listeners } = clickLadder((...args) => { calls.push(args); return true; });
+    const row = [...Array(30).keys()].find((r) => ladder.renderer.rowToLevelInfo(r) !== null);
+    const price = ladder.renderer.rowToLevelInfo(row).price;
+    const at = (button, clientX) => event({ button, clientX, clientY: row * 24 + 1 });
+
+    listeners.click(at(0, bidX));
+    listeners.auxclick(at(1, askX));
+    listeners.auxclick(at(2, askX));
+    listeners.auxclick(at(3, askX));
+    listeners.click(at(0, 0)); // Order count column
+    assert.deepEqual(calls, [
+        [price, Side.BID, ClickButton.Left],
+        [price, Side.ASK, ClickButton.Middle],
+        [price, Side.ASK, ClickButton.Right]
+    ]);
+});
+
+for (const [label, onLevelClick, recenters] of [
+    ['returns true', () => true, false],
+    ['returns nothing', () => {}, true],
+    ['is not set', undefined, true]
+]) {
+    test(`middle-click on a qty column when onLevelClick ${label}: ${recenters ? 're-centers' : 'stays'}`, () => {
+        const { ladder, bidX, listeners } = clickLadder(onLevelClick, { removalMode: 'showEmpty' });
+        ladder.renderer.setCenterPrice(105);
+        listeners.mousedown(event({ button: 1, clientX: bidX, clientY: 0 }));
+        assertNear(ladder.renderer.getCenterPrice(), 105); // Decided on auxclick
+        listeners.auxclick(event({ button: 1, clientX: bidX, clientY: 0 }));
+        assertNear(ladder.renderer.getCenterPrice(), recenters ? 100.01 : 105);
+    });
+}
+
+test('read-only: middle-click on a qty column re-centers without a level click', () => {
+    const calls = [];
+    const { ladder, askX, listeners } = clickLadder(() => { calls.push(1); return true; }, { removalMode: 'showEmpty', readOnly: true });
+    ladder.renderer.setCenterPrice(105);
+    listeners.mousedown(event({ button: 1, clientX: askX, clientY: 0 }));
+    assertNear(ladder.renderer.getCenterPrice(), 100.01);
+    listeners.auxclick(event({ button: 1, clientX: askX, clientY: 0 }));
+    assert.deepEqual(calls, []);
 });

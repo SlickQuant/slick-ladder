@@ -220,18 +220,23 @@ public partial class PriceLadderControl : UserControl
         {
             _parent.Focus();
 
-            // Middle button (wheel click): re-center
-            if (e.GetCurrentPoint(this).Properties.PointerUpdateKind == PointerUpdateKind.MiddleButtonPressed)
+            var pos = e.GetPosition(this);
+            var kind = e.GetCurrentPoint(this).Properties.PointerUpdateKind;
+
+            // Middle button (wheel click): re-center, unless it lands on a qty column and the app
+            // handles the level click
+            if (kind == PointerUpdateKind.MiddleButtonPressed)
             {
-                _parent.Recenter();
+                if (!RaiseLevelClick(pos, ClickButton.Middle))
+                {
+                    _parent.Recenter();
+                }
                 e.Handled = true;
                 return;
             }
 
             if (_parent._viewport == null || _parent._viewModel == null || _parent._viewModel.CurrentSnapshot == null) return;
 
-            var pos = e.GetPosition(this);
-            var snapshot = _parent._viewModel.CurrentSnapshot.Value;
             var x = (float)pos.X;
 
             // Check if click is in bar column for horizontal scroll dragging
@@ -249,20 +254,28 @@ public partial class PriceLadderControl : UserControl
                 }
             }
 
-            // Use viewport's column X positions (respects ShowOrderCount setting)
-            var columnWidth = _parent._viewport.QtyColWidth;
-            var bidQtyColumnX = _parent._viewport.BidQtyColumnX;
-            var askQtyColumnX = _parent._viewport.AskQtyColumnX;
-
-            // Check if click is within bid qty or ask qty column
-            bool clickedBidQty = x >= bidQtyColumnX && x < bidQtyColumnX + columnWidth;
-            bool clickedAskQty = x >= askQtyColumnX && x < askQtyColumnX + columnWidth;
-
-            if (!clickedBidQty && !clickedAskQty)
+            // Back/forward buttons don't click levels
+            if (kind is PointerUpdateKind.LeftButtonPressed or PointerUpdateKind.RightButtonPressed)
             {
-                return; // Clicked outside quantity columns
+                RaiseLevelClick(pos, kind == PointerUpdateKind.LeftButtonPressed ? ClickButton.Left : ClickButton.Right);
+            }
+        }
+
+        /// <summary>
+        /// Raise a level click when pos is on a quantity column. Returns true when the app handled it
+        /// </summary>
+        private bool RaiseLevelClick(Point pos, ClickButton button)
+        {
+            if (_parent._viewport == null || _parent._viewModel == null || _parent._viewModel.CurrentSnapshot == null) return false;
+
+            // Click on BID qty column = BUY (Side.BID), ASK qty column = SELL (Side.ASK)
+            var side = _parent._viewport.QtyColumnSideAt((float)pos.X);
+            if (side == null)
+            {
+                return false; // Clicked outside quantity columns
             }
 
+            var snapshot = _parent._viewModel.CurrentSnapshot.Value;
             var visibleRows = _parent._viewport.Height / RenderConfig.RowHeight;
             var midRow = visibleRows / 2;
 
@@ -402,15 +415,8 @@ public partial class PriceLadderControl : UserControl
                 }
             }
 
-            // Determine trade side based on which column was clicked
-            // Click on BID qty column = BUY (Side.BID)
-            // Click on ASK qty column = SELL (Side.ASK)
-            var side = clickedBidQty
-                ? SlickLadder.Core.Models.Side.BID
-                : SlickLadder.Core.Models.Side.ASK;
-
-            // Notify ViewModel of click with price (null if empty row), side
-            _parent._viewModel.HandlePriceClick(clickedPrice, side);
+            // Notify ViewModel of click with price (null if empty row), side and button
+            return _parent._viewModel.HandlePriceClick(clickedPrice, side.Value, button);
         }
 
         private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)

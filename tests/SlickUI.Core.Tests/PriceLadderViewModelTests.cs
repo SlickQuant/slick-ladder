@@ -102,6 +102,81 @@ public class PriceLadderViewModelTests
 }
 
 /// <summary>
+/// Level clicks carry the mouse button, and a handler can mark them handled (an unhandled
+/// middle-click on a qty column re-centers)
+/// </summary>
+public class LevelClickTests
+{
+    [Theory]
+    [InlineData(ClickButton.Left)]
+    [InlineData(ClickButton.Middle)]
+    [InlineData(ClickButton.Right)]
+    public void HandlePriceClick_PassesButton(ClickButton button)
+    {
+        var viewModel = new PriceLadderViewModel();
+        LevelClickEventArgs? received = null;
+        viewModel.OnLevelClick += args => received = args;
+
+        viewModel.HandlePriceClick(100.01m, Side.ASK, button);
+
+        Assert.NotNull(received);
+        Assert.Equal(100.01m, received!.Price);
+        Assert.Equal(Side.ASK, received.Side);
+        Assert.Equal(button, received.Button);
+    }
+
+    [Fact]
+    public void HandlePriceClick_DefaultsToLeft()
+    {
+        var viewModel = new PriceLadderViewModel();
+        LevelClickEventArgs? received = null;
+        viewModel.OnLevelClick += args => received = args;
+
+        viewModel.HandlePriceClick(null, Side.BID);
+
+        Assert.Equal(ClickButton.Left, received!.Button);
+        Assert.Null(received.Price);
+    }
+
+    [Fact]
+    public void HandlePriceClick_ReturnsHandled()
+    {
+        var viewModel = new PriceLadderViewModel();
+        Assert.False(viewModel.HandlePriceClick(100m, Side.BID, ClickButton.Middle)); // No subscriber
+
+        viewModel.OnLevelClick += _ => { };
+        Assert.False(viewModel.HandlePriceClick(100m, Side.BID, ClickButton.Middle));
+
+        // Any handler of the multicast event can set it
+        viewModel.OnLevelClick += args => args.Handled = args.Button == ClickButton.Middle;
+        viewModel.OnLevelClick += _ => { };
+        Assert.True(viewModel.HandlePriceClick(100m, Side.BID, ClickButton.Middle));
+        Assert.False(viewModel.HandlePriceClick(100m, Side.BID, ClickButton.Left));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void QtyColumnSideAt_MatchesColumnBounds(bool showOrderCount)
+    {
+        var viewport = new ViewportManager { ShowOrderCount = showOrderCount, QtyColWidth = 80, PriceColWidth = 70 };
+        var bidX = viewport.BidQtyColumnX;
+        var askX = viewport.AskQtyColumnX;
+
+        Assert.Equal(Side.BID, viewport.QtyColumnSideAt(bidX));
+        Assert.Equal(Side.BID, viewport.QtyColumnSideAt(bidX + 79.9f));
+        Assert.Null(viewport.QtyColumnSideAt(bidX + 80)); // Price column
+        Assert.Equal(Side.ASK, viewport.QtyColumnSideAt(askX));
+        Assert.Equal(Side.ASK, viewport.QtyColumnSideAt(askX + 79.9f));
+        Assert.Null(viewport.QtyColumnSideAt(askX + 80)); // Ask order count or bars
+        if (showOrderCount)
+        {
+            Assert.Null(viewport.QtyColumnSideAt(0)); // Bid order count
+        }
+    }
+}
+
+/// <summary>
 /// RenderMetrics averages the last 60 frame times
 /// </summary>
 public class RenderMetricsTests

@@ -149,9 +149,8 @@ export class PriceLadder {
     }
 
     private setupInteractions(): void {
-        this.interactionHandler.onPriceClick = (price, side) => {
-            this.config.onLevelClick?.(price, side);
-        };
+        this.interactionHandler.onPriceClick = (price, side, button) =>
+            this.config.onLevelClick(price, side, button) === true;
 
         this.interactionHandler.onPriceHover = (price) => {
             this.config.onPriceHover?.(price);

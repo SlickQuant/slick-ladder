@@ -169,7 +169,7 @@ ladder.processUpdate({
 #### Full Configuration
 
 ```typescript
-import { PriceLadder, Side, CanvasColors } from 'slick-ladder';
+import { PriceLadder, Side, ClickButton, CanvasColors } from 'slick-ladder';
 
 const customColors: Partial<CanvasColors> = {
     background: '#1e1e1e',
@@ -189,9 +189,9 @@ const ladder = new PriceLadder({
     showVolumeBars: true,
     showOrderCount: true,
     colors: customColors,
-    onLevelClick: (price, side) => {
+    onLevelClick: (price, side, button) => {
         const action = side === Side.ASK ? 'BUY' : 'SELL';
-        console.log(`${action} @ ${price}`);
+        console.log(`${action} @ ${price} (${ClickButton[button]} click)`);
     },
     onPriceHover: (price) => {
         if (price !== null) {
@@ -407,9 +407,9 @@ core.ProcessPriceLevelUpdate(update);
 | `showOrderCount` | `boolean` | `true` | Show order count columns |
 | `mboOrderSizeFilter` | `number` | `0` | Minimum order size to display in MBO mode |
 | `removalMode` | `'showEmpty' \| 'removeRow'` | `'removeRow'` | How to handle empty price levels |
-| `autoCenter` | `boolean` | `true` | Keep the bid/ask midpoint on the middle row. Wheel scroll is off while enabled. When disabled, Space or middle-click re-centers |
+| `autoCenter` | `boolean` | `true` | Keep the bid/ask midpoint on the middle row. Wheel scroll is off while enabled. When disabled, Space or middle-click re-centers (on a qty column, only when `onLevelClick` doesn't handle it) |
 | `colors` | `CanvasColors` | (see below) | Custom color scheme |
-| `onLevelClick` | `function` | - | Callback when price is clicked |
+| `onLevelClick` | `function` | - | Called with the price, side and mouse button when a qty column is clicked. Return `true` if handled |
 | `onPriceHover` | `function` | - | Callback when price is hovered |
 
 ### Default Colors
@@ -463,6 +463,12 @@ enum Side {
     ASK = 1
 }
 
+enum ClickButton { // Same values as MouseEvent.button
+    Left = 0,
+    Middle = 1,
+    Right = 2
+}
+
 enum OrderUpdateType {
     Add = 0,
     Modify = 1,
@@ -495,19 +501,21 @@ interface RenderMetrics {
 ### Events (Web/TypeScript)
 
 #### onLevelClick
-Fired when a quantity column is clicked (unless `readOnly` is `true`).
+Fired when a quantity column is clicked with the left, middle or right button (unless `readOnly` is `true`).
 
 - Clicking on **BID qty column** triggers a BUY
 - Clicking on **ASK qty column** triggers a SELL
+- Return `true` when you handle the click. A middle-click you don't handle re-centers the ladder, like a middle-click anywhere else.
 
 ```typescript
-onLevelClick: (price: number, side: Side) => void
+onLevelClick: (price: number | null, side: Side, button: ClickButton) => boolean | void
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `price` | `number` | The price level that was clicked |
+| `price` | `number \| null` | The price level that was clicked, `null` for an empty row |
 | `side` | `Side` | `Side.ASK` for BUY, `Side.BID` for SELL |
+| `button` | `ClickButton` | `Left`, `Middle` or `Right` |
 
 #### onPriceHover
 Fired when the mouse hovers over a price level.
@@ -525,7 +533,7 @@ Subscribe to trade click events on the `PriceLadderViewModel`:
 viewModel.OnLevelClick += (LevelClickEventArgs trade) =>
 {
     var action = trade.Side == Side.ASK ? "BUY" : "SELL";
-    Console.WriteLine($"{action} @ {trade.Price}");
+    Console.WriteLine($"{action} @ {trade.Price} ({trade.Button} click)");
 };
 ```
 
@@ -533,8 +541,10 @@ viewModel.OnLevelClick += (LevelClickEventArgs trade) =>
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `Price` | `decimal` | The price level clicked |
+| `Price` | `decimal?` | The price level clicked, `null` for an empty row |
 | `Side` | `Side` | `Side.ASK` for BUY, `Side.BID` for SELL |
+| `Button` | `ClickButton` | `Left`, `Middle` or `Right` |
+| `Handled` | `bool` | Set it to `true` when you handle the click. A middle-click left unhandled re-centers the ladder |
 
 ## Architecture
 

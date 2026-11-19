@@ -9,17 +9,34 @@ using SlickLadder.Core.Models;
 namespace SlickLadder.Rendering.ViewModels;
 
 /// <summary>
+/// Mouse button of a level click. Values match the web ClickButton (DOM MouseEvent.button)
+/// </summary>
+public enum ClickButton
+{
+    Left = 0,
+    Middle = 1,
+    Right = 2
+}
+
+/// <summary>
 /// Event args for a price level click
 /// </summary>
 public class LevelClickEventArgs
 {
     public decimal? Price { get; }
     public Side Side { get; }
+    public ClickButton Button { get; }
 
-    public LevelClickEventArgs(decimal? price, Side side)
+    /// <summary>
+    /// Set by a handler that took the click, to skip the default action (middle-click re-centers)
+    /// </summary>
+    public bool Handled { get; set; }
+
+    public LevelClickEventArgs(decimal? price, Side side, ClickButton button = ClickButton.Left)
     {
         Price = price;
         Side = side;
+        Button = button;
     }
 }
 
@@ -162,11 +179,18 @@ public class PriceLadderViewModel : ReactiveObject, IDisposable
     }
 
     /// <summary>
-    /// Handle price level click
+    /// Handle price level click. Returns true when a handler set Handled
     /// </summary>
-    public void HandlePriceClick(decimal? price, Side side)
+    public bool HandlePriceClick(decimal? price, Side side, ClickButton button = ClickButton.Left)
     {
-        OnLevelClick?.Invoke(new LevelClickEventArgs(price, side));
+        var handler = OnLevelClick;
+        if (handler == null)
+        {
+            return false;
+        }
+        var args = new LevelClickEventArgs(price, side, button);
+        handler(args);
+        return args.Handled;
     }
 
     /// <summary>

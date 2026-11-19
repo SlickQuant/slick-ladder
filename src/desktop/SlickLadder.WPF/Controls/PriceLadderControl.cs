@@ -112,18 +112,22 @@ public partial class PriceLadderControl : UserControl
     {
         Focus();
 
-        // Middle button (wheel click): re-center
+        var pos = e.GetPosition(SkiaCanvas);
+
+        // Middle button (wheel click): re-center, unless it lands on a qty column and the app
+        // handles the level click
         if (e.ChangedButton == MouseButton.Middle)
         {
-            Recenter();
+            if (!RaiseLevelClick(pos, ClickButton.Middle))
+            {
+                Recenter();
+            }
             e.Handled = true;
             return;
         }
 
         if (_viewport == null || _viewModel == null || _viewModel.CurrentSnapshot == null) return;
 
-        var pos = e.GetPosition(SkiaCanvas);
-        var snapshot = _viewModel.CurrentSnapshot.Value;
         var x = (float)pos.X;
 
         // Check if click is in bar column for horizontal scroll dragging
@@ -142,20 +146,28 @@ public partial class PriceLadderControl : UserControl
             }
         }
 
-        // Use viewport's column X positions (respects ShowOrderCount setting)
-        var columnWidth = _viewport.QtyColWidth;
-        var bidQtyColumnX = _viewport.BidQtyColumnX;
-        var askQtyColumnX = _viewport.AskQtyColumnX;
-
-        // Check if click is within bid qty or ask qty column
-        bool clickedBidQty = x >= bidQtyColumnX && x < bidQtyColumnX + columnWidth;
-        bool clickedAskQty = x >= askQtyColumnX && x < askQtyColumnX + columnWidth;
-
-        if (!clickedBidQty && !clickedAskQty)
+        // Back/forward buttons don't click levels
+        if (e.ChangedButton is MouseButton.Left or MouseButton.Right)
         {
-            return; // Clicked outside quantity columns
+            RaiseLevelClick(pos, e.ChangedButton == MouseButton.Left ? ClickButton.Left : ClickButton.Right);
+        }
+    }
+
+    /// <summary>
+    /// Raise a level click when pos is on a quantity column. Returns true when the app handled it
+    /// </summary>
+    private bool RaiseLevelClick(Point pos, ClickButton button)
+    {
+        if (_viewport == null || _viewModel == null || _viewModel.CurrentSnapshot == null) return false;
+
+        // Click on BID qty column = BUY (Side.BID), ASK qty column = SELL (Side.ASK)
+        var side = _viewport.QtyColumnSideAt((float)pos.X);
+        if (side == null)
+        {
+            return false; // Clicked outside quantity columns
         }
 
+        var snapshot = _viewModel.CurrentSnapshot.Value;
         var visibleRows = _viewport.Height / RenderConfig.RowHeight;
         var midRow = visibleRows / 2;
 
@@ -309,15 +321,8 @@ public partial class PriceLadderControl : UserControl
             }
         }
 
-        // Determine trade side based on which column was clicked
-        // Click on BID qty column = BUY (Side.BID)
-        // Click on ASK qty column = SELL (Side.ASK)
-        var side = clickedBidQty
-            ? SlickLadder.Core.Models.Side.BID
-            : SlickLadder.Core.Models.Side.ASK;
-
-        // Notify ViewModel of click with price (null if empty row), side
-        _viewModel.HandlePriceClick(clickedPrice, side);
+        // Notify ViewModel of click with price (null if empty row), side and button
+        return _viewModel.HandlePriceClick(clickedPrice, side.Value, button);
     }
 
     private void OnMouseUp(object sender, MouseButtonEventArgs e)

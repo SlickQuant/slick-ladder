@@ -119,7 +119,7 @@ public partial class MainWindow : Window
     private void OnLevelClickExecuted(LevelClickEventArgs trade)
     {
         var action = trade.Side == SlickLadder.Core.Models.Side.BID ? "BUY" : "SELL";
-        var priceStr = trade.Price.HasValue ? $"${trade.Price:F2}" : "empty level";
+        var priceStr = (trade.Price.HasValue ? $"${trade.Price:F2}" : "empty level") + $" ({trade.Button} click)";
         System.Diagnostics.Debug.WriteLine($"{action} @ {priceStr}");
 
         // Show message box on UI thread

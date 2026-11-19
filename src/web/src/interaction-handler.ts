@@ -1,4 +1,4 @@
-import { Side, COL_WIDTH } from './types';
+import { Side, ClickButton, COL_WIDTH } from './types';
 import { CanvasRenderer } from './canvas-renderer';
 
 /**
@@ -23,7 +23,7 @@ export class InteractionHandler {
     private listeners: Array<[string, EventListener]> = [];
 
     // Callbacks
-    public onPriceClick?: (price: number | null, side: Side) => void;
+    public onPriceClick?: (price: number | null, side: Side, button: ClickButton) => boolean; // Returns handled
     public onPriceHover?: (price: number | null) => void;
     public onScroll?: (delta: number) => void;
     public onRenderNeeded?: () => void;
@@ -42,6 +42,7 @@ export class InteractionHandler {
         this.canvas.tabIndex = 0;
         this.listen('keydown', this.handleKeyDown);
         this.listen('click', this.handleClick);
+        this.listen('auxclick', this.handleClick); // Middle and right buttons
         this.listen('mousedown', this.handleMouseDown);
         this.listen('mouseup', this.handleMouseUp);
         this.listen('mousemove', this.handleMouseMove);
@@ -57,35 +58,38 @@ export class InteractionHandler {
         this.listeners.push([type, listener]);
     }
 
+    // Side of the quantity column under x, null outside both
+    private qtySideAt(x: number): Side | null {
+        const column = this.renderer.screenXToColumn(x);
+        if (column === this.renderer.getBidQtyColumn()) return Side.BID;
+        if (column === this.renderer.getAskQtyColumn()) return Side.ASK;
+        return null;
+    }
+
     private handleClick(event: MouseEvent): void {
         if (this.suppressClick) {
             this.suppressClick = false;
             return;
         }
-        if (this.readOnly) return;
+        if (this.readOnly || event.button > ClickButton.Right) return; // Back/forward buttons don't click levels
 
         const rect = this.canvas.getBoundingClientRect();
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
 
-        // Convert to price and get level info
-        const rowIndex = this.renderer.screenYToRow(y);
-        const levelInfo = this.renderer.rowToLevelInfo(rowIndex);
+        // Only trigger trade if clicking on quantity columns.
+        // BID qty column = BUY, ASK qty column = SELL at this price
+        const side = this.qtySideAt(x);
+        if (side === null) return;
 
-        // Get column indices
-        const clickedColumn = this.renderer.screenXToColumn(x);
-        const bidQtyColumn = this.renderer.getBidQtyColumn();
-        const askQtyColumn = this.renderer.getAskQtyColumn();
+        const levelInfo = this.renderer.rowToLevelInfo(this.renderer.screenYToRow(y));
+        const price = levelInfo !== null ? levelInfo.price : null;
+        const button = event.button as ClickButton;
+        const handled = this.onPriceClick?.(price, side, button) === true;
 
-        // Only trigger trade if clicking on quantity columns
-        if (clickedColumn === bidQtyColumn) {
-            // Click on BID qty column = BUY (you want to buy at this price)
-            const price = levelInfo !== null ? levelInfo.price : null;
-            this.onPriceClick?.(price, Side.BID);
-        } else if (clickedColumn === askQtyColumn) {
-            // Click on ASK qty column = SELL (you want to sell at this price)
-            const price = levelInfo !== null ? levelInfo.price : null;
-            this.onPriceClick?.(price, Side.ASK);
+        // Middle-click on a qty column re-centers like anywhere else unless the app took it
+        if (button === ClickButton.Middle && !handled) {
+            this.renderer.recenter();
         }
     }
 
@@ -146,15 +150,18 @@ export class InteractionHandler {
         // Explicit focus: preventDefault below (drag, middle button) would otherwise block it
         this.canvas.focus({ preventScroll: true });
 
-        // Middle button (wheel click): re-center, suppress browser autoscroll
-        if (event.button === 1) {
-            event.preventDefault();
-            this.renderer.recenter();
-            return;
-        }
-
         const rect = this.canvas.getBoundingClientRect();
         const x = event.clientX - rect.left;
+
+        // Middle button (wheel click): re-center, suppress browser autoscroll. On a qty column
+        // the level click decides on auxclick, re-centering only if the app doesn't handle it
+        if (event.button === ClickButton.Middle) {
+            event.preventDefault();
+            if (this.readOnly || this.qtySideAt(x) === null) {
+                this.renderer.recenter();
+            }
+            return;
+        }
 
         // Check if click is in bar column
         const showOrderCount = this.renderer.getShowOrderCount();

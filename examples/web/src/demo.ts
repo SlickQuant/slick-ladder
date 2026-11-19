@@ -1,6 +1,6 @@
 import { PriceLadder } from 'slick-ladder/main';
 import { WasmPriceLadder } from 'slick-ladder/wasm-adapter';
-import { Side, PriceLevel, OrderUpdate, OrderUpdateType, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER } from 'slick-ladder/types';
+import { Side, ClickButton, PriceLevel, OrderUpdate, OrderUpdateType, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER } from 'slick-ladder/types';
 
 /**
  * Demo application showing SlickUI price ladder in action
@@ -121,11 +121,12 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 autoCenter,
                 mboOrderSizeFilter,
                 minQuantityThreshold,
-                onLevelClick: (price, side) => {
+                onLevelClick: (price, side, button) => {
                     const action = side === Side.BID ? 'BUY' : 'SELL';
                     const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
-                    console.log(`${action} @ ${priceStr}`);
-                    alert(`${action} @ ${priceStr}`);
+                    const message = `${action} @ ${priceStr} (${ClickButton[button]} click)`;
+                    console.log(message);
+                    alert(message);
                     if (price !== null && ladder) {
                         ladder.setHasOwnOrders(price, side, true);
                         const delay = 2000 + Math.random() * 6000;
@@ -213,11 +214,12 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             autoCenter,
             mboOrderSizeFilter,
             minQuantityThreshold,
-            onLevelClick: (price, side) => {
+            onLevelClick: (price, side, button) => {
                 const action = side === Side.BID ? 'BUY' : 'SELL';
                 const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
-                console.log(`${action} @ ${priceStr}`);
-                alert(`${action} @ ${priceStr}`);
+                const message = `${action} @ ${priceStr} (${ClickButton[button]} click)`;
+                console.log(message);
+                alert(message);
                 if (price !== null && ladder) {
                     ladder.setHasOwnOrders(price, side, true);
                     const delay = 2000 + Math.random() * 6000;

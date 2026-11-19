@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **NuGet packages**: `SlickLadder.Core`, `SlickLadder.Rendering`, `SlickLadder.Avalonia` and `SlickLadder.WPF`, released with the npm package at the same version and published to nuget.org with trusted publishing. They come with Source Link and `.snupkg` symbols, and the GitHub release attaches both the packages and the symbols.
+- **Level click button**: `onLevelClick` gets the mouse button as a third argument, and desktop's `LevelClickEventArgs` has a `Button` property. Both use the new `ClickButton` enum (`Left`, `Middle`, `Right`). Web now reports middle and right clicks too.
+- Level clicks can be marked handled: return `true` from `onLevelClick`, or set `LevelClickEventArgs.Handled` on desktop. A middle-click on a qty column still re-centers unless something handles it.
+
+### Changed
+- Desktop: `PriceLadderViewModel.HandlePriceClick` takes an optional button and returns whether a handler set `Handled`. Back/forward mouse buttons no longer fire `OnLevelClick`.
+- Web: a middle-click on a qty column that nothing handles re-centers on release instead of press.
 
 ### Fixed
 - **Avalonia on Linux**: Avalonia.Skia pulled in the 2.88 Linux native SkiaSharp library, which doesn't match SkiaSharp 3.119.1. `SlickLadder.Avalonia` now references `SkiaSharp.NativeAssets.Linux` 3.119.1, so the Linux demo and apps using the package get a matching library.

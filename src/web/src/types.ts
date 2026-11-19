@@ -7,6 +7,13 @@ export enum Side {
     ASK = 1
 }
 
+// Mouse button of a level click. Values match MouseEvent.button
+export enum ClickButton {
+    Left = 0,
+    Middle = 1,
+    Right = 2
+}
+
 export interface BookLevel {
     price: number;
     quantity: number;
@@ -82,7 +89,7 @@ export interface PriceLadderConfig {
     autoCenter?: boolean; // Keep the bid/ask midpoint on the middle row, default: true. When off, Space or middle-click re-centers
     minQuantityThreshold?: number; // Minimum quantity to display (filters out 0 and near-zero quantities), default: 0.0001
     colors?: CanvasColors;
-    onLevelClick?: (price: number | null, side: Side) => void;
+    onLevelClick?: (price: number | null, side: Side, button: ClickButton) => boolean | void; // Return true when handled. An unhandled middle-click re-centers
     onPriceHover?: (price: number | null) => void;
 }
 
