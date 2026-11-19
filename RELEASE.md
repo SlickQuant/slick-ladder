@@ -1,22 +1,20 @@
-# Release Process
+# Releasing SlickLadder
 
-This document describes how to create a new release of SlickLadder.
+## Before you start
 
-## Prerequisites
+You need three things in place:
 
-Before creating a release, ensure you have:
+1. An `NPM_TOKEN` repository secret on GitHub
+   - On [npmjs.com](https://www.npmjs.com/), open Account Settings → Access Tokens and create an "Automation" token
+   - In GitHub, open Repository Settings → Secrets → Actions → New secret and save the token as `NPM_TOKEN`
+2. NuGet trusted publishing (one-time setup, no API key to rotate)
+   - On [nuget.org](https://www.nuget.org/), open your username → Trusted Publishing and add a GitHub Actions policy: owner `SlickQuant`, repository `slick-ladder`, workflow file `release.yml`, environment empty. Its scope must allow new packages, since the first release creates the four `SlickLadder.*` IDs.
+   - Add a `NUGET_USER` repository secret holding your nuget.org profile name (not your email)
+3. Every change in the release listed under `[Unreleased]` in CHANGELOG.md
 
-1. **NPM Token**: Set up `NPM_TOKEN` as a GitHub repository secret
-   - Go to [npmjs.com](https://www.npmjs.com/) → Account Settings → Access Tokens
-   - Create a new "Automation" token
-   - Add it to GitHub: Repository Settings → Secrets → Actions → New secret
-   - Name: `NPM_TOKEN`
+## Steps
 
-2. **Updated CHANGELOG.md**: Document all changes in the `[Unreleased]` section
-
-## Release Steps
-
-### 1. Update Version and Changelog
+### 1. Bump the version
 
 ```bash
 # Update version in package.json files
@@ -28,9 +26,11 @@ npm version minor --workspace=src/web --no-git-tag-version  # 0.1.1 → 0.2.0
 npm version major --workspace=src/web --no-git-tag-version  # 0.1.1 → 1.0.0
 ```
 
+The NuGet packages read their version from `src/web/package.json` (see `Directory.Build.props`), so this bumps them too.
+
 ### 2. Update CHANGELOG.md
 
-Move items from `[Unreleased]` to a new version section:
+Move the `[Unreleased]` items into a new version section:
 
 ```markdown
 ## [Unreleased]
@@ -45,7 +45,7 @@ Move items from `[Unreleased]` to a new version section:
 - Bug fix Z
 ```
 
-### 3. Commit and Tag
+### 3. Commit and tag
 
 ```bash
 # Commit version changes
@@ -58,42 +58,34 @@ git push origin main
 git push origin v0.1.2
 ```
 
-### 4. Automated Release Process
+### 4. What the workflow does
 
-Once the tag is pushed, GitHub Actions will automatically:
+Pushing the tag starts a GitHub Actions workflow that:
 
-1. ✅ Build NPM package (`@slickquant/slick-ladder-x.y.z.tgz`)
-2. ✅ Build desktop binaries for all platforms:
+1. Builds the npm package (`@slickquant/slick-ladder-x.y.z.tgz`)
+2. Builds the desktop binaries:
    - `SlickLadder-win-x64.zip` (Windows)
    - `SlickLadder-linux-x64.zip` (Linux)
    - `SlickLadder-osx-x64.zip` (macOS Intel)
    - `SlickLadder-osx-arm64.zip` (macOS Apple Silicon)
-3. ✅ Create GitHub Release with:
-   - Release notes extracted from CHANGELOG.md
-   - All build artifacts attached
-4. ✅ Publish NPM package to npmjs.com
+3. Packs the NuGet packages `SlickLadder.Core`, `SlickLadder.Rendering`, `SlickLadder.Avalonia` and `SlickLadder.WPF`, and fails if their version doesn't match the tag
+4. Creates a GitHub release with notes taken from CHANGELOG.md and every build artifact attached
+5. Publishes the package to npmjs.com and the NuGet packages (with their `.snupkg` symbols) to nuget.org
 
-### 5. Verify Release
+### 5. Check the release
 
-After the workflow completes (~10-15 minutes):
+The workflow takes about 10 to 15 minutes. When it finishes:
 
-1. **GitHub Release**: Check [Releases](https://github.com/SlickQuant/slick-ladder/releases)
-   - Verify all 5 files are attached (1 NPM package + 4 desktop binaries)
-   - Confirm release notes are correct
+1. On the [Releases](https://github.com/SlickQuant/slick-ladder/releases) page, make sure all 13 files are attached (the npm package, 4 desktop binaries, and 4 NuGet packages with their 4 symbol packages) and the notes are right.
+2. On [npmjs.com](https://www.npmjs.com/package/@slickquant/slick-ladder), check that the new version is listed, then install it with `npm install @slickquant/slick-ladder@latest`.
+3. On [nuget.org](https://www.nuget.org/packages?q=SlickLadder), check that the four packages show the new version. nuget.org validates and indexes a new version before it can be installed, which can take several minutes.
+4. Download each desktop binary, extract it and run the Avalonia demo to make sure it starts without errors.
 
-2. **NPM Package**: Check [npmjs.com](https://www.npmjs.com/package/@slickquant/slick-ladder)
-   - Verify new version is published
-   - Test installation: `npm install @slickquant/slick-ladder@latest`
+## Manual release
 
-3. **Desktop Binaries**: Download and test each platform binary
-   - Extract and run the Avalonia Demo app
-   - Verify it runs without errors
+If the workflow fails, you can release by hand.
 
-## Manual Release (if needed)
-
-If the automated workflow fails, you can release manually:
-
-### NPM Package
+### npm package
 
 ```bash
 # Build and publish
@@ -101,7 +93,16 @@ npm run build:lib:full
 npm run release
 ```
 
-### Desktop Binaries
+### NuGet packages
+
+Pack on Windows, since `SlickLadder.WPF` targets `net8.0-windows`. Pushing by hand needs an API key from nuget.org.
+
+```bash
+dotnet pack slick-ladder.sln -c Release -o nupkgs
+dotnet nuget push "nupkgs/*.nupkg" --api-key <key> --source https://api.nuget.org/v3/index.json --skip-duplicate
+```
+
+### Desktop binaries
 
 ```bash
 # Windows (x64)
@@ -129,11 +130,11 @@ dotnet publish examples/avalonia/SlickLadder.Avalonia.Demo.csproj \
   -o publish/osx-arm64
 ```
 
-Then create ZIP files and upload to GitHub Release manually.
+Then zip each output folder and upload the zips to the GitHub release.
 
-## Hotfix Release
+## Hotfix release
 
-For urgent fixes:
+For an urgent fix, branch from the last release tag:
 
 ```bash
 # Create hotfix branch from tag
@@ -158,17 +159,19 @@ git push origin main
 
 ## Troubleshooting
 
-### NPM publish fails with 403
-- Verify `NPM_TOKEN` secret is set correctly
-- Check token has "Automation" permissions
-- Ensure package name in `src/web/package.json` is available
+### npm publish fails with 403
+- Check that the `NPM_TOKEN` secret is set and the token has "Automation" permissions
+- Make sure the package name in `src/web/package.json` is available
+
+### NuGet login or push fails
+- `NUGET_USER` must be the nuget.org profile name, not the email
+- The trusted publishing policy must match owner `SlickQuant`, repository `slick-ladder` and workflow file `release.yml` (the file name only), and its scope must cover the `SlickLadder.*` packages
 
 ### Desktop build fails
-- Check .NET SDK version (requires 8.0+)
-- Verify all project references are valid
-- Check for platform-specific dependencies
+- You need the .NET 8.0 SDK or later
+- Check the project references and any platform-specific dependencies
 
-### Release workflow not triggering
-- Ensure tag follows pattern `v*.*.*` (e.g., `v0.1.2`)
-- Check GitHub Actions is enabled in repository settings
-- Verify workflow file has no syntax errors
+### Release workflow doesn't start
+- The tag must match `v*.*.*`, for example `v0.1.2`
+- GitHub Actions must be enabled in the repository settings
+- Check the workflow file for syntax errors
