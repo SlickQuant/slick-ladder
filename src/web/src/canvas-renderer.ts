@@ -854,6 +854,11 @@ export class CanvasRenderer {
         return this.segmentState.basePixelsPerUnit * this.segmentState.userScaleFactor;
     }
 
+    // Rows on screen, counting one cut off at the bottom (mirrors SkiaRenderer's visibleRows)
+    private rowCount(): number {
+        return Math.ceil(this.height / this.rowHeight);
+    }
+
     private markRowDirty(rowIndex: number): void {
         this.minDirtyRow = Math.min(this.minDirtyRow, rowIndex);
         this.maxDirtyRow = Math.max(this.maxDirtyRow, rowIndex);
@@ -863,7 +868,7 @@ export class CanvasRenderer {
      * Fill nextRows with what each row shows this frame (mirrors SkiaRenderer.BuildRows)
      */
     private buildRows(snapshot: OrderBookSnapshot, referencePrice: number): void {
-        const rowCount = Math.ceil(this.height / this.rowHeight);
+        const rowCount = this.rowCount();
         const rows = this.nextRows;
         while (rows.length < rowCount) {
             rows.push(createRow());
@@ -1116,6 +1121,7 @@ export class CanvasRenderer {
         const nonEmptyAsks = nonEmptyLevels(snapshot.asks, askStats);
         const nonEmptyBids = nonEmptyLevels(snapshot.bids, bidStats);
         const midRow = Math.floor(this.visibleRows / 2);
+        const rowCount = this.rowCount(); // A row cut off at the bottom shows the part that fits
         const totalLevels = nonEmptyAsks.length + nonEmptyBids.length;
 
         // Stable scroll formula (matches desktop SkiaRenderer.cs)
@@ -1130,22 +1136,22 @@ export class CanvasRenderer {
         if (virtualTopRow < 0) {
             topOffset = -virtualTopRow * this.rowHeight;
             startAskIndex = 0;
-            askRowsToRender = Math.min(nonEmptyAsks.length, Math.max(0, this.visibleRows + virtualTopRow));
+            askRowsToRender = Math.min(nonEmptyAsks.length, Math.max(0, rowCount + virtualTopRow));
             startBidIndex = 0;
-            const bidRowsAvailable = Math.max(0, this.visibleRows + virtualTopRow - nonEmptyAsks.length);
+            const bidRowsAvailable = Math.max(0, rowCount + virtualTopRow - nonEmptyAsks.length);
             bidRowsToRender = Math.min(nonEmptyBids.length, bidRowsAvailable);
         } else if (virtualTopRow < nonEmptyAsks.length) {
             startAskIndex = virtualTopRow;
-            askRowsToRender = Math.min(nonEmptyAsks.length - startAskIndex, this.visibleRows);
+            askRowsToRender = Math.min(nonEmptyAsks.length - startAskIndex, rowCount);
             startBidIndex = 0;
-            const bidRowsAvailable = this.visibleRows - askRowsToRender;
+            const bidRowsAvailable = rowCount - askRowsToRender;
             bidRowsToRender = Math.min(nonEmptyBids.length, bidRowsAvailable);
         } else if (virtualTopRow < totalLevels) {
             startAskIndex = nonEmptyAsks.length;
             askRowsToRender = 0;
             const bidStartRow = virtualTopRow - nonEmptyAsks.length;
             startBidIndex = bidStartRow;
-            bidRowsToRender = Math.min(nonEmptyBids.length - startBidIndex, this.visibleRows);
+            bidRowsToRender = Math.min(nonEmptyBids.length - startBidIndex, rowCount);
         } else {
             startAskIndex = nonEmptyAsks.length;
             askRowsToRender = 0;

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web: a middle-click on a qty column that nothing handles re-centers on release instead of press.
 
 ### Fixed
+- **Web, Remove Rows**: a row cut off at the bottom of the ladder stayed blank. It now shows the part of its level that fits, like Show Empty Rows and desktop.
 - **Avalonia on Linux**: Avalonia.Skia pulled in the 2.88 Linux native SkiaSharp library, which doesn't match SkiaSharp 3.119.1. `SlickLadder.Avalonia` now references `SkiaSharp.NativeAssets.Linux` 3.119.1, so the Linux demo and apps using the package get a matching library.
 
 ## [0.4.0] - 2026-11-17

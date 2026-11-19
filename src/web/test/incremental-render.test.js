@@ -57,25 +57,28 @@ for (const removalMode of ['removeRow', 'showEmpty']) {
         const name = `${removalMode}, order count ${showOrderCount}`;
 
         // Levels come and go, the mid walks, and own orders get flagged: rows move (Remove Rows)
-        // or the canvas shifts (Show Empty Rows), and bars rescale
-        test(`${name}: random feed matches a full redraw every frame`, () => {
-            const feeds = new Map();
-            const counts = assertMatchesFullRedraw(config, 300, (ladder, i) => {
-                if (!feeds.has(ladder)) {
-                    feeds.set(ladder, new Feed(7));
-                    ladder.processBatch(feeds.get(ladder).seed());
-                }
-                const feed = feeds.get(ladder);
-                for (const batch of feed.advance((i + 1) * FRAME_MS * 4)) ladder.processBatch(batch);
-                if (i % 7 === 0) {
-                    // Own-order border on a quoted level near the mid
-                    const side = i % 2 ? Side.BID : Side.ASK;
-                    const tick = side === Side.BID ? feed.mid - 1 - (i % 5) : feed.mid + 1 + (i % 5);
-                    ladder.setHasOwnOrders(tick * TICK_SIZE, side, i % 3 !== 0);
-                }
+        // or the canvas shifts (Show Empty Rows), and bars rescale. The second height cuts off
+        // the bottom row
+        for (const height of [HEIGHT, HEIGHT - 10]) {
+            test(`${name}, height ${height}: random feed matches a full redraw every frame`, () => {
+                const feeds = new Map();
+                const counts = assertMatchesFullRedraw({ ...config, height }, 300, (ladder, i) => {
+                    if (!feeds.has(ladder)) {
+                        feeds.set(ladder, new Feed(7));
+                        ladder.processBatch(feeds.get(ladder).seed());
+                    }
+                    const feed = feeds.get(ladder);
+                    for (const batch of feed.advance((i + 1) * FRAME_MS * 4)) ladder.processBatch(batch);
+                    if (i % 7 === 0) {
+                        // Own-order border on a quoted level near the mid
+                        const side = i % 2 ? Side.BID : Side.ASK;
+                        const tick = side === Side.BID ? feed.mid - 1 - (i % 5) : feed.mid + 1 + (i % 5);
+                        ladder.setHasOwnOrders(tick * TICK_SIZE, side, i % 3 !== 0);
+                    }
+                });
+                assert.ok(removalMode === 'removeRow' ? counts.moved > 0 : counts.shifted > 0, JSON.stringify(counts));
             });
-            assert.ok(removalMode === 'removeRow' ? counts.moved > 0 : counts.shifted > 0, JSON.stringify(counts));
-        });
+        }
 
         test(`${name}: random MBO orders match a full redraw every frame`, () => {
             const books = new Map();
@@ -109,6 +112,19 @@ for (const removalMode of ['removeRow', 'showEmpty']) {
         });
     }
 }
+
+// Bug: Remove Rows filled whole rows only, so a row cut off at the bottom stayed blank. Show
+// Empty Rows and desktop draw the part that fits
+test('a row cut off at the bottom shows its level', () => {
+    for (const removalMode of ['removeRow', 'showEmpty']) {
+        const ladder = create({ removalMode, height: 10 * 24 + 10 });
+        ladder.processBatch(new Feed(3).seed());
+        frame(ladder);
+        const cutOff = screenRows(ladder.canvas, 11)[10];
+        assert.ok(cutOff.some((item) => item.includes(' text ')), `${removalMode}: ${cutOff}`);
+        assert.notEqual(ladder.renderer.rowToLevelInfo(10), null, `${removalMode}: click on it`);
+    }
+});
 
 test('idle frames skip the snapshot and the render', () => {
     const ladder = create();
