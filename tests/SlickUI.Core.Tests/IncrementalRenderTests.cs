@@ -207,6 +207,60 @@ public class IncrementalRenderTests
         ladder.AssertMatchesFullRedraw(book.Snapshot);
     }
 
+    // With order count on, the ask qty column still sits next to the bars, so a bars-only redraw of an
+    // ask own-order row must keep the border's pixel in the bar column
+    [Theory]
+    [MemberData(nameof(Paths))]
+    public void VolumeScaleChange_AskOwnOrderWithOrderCount_MatchesFullRedraw(LevelRemovalMode mode, bool retained)
+    {
+        var book = Book.Seeded();
+        book.SetHasOwnOrders(100.03m, Side.ASK);
+        using var ladder = new Ladder(mode, retained, showOrderCount: true);
+        ladder.Render(book.Snapshot);
+        var qtyColWidth = ladder.Viewport.QtyColWidth;
+
+        book.Flush(new PriceLevel(Side.ASK, 100.02m, 5000, 9)); // Same text widths: only the bar scale moves
+        ladder.Render(book.Snapshot);
+
+        Assert.Equal(qtyColWidth, ladder.Viewport.QtyColWidth);
+        ladder.AssertMatchesFullRedraw(book.Snapshot);
+    }
+
+    // With order count on, the count sits on the outer side of each qty column
+    [Theory]
+    [InlineData(Side.BID, true, "(5) 102")]
+    [InlineData(Side.ASK, true, "102 (5)")]
+    [InlineData(Side.BID, false, "102")]
+    [InlineData(Side.ASK, false, "102")]
+    public void QuantityText_PutsTheOrderCountOutside(Side side, bool showOrderCount, string expected)
+    {
+        using var renderer = new SkiaRenderer(new RenderConfig());
+        var text = typeof(SkiaRenderer).GetMethod("QuantityText", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(renderer, new object[] { 102m, 5, side, showOrderCount });
+        Assert.Equal(expected, text);
+    }
+
+    // The qty column widens to fit the order count, more for a longer count, and not at all when it's hidden
+    [Fact]
+    public void OrderCount_WidensTheQtyColumnToFit()
+    {
+        float QtyColWidth(Book book, bool showOrderCount)
+        {
+            using var ladder = new Ladder(LevelRemovalMode.RemoveRow, retained: false, showOrderCount);
+            ladder.Render(book.Snapshot);
+            return ladder.Viewport.QtyColWidth;
+        }
+
+        var book = Book.Seeded();
+        var plain = QtyColWidth(book, false);
+        var counted = QtyColWidth(book, true);
+        Assert.True(counted > plain, $"{counted} not wider than {plain}");
+
+        book.Flush(new PriceLevel(Side.BID, 99.99m, 1000, 12345));
+        Assert.True(QtyColWidth(book, true) > counted, "a longer count widens it");
+        Assert.Equal(plain, QtyColWidth(book, false));
+    }
+
     // Bug: Render presented its cache through one SKImage wrapping the cache's pixels. A GPU
     // canvas uploads an image once and keeps that texture, so it showed the first frame forever
     [Theory]
@@ -697,7 +751,7 @@ public class IncrementalRenderTests
         book.Flush(new PriceLevel(Side.ASK, 100.03m, 555, 3));
         AssertRenderNeeded("new snapshot");
         viewport.ShowOrderCount = true;
-        AssertRenderNeeded("order count column");
+        AssertRenderNeeded("order count");
         viewport.AutoCenter = false;
         viewport.DensePackingScrollOffset = 3;
         AssertRenderNeeded("scroll");

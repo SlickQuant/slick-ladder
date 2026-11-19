@@ -154,25 +154,23 @@ public class LevelClickTests
         Assert.False(viewModel.HandlePriceClick(100m, Side.BID, ClickButton.Left));
     }
 
+    // Order count shares the qty column, so the columns are Bid Qty | Price | Ask Qty | Bars either way
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public void QtyColumnSideAt_MatchesColumnBounds(bool showOrderCount)
     {
         var viewport = new ViewportManager { ShowOrderCount = showOrderCount, QtyColWidth = 80, PriceColWidth = 70 };
-        var bidX = viewport.BidQtyColumnX;
-        var askX = viewport.AskQtyColumnX;
+        Assert.Equal(0, viewport.BidQtyColumnX);
+        Assert.Equal(150, viewport.AskQtyColumnX);
+        Assert.Equal(230, viewport.VolumeBarColumnX);
 
-        Assert.Equal(Side.BID, viewport.QtyColumnSideAt(bidX));
-        Assert.Equal(Side.BID, viewport.QtyColumnSideAt(bidX + 79.9f));
-        Assert.Null(viewport.QtyColumnSideAt(bidX + 80)); // Price column
-        Assert.Equal(Side.ASK, viewport.QtyColumnSideAt(askX));
-        Assert.Equal(Side.ASK, viewport.QtyColumnSideAt(askX + 79.9f));
-        Assert.Null(viewport.QtyColumnSideAt(askX + 80)); // Ask order count or bars
-        if (showOrderCount)
-        {
-            Assert.Null(viewport.QtyColumnSideAt(0)); // Bid order count
-        }
+        Assert.Equal(Side.BID, viewport.QtyColumnSideAt(0));
+        Assert.Equal(Side.BID, viewport.QtyColumnSideAt(79.9f));
+        Assert.Null(viewport.QtyColumnSideAt(80)); // Price column
+        Assert.Equal(Side.ASK, viewport.QtyColumnSideAt(150));
+        Assert.Equal(Side.ASK, viewport.QtyColumnSideAt(229.9f));
+        Assert.Null(viewport.QtyColumnSideAt(230)); // Bars
     }
 }
 

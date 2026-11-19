@@ -53,7 +53,7 @@ SlickLadder renders order book ladders across web, WASM, and desktop (WPF/Avalon
 ### Display Features
 - Configurable tick sizes (0.01, 0.05, 0.10, 0.25, 1.00)
 - **Display tick size aggregation**: group multiple raw price levels into coarser display buckets (e.g. show 0.10 rows when tick size is 0.01)
-- Toggle volume bars and order count columns
+- Toggle volume bars and order counts (shown in the qty column: `(5) 102` on bids, `102 (5)` on asks)
 - Own order highlighting with gold border
 - Price level scrolling with mouse wheel (when auto-center is off)
 - Auto-center on the bid/ask midpoint, or re-center on demand with Space / middle-click
@@ -405,7 +405,7 @@ core.ProcessPriceLevelUpdate(update);
 | `mode` | `'PriceLevel' \| 'MBO'` | `'PriceLevel'` | Data visualization mode |
 | `readOnly` | `boolean` | `false` | Disable click interactions |
 | `showVolumeBars` | `boolean` | `true` | Show volume bar visualization |
-| `showOrderCount` | `boolean` | `true` | Show order count columns |
+| `showOrderCount` | `boolean` | `true` | Show each level's order count in the qty column: `(5) 102` on bids, `102 (5)` on asks |
 | `mboOrderSizeFilter` | `number` | `0` | Minimum order size to display in MBO mode |
 | `removalMode` | `'showEmpty' \| 'removeRow'` | `'removeRow'` | How to handle empty price levels |
 | `autoCenter` | `boolean` | `true` | Keep the bid/ask midpoint on the middle row. Wheel scroll is off while enabled. When disabled, Space or middle-click re-centers (on a qty column, only when `onLevelClick` doesn't handle it) |
@@ -440,7 +440,7 @@ const DEFAULT_COLORS = {
 | `processOrderBatch` | `Array<{update, type}>` | `void` | Process multiple MBO updates |
 | `setDataMode` | `'PriceLevel' \| 'MBO'` | `void` | Switch data mode |
 | `setShowVolumeBars` | `boolean` | `void` | Toggle volume bars |
-| `setShowOrderCount` | `boolean` | `void` | Toggle order count columns |
+| `setShowOrderCount` | `boolean` | `void` | Toggle the order count in the qty column |
 | `setRemovalMode` | `'showEmpty' \| 'removeRow'` | `void` | Set how empty price levels are displayed |
 | `setAutoCenter` | `boolean` | `void` | Toggle auto-center (enabling re-centers immediately) |
 | `getAutoCenter` | - | `boolean` | Whether auto-center is on |

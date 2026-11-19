@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Order count moved into the qty column**: the two order count columns are gone, so the ladder is always Bid Qty | Price | Ask Qty | Bars. With `showOrderCount` (web) or `ViewportManager.ShowOrderCount` (desktop) on, bid cells read `(5) 102` and ask cells read `102 (5)`. The qty column widens to fit.
+- Desktop: removed `ViewportManager.BidOrderCountColumnX`, `ViewportManager.AskOrderCountColumnX` and `RenderConfig.OrderCountBackground`.
+
+### Fixed
+- **Web: price column clicks could SELL**: outside the qty columns, a click's column came from `x / COL_WIDTH`. With a qty column wider than `COL_WIDTH`, a click on the right part of the price column landed in the ask qty column. Columns are now hit-tested by their real positions.
+- **Web: bar drag started inside the ask qty column**: the drag area began 3 default column widths from the left (5 with order count columns), whatever the real widths were. It now starts where the bar column does.
+
 ## [0.5.0] - 2026-11-18
 
 ### Added

@@ -15,20 +15,15 @@ public class ViewportManager
     public int Height { get; set; }
 
     // Column layout (MUST match web version exactly!)
-    // Order: Bid Order Count | Bid Qty | Price | Ask Qty | Ask Order Count | Volume Bars
+    // Order: Bid Qty | Price | Ask Qty | Volume Bars
     // Dynamic quantity column width (default to standard column width)
     public float QtyColWidth { get; set; } = RenderConfig.ColumnWidth;
     // Dynamic price column width (default to standard column width)
     public float PriceColWidth { get; set; } = RenderConfig.ColumnWidth;
 
-    // Column X positions (calculated dynamically based on ShowOrderCount)
-    private int ColumnCount => ShowOrderCount ? 5 : 3; // 5 columns with order count, 3 without
-
-    public float BidOrderCountColumnX => 0; // Always column 0
-    public float BidQtyColumnX => ShowOrderCount ? RenderConfig.ColumnWidth : 0;
-    public float PriceColumnX => ShowOrderCount ? RenderConfig.ColumnWidth + QtyColWidth : QtyColWidth;
-    public float AskQtyColumnX => ShowOrderCount ? RenderConfig.ColumnWidth + QtyColWidth + PriceColWidth : QtyColWidth + PriceColWidth;
-    public float AskOrderCountColumnX => RenderConfig.ColumnWidth + QtyColWidth + PriceColWidth + QtyColWidth; // After ask qty
+    public float BidQtyColumnX => 0;
+    public float PriceColumnX => QtyColWidth;
+    public float AskQtyColumnX => QtyColWidth + PriceColWidth;
 
     public float? VolumeBarColumnX => ShowVolumeBars ? GetFixedColumnsWidth() : null;
 
@@ -42,20 +37,8 @@ public class ViewportManager
         return null;
     }
 
-    private float GetFixedColumnsWidth()
-    {
-        // Calculate total width of all fixed columns
-        if (ShowOrderCount)
-        {
-            // Bid Order Count (fixed) + Bid Qty (dynamic) + Price (dynamic) + Ask Qty (dynamic) + Ask Order Count (fixed)
-            return RenderConfig.ColumnWidth + QtyColWidth + PriceColWidth + QtyColWidth + RenderConfig.ColumnWidth;
-        }
-        else
-        {
-            // Bid Qty (dynamic) + Price (dynamic) + Ask Qty (dynamic)
-            return QtyColWidth + PriceColWidth + QtyColWidth;
-        }
-    }
+    // Bid Qty + Price + Ask Qty, all dynamic
+    private float GetFixedColumnsWidth() => QtyColWidth + PriceColWidth + QtyColWidth;
 
     // Responsive bar column width: fills remaining canvas width (min 100px)
     public float VolumeBarMaxWidth
@@ -82,7 +65,7 @@ public class ViewportManager
 
     // Feature toggles
     public bool ShowVolumeBars { get; set; } = true;
-    public bool ShowOrderCount { get; set; } = false;
+    public bool ShowOrderCount { get; set; } = false; // In the qty column: "(5) 102" on bids, "102 (5)" on asks
     public LevelRemovalMode RemovalMode { get; set; } = LevelRemovalMode.RemoveRow;
 
     // Price configuration

@@ -83,7 +83,7 @@ export interface PriceLadderConfig {
     mode?: 'PriceLevel' | 'MBO';
     readOnly?: boolean;
     showVolumeBars?: boolean;
-    showOrderCount?: boolean;
+    showOrderCount?: boolean; // Order count in the qty column: "(5) 102" on bids, "102 (5)" on asks. Default: true
     mboOrderSizeFilter?: number;
     removalMode?: 'showEmpty' | 'removeRow';
     autoCenter?: boolean; // Keep the bid/ask midpoint on the middle row, default: true. When off, Space or middle-click re-centers

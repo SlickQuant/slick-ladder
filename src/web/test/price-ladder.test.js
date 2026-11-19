@@ -1,7 +1,7 @@
 // PriceLadder unit tests (node:test). Browser APIs are stubbed by the harness. Run: npm test (in src/web)
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { PriceLadder, Side, ClickButton, OrderUpdateType, fakeContainer, render } = require('../test-utils/ladder-harness');
+const { PriceLadder, Side, ClickButton, OrderUpdateType, COL_WIDTH, fakeContainer, render } = require('../test-utils/ladder-harness');
 const { Feed, OrderFeed, seededRandom, TICK_SIZE } = require('../test-utils/random-feed');
 
 // Default book: bid 100.00 / ask 100.02 -> mid 100.01
@@ -209,9 +209,10 @@ function apply(ladder, rows, type = OrderUpdateType.Add) {
     }
 }
 
-// Bars after `update` repaints the ladder incrementally, and after a fresh ladder draws the same book in full
+// Bars after `update` repaints the ladder incrementally, and after a fresh ladder draws the same book in full.
+// No order count: "200 (1)" would widen the qty column, and the resize swaps the tracked context
 function barsAfterUpdate(config, book, update, type) {
-    const create = () => new PriceLadder({ container: fakeContainer(400), height: 600, tickSize: 0.01, ...config });
+    const create = () => new PriceLadder({ container: fakeContainer(400), height: 600, tickSize: 0.01, showOrderCount: false, ...config });
     const ladder = create();
     apply(ladder, book);
     const screen = renderTracked(ladder);
@@ -325,7 +326,8 @@ test('MBO: segments rescale when a long queue\'s largest order changes', () => {
 // Bug: the segment drag limit was found only when the segment scale changed by 20% or more, so a
 // level that grew wider without a new largest order couldn't be dragged to its end
 test('MBO: a segment drag reaches the end of the widest level as the book changes', () => {
-    const ladder = new PriceLadder({ container: fakeContainer(), mode: 'MBO' });
+    // No order count: it would widen the qty column, and the refit canvas has a narrower bar column
+    const ladder = new PriceLadder({ container: fakeContainer(), mode: 'MBO', showOrderCount: false });
     const { renderer } = ladder;
     apply(ladder, [[Side.BID, 100, 100, 1], [Side.ASK, 100.01, 100, 2]]);
     render(ladder);
@@ -403,7 +405,7 @@ test('auto-center off: wheel scrolls, Space and middle-click re-center', () => {
 
     ladder.setRemovalMode('showEmpty');
     ladder.renderer.setCenterPrice(105);
-    listeners.mousedown(event({ button: 1, clientX: 0, clientY: 0 }));
+    listeners.mousedown(event({ button: 1, clientX: ladder.renderer.getColumnPositions().priceX + 1, clientY: 0 }));
     assertNear(ladder.renderer.getCenterPrice(), 100.01);
 });
 
@@ -411,13 +413,13 @@ test('auto-center off: wheel scrolls, Space and middle-click re-center', () => {
 // onLevelClick returns true (handled)
 function clickLadder(onLevelClick, config = {}) {
     const ladder = createLadder({ autoCenter: false, onLevelClick, ...config });
-    const { bidQtyX, askQtyX } = ladder.renderer.getColumnPositions();
-    return { ladder, bidX: bidQtyX + 1, askX: askQtyX + 1, listeners: ladder.canvas.listeners };
+    const { bidQtyX, priceX, askQtyX } = ladder.renderer.getColumnPositions();
+    return { ladder, bidX: bidQtyX + 1, priceX: priceX + 1, askX: askQtyX + 1, listeners: ladder.canvas.listeners };
 }
 
 test('level click passes the mouse button, back/forward buttons are ignored', () => {
     const calls = [];
-    const { ladder, bidX, askX, listeners } = clickLadder((...args) => { calls.push(args); return true; });
+    const { ladder, bidX, priceX, askX, listeners } = clickLadder((...args) => { calls.push(args); return true; });
     const row = [...Array(30).keys()].find((r) => ladder.renderer.rowToLevelInfo(r) !== null);
     const price = ladder.renderer.rowToLevelInfo(row).price;
     const at = (button, clientX) => event({ button, clientX, clientY: row * 24 + 1 });
@@ -426,7 +428,7 @@ test('level click passes the mouse button, back/forward buttons are ignored', ()
     listeners.auxclick(at(1, askX));
     listeners.auxclick(at(2, askX));
     listeners.auxclick(at(3, askX));
-    listeners.click(at(0, 0)); // Order count column
+    listeners.click(at(0, priceX)); // Price column
     assert.deepEqual(calls, [
         [price, Side.BID, ClickButton.Left],
         [price, Side.ASK, ClickButton.Middle],
@@ -458,3 +460,70 @@ test('read-only: middle-click on a qty column re-centers without a level click',
     listeners.auxclick(event({ button: 1, clientX: askX, clientY: 0 }));
     assert.deepEqual(calls, []);
 });
+
+// Bug: a click outside the qty columns got its column from x / COL_WIDTH. With a qty column wider
+// than COL_WIDTH, a click on the right part of the price column landed in the ask qty column (SELL)
+test('click on a wide ladder\'s price column is not a level click', () => {
+    const calls = [];
+    const { ladder, listeners } = clickLadder((...args) => { calls.push(args); return true; });
+    ladder.processUpdate({ side: Side.BID, price: 100.00, quantity: 123456789, numOrders: 1 });
+    render(ladder);
+    const { renderer } = ladder;
+    const { priceX, askQtyX } = renderer.getColumnPositions();
+    assert.ok(renderer.qtyColWidth > COL_WIDTH, 'qty column wider than the default');
+    const row = [...Array(30).keys()].find((r) => renderer.rowToLevelInfo(r) !== null);
+    const at = (clientX) => event({ button: 0, clientX, clientY: row * 24 + 1 });
+
+    listeners.click(at(priceX + renderer.priceColWidth - 1));
+    assert.deepEqual(calls, []);
+    listeners.click(at(askQtyX + 1));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][1], Side.ASK);
+});
+
+// Bug: the bar drag started 3 default column widths from the left (5 with order count columns),
+// which is inside a widened ask qty column. It now starts where the bar column does
+test('bar drag starts at the bar column of a wide ladder', () => {
+    const ladder = createLadder({ showOrderCount: true });
+    ladder.processUpdate({ side: Side.BID, price: 100.00, quantity: 123456789, numOrders: 1 });
+    render(ladder);
+    const { renderer, interactionHandler } = ladder;
+    const { askQtyX, barX } = renderer.getColumnPositions();
+    assert.ok(askQtyX + renderer.qtyColWidth - 1 > 3 * COL_WIDTH, 'ask qty column reaches past 3 default columns');
+
+    ladder.canvas.listeners.mousedown(event({ button: 0, clientX: askQtyX + renderer.qtyColWidth - 1, clientY: 0 }));
+    assert.equal(interactionHandler.isDraggingBar, false, 'ask qty column');
+    ladder.canvas.listeners.mousedown(event({ button: 0, clientX: barX + 1, clientY: 0 }));
+    assert.equal(interactionHandler.isDraggingBar, true, 'bar column');
+});
+
+// Text drawn by a full repaint, with its x (the first render may resize, which swaps the context)
+function renderTexts(ladder) {
+    render(ladder);
+    const texts = [];
+    ladder.renderer.offscreenCtx.fillText = (text, x) => texts.push([text, x]);
+    ladder.renderer.needsFullRedraw = true;
+    render(ladder);
+    return texts;
+}
+
+// Order count has no column of its own: it sits in the qty column, on the outer side
+for (const removalMode of ['removeRow', 'showEmpty']) {
+    for (const showOrderCount of [true, false]) {
+        test(`${removalMode}, order count ${showOrderCount}: qty column text`, () => {
+            const ladder = new PriceLadder({ container: fakeContainer(), removalMode, showOrderCount });
+            ladder.processUpdate({ side: Side.BID, price: 100.00, quantity: 102, numOrders: 5 });
+            ladder.processUpdate({ side: Side.ASK, price: 100.02, quantity: 102, numOrders: 5 });
+            const texts = renderTexts(ladder);
+            const { renderer } = ladder;
+            const { bidQtyX, askQtyX } = renderer.getColumnPositions();
+            const center = renderer.qtyColWidth / 2;
+            const [bidText, askText] = showOrderCount ? ['(5) 102', '102 (5)'] : ['102', '102'];
+
+            assert.deepEqual(texts.filter(([, x]) => x === bidQtyX + center), [[bidText, bidQtyX + center]]);
+            assert.deepEqual(texts.filter(([, x]) => x === askQtyX + center), [[askText, askQtyX + center]]);
+            assert.ok(!texts.some(([text]) => text === '(5)'), 'no count drawn on its own');
+            assert.equal(renderer.qtyColWidth, renderer.columnWidthFor(askText));
+        });
+    }
+}

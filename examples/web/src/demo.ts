@@ -103,7 +103,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const minQuantityThreshold = getMinQuantityThreshold();
 
             // Calculate initial width based on display settings (same as TypeScript mode)
-            const dataColumns = showOrderCount ? 5 : 3;
+            const dataColumns = 3; // Bid qty, price, ask qty
             const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
             const initialWidth = Math.round((dataColumns * COL_WIDTH) + barWidth);
 
@@ -195,7 +195,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         const minQuantityThreshold = getMinQuantityThreshold();
 
         // Calculate initial width based on display settings
-        const dataColumns = showOrderCount ? 5 : 3;
+        const dataColumns = 3; // Bid qty, price, ask qty
         const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
         const initialWidth = Math.round((dataColumns * COL_WIDTH) + barWidth);
 

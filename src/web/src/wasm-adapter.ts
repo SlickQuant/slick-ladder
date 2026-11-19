@@ -200,7 +200,7 @@ export class WasmPriceLadder extends PriceLadder {
     }
 
     /**
-     * Set order count visibility
+     * Show or hide the order count in the qty column
      * Overrides base class to re-render last snapshot instead of calling getSnapshot()
      */
     public override setShowOrderCount(show: boolean): void {

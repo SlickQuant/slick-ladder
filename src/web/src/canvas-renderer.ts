@@ -152,17 +152,19 @@ function decimalPlaces(value: number): number {
  */
 type LevelStats = {
     maxQuantity: number;
+    maxOrders: number; // Most orders on a level with quantity
     nonEmpty: number; // Levels with quantity
     nonEmptyAscending: boolean; // Those strictly ascending by price
     ascending: boolean; // All levels ascending by price, so the visible ones can be found by binary search
 };
 
 function createStats(): LevelStats {
-    return { maxQuantity: 0, nonEmpty: 0, nonEmptyAscending: true, ascending: true };
+    return { maxQuantity: 0, maxOrders: 0, nonEmpty: 0, nonEmptyAscending: true, ascending: true };
 }
 
 function scanLevels(levels: BookLevel[], stats: LevelStats): LevelStats {
     let maxQuantity = 0;
+    let maxOrders = 0;
     let nonEmpty = 0;
     let nonEmptyAscending = true;
     let ascending = true;
@@ -177,11 +179,13 @@ function scanLevels(levels: BookLevel[], stats: LevelStats): LevelStats {
         if (quantity > maxQuantity) maxQuantity = quantity;
         if (quantity > 0) {
             if (nonEmpty > 0 && price <= lastNonEmptyPrice) nonEmptyAscending = false;
+            if (level.numOrders > maxOrders) maxOrders = level.numOrders;
             lastNonEmptyPrice = price;
             nonEmpty++;
         }
     }
     stats.maxQuantity = maxQuantity;
+    stats.maxOrders = maxOrders;
     stats.nonEmpty = nonEmpty;
     stats.nonEmptyAscending = nonEmptyAscending;
     stats.ascending = ascending;
@@ -273,14 +277,11 @@ class MaxOrderScan {
 }
 
 type ColumnPositions = {
-    readonly bidOrderX: number;
     readonly bidQtyX: number;
     readonly priceX: number;
     readonly askQtyX: number;
-    readonly askOrderX: number;
     readonly barX: number;
     // What they were computed from
-    readonly showOrderCount: boolean;
     readonly showVolumeBars: boolean;
     readonly qtyColWidth: number;
     readonly priceColWidth: number;
@@ -339,7 +340,7 @@ export class CanvasRenderer {
 
     // Layout configuration
     private showVolumeBars: boolean = true;
-    private showOrderCount: boolean = true;
+    private showOrderCount: boolean = true; // In the qty column: "(5) 102" on bids, "102 (5)" on asks
 
     private mboOrderSizeFilter: number;
     private minQuantityThreshold: number;
@@ -505,6 +506,18 @@ export class CanvasRenderer {
     }
 
     /**
+     * Qty cell text. With order count on, the count sits on the outer side: "(5) 102" on bids,
+     * "102 (5)" on asks (mirrors SkiaRenderer.QuantityText)
+     */
+    private quantityText(quantity: number, numOrders: number, side: Side): string {
+        const text = this.formatQuantity(quantity);
+        if (!this.showOrderCount) {
+            return text;
+        }
+        return side === Side.BID ? `(${numOrders}) ${text}` : `${text} (${numOrders})`;
+    }
+
+    /**
      * Width of a column that fits text: at least COL_WIDTH, with 10px padding on each side.
      * Measuring is cached, since the widest text rarely changes
      */
@@ -522,11 +535,12 @@ export class CanvasRenderer {
     }
 
     /**
-     * Calculate required quantity column width based on maximum quantity in snapshot
+     * Quantity column width that fits the largest quantity and order count in the snapshot. The
+     * font is monospace and both sides' text has the same length, so the ask text is measured
      */
-    private calculateQuantityColumnWidth(maxQty: number): number {
+    private calculateQuantityColumnWidth(maxQty: number, maxOrders: number): number {
         // If no levels, use default width
-        return maxQty === 0 ? COL_WIDTH : this.columnWidthFor(this.formatQuantity(maxQty));
+        return maxQty === 0 ? COL_WIDTH : this.columnWidthFor(this.quantityText(maxQty, maxOrders, Side.ASK));
     }
 
     /**
@@ -559,39 +573,19 @@ export class CanvasRenderer {
      */
     private getColumnPositions(): ColumnPositions {
         const cached = this.columns;
-        if (cached !== null && cached.showOrderCount === this.showOrderCount &&
-            cached.showVolumeBars === this.showVolumeBars && cached.qtyColWidth === this.qtyColWidth &&
+        if (cached !== null && cached.showVolumeBars === this.showVolumeBars && cached.qtyColWidth === this.qtyColWidth &&
             cached.priceColWidth === this.priceColWidth) {
             return cached;
         }
 
-        let x = 0;
-
-        // Bid order count column (if enabled)
-        const bidOrderX = this.showOrderCount ? x : -1;
-        if (this.showOrderCount) x += COL_WIDTH;
-
-        // Bid quantity column
-        const bidQtyX = x;
-        x += this.qtyColWidth;
-
-        // Price column (dynamic width)
-        const priceX = x;
-        x += this.priceColWidth;
-
-        // Ask quantity column
-        const askQtyX = x;
-        x += this.qtyColWidth;
-
-        // Ask order count column (if enabled)
-        const askOrderX = this.showOrderCount ? x : -1;
-        if (this.showOrderCount) x += COL_WIDTH;
-
-        // Volume bar column (if enabled)
-        const barX = this.showVolumeBars ? x : -1;
+        // Bid qty | Price | Ask qty | Volume bars (if enabled)
+        const bidQtyX = 0;
+        const priceX = bidQtyX + this.qtyColWidth;
+        const askQtyX = priceX + this.priceColWidth;
+        const barX = this.showVolumeBars ? askQtyX + this.qtyColWidth : -1;
 
         return this.columns = {
-            bidOrderX, bidQtyX, priceX, askQtyX, askOrderX, barX, showOrderCount: this.showOrderCount,
+            bidQtyX, priceX, askQtyX, barX,
             showVolumeBars: this.showVolumeBars, qtyColWidth: this.qtyColWidth, priceColWidth: this.priceColWidth
         };
     }
@@ -755,7 +749,8 @@ export class CanvasRenderer {
 
         // Rows don't depend on column widths, so build them first and size the price column from them
         this.buildRows(snapshot, referencePrice);
-        const newQtyColWidth = this.calculateQuantityColumnWidth(maxQuantity);
+        const newQtyColWidth = this.calculateQuantityColumnWidth(maxQuantity,
+            Math.max(this.bidStats.maxOrders, this.askStats.maxOrders));
         const newPriceColWidth = this.calculatePriceColumnWidth();
         if (newQtyColWidth !== this.qtyColWidth || newPriceColWidth !== this.priceColWidth) {
             this.qtyColWidth = newQtyColWidth;
@@ -1224,15 +1219,9 @@ export class CanvasRenderer {
         this.offscreenCtx.textAlign = 'center';
 
         if (row.side === Side.BID) {
-            // BID: bid_order_count, bid_qty, price, bars
+            // BID: bid_qty, price, bars
             if (textToo) {
-                // bid_order_count (if enabled)
-                if (cols.bidOrderX >= 0) {
-                    this.offscreenCtx.fillText(`(${row.numOrders})`, cols.bidOrderX + COL_WIDTH / 2, textY);
-                }
-
-                // bid_qty
-                this.offscreenCtx.fillText(this.formatQuantity(row.quantity), cols.bidQtyX + this.qtyColWidth / 2, textY);
+                this.offscreenCtx.fillText(this.quantityText(row.quantity, row.numOrders, Side.BID), cols.bidQtyX + this.qtyColWidth / 2, textY);
             }
 
             // Own order highlight in PriceLevel mode
@@ -1247,13 +1236,13 @@ export class CanvasRenderer {
                 this.offscreenCtx.fillText(this.formatPrice(row.price), cols.priceX + this.priceColWidth / 2, textY);
             }
         } else {
-            // ASK: price, ask_qty, ask_order_count, bars
+            // ASK: price, ask_qty, bars
             if (textToo) {
                 // price
                 this.offscreenCtx.fillText(this.formatPrice(row.price), cols.priceX + this.priceColWidth / 2, textY);
 
                 // ask_qty
-                this.offscreenCtx.fillText(this.formatQuantity(row.quantity), cols.askQtyX + this.qtyColWidth / 2, textY);
+                this.offscreenCtx.fillText(this.quantityText(row.quantity, row.numOrders, Side.ASK), cols.askQtyX + this.qtyColWidth / 2, textY);
             }
 
             // Own order highlight in PriceLevel mode
@@ -1261,11 +1250,6 @@ export class CanvasRenderer {
                 this.offscreenCtx.strokeStyle = this.colors.ownOrderBorder;
                 this.offscreenCtx.lineWidth = 2;
                 this.offscreenCtx.strokeRect(cols.askQtyX, y + 1, this.qtyColWidth, this.rowHeight - 2);
-            }
-
-            // ask_order_count (if enabled)
-            if (textToo && cols.askOrderX >= 0) {
-                this.offscreenCtx.fillText(`(${row.numOrders})`, cols.askOrderX + COL_WIDTH / 2, textY);
             }
         }
 
@@ -1354,21 +1338,8 @@ export class CanvasRenderer {
             this.offscreenCtx.fillStyle = this.colors.text;
             this.offscreenCtx.textAlign = 'center';
 
-            const qtyText = this.formatQuantity(row.quantity);
-            const ordersText = `(${row.numOrders})`;
-            if (row.side === Side.BID) {
-                // BID: bid_order_count (if enabled), bid_qty
-                if (cols.bidOrderX >= 0) {
-                    this.offscreenCtx.fillText(ordersText, cols.bidOrderX + COL_WIDTH / 2, textY);
-                }
-                this.offscreenCtx.fillText(qtyText, cols.bidQtyX + this.qtyColWidth / 2, textY);
-            } else {
-                // ASK: ask_qty, ask_order_count (if enabled)
-                this.offscreenCtx.fillText(qtyText, cols.askQtyX + this.qtyColWidth / 2, textY);
-                if (cols.askOrderX >= 0) {
-                    this.offscreenCtx.fillText(ordersText, cols.askOrderX + COL_WIDTH / 2, textY);
-                }
-            }
+            const qtyX = row.side === Side.BID ? cols.bidQtyX : cols.askQtyX;
+            this.offscreenCtx.fillText(this.quantityText(row.quantity, row.numOrders, row.side), qtyX + this.qtyColWidth / 2, textY);
         }
 
         this.drawRowBars(row, cols.barX, y);
@@ -1549,10 +1520,17 @@ export class CanvasRenderer {
     }
 
     /**
-     * Get showOrderCount setting (for interaction handler)
+     * Get showOrderCount setting
      */
     public getShowOrderCount(): boolean {
         return this.showOrderCount;
+    }
+
+    /**
+     * X where the volume bar column starts, -1 when bars are hidden (for interaction handler)
+     */
+    public getBarColumnX(): number {
+        return this.getColumnPositions().barX;
     }
 
     private volumeBarWidth(quantity: number): number {
@@ -1606,41 +1584,37 @@ export class CanvasRenderer {
     }
 
     /**
-     * Convert screen X coordinate to column index
+     * Column index under screen X: [0:bid_qty][1:price][2:ask_qty][3:bars and beyond], -1 left
+     * of the ladder. Found from the columns' pixel positions, since their widths change
      */
     public screenXToColumn(x: number): number {
         const cols = this.getColumnPositions();
-        // Determine which column x falls in based on actual pixel positions
-        if (x >= cols.bidQtyX && x < cols.bidQtyX + this.qtyColWidth) return this.getBidQtyColumn();
-        if (x >= cols.askQtyX && x < cols.askQtyX + this.qtyColWidth) return this.getAskQtyColumn();
-        // Fallback: index-based (for order count, price, bar columns)
-        return Math.floor(x / COL_WIDTH);
+        if (x < cols.bidQtyX) return -1;
+        if (x < cols.priceX) return this.getBidQtyColumn();
+        if (x < cols.askQtyX) return this.getPriceColumn();
+        if (x < cols.askQtyX + this.qtyColWidth) return this.getAskQtyColumn();
+        return 3;
     }
 
     /**
-     * Get the price column index in the RENDERED layout
+     * Get the price column index
      */
     public getPriceColumn(): number {
-        // When orders enabled: columns are [0:bid_orders][1:bid_qty][2:price][3:ask_qty][4:ask_orders][5:bars]
-        // When orders disabled: columns 0 and 4 removed, so [0:bid_qty][1:price][2:ask_qty][3:bars]
-        // Price is always after bid_qty, so:
-        // - With orders: price at rendered column 2
-        // - Without orders: price at rendered column 1
-        return this.showOrderCount ? 2 : 1;
+        return 1;
     }
 
     /**
      * Get the BID quantity column index
      */
     public getBidQtyColumn(): number {
-        return this.showOrderCount ? 1 : 0;
+        return 0;
     }
 
     /**
      * Get the ASK quantity column index
      */
     public getAskQtyColumn(): number {
-        return this.showOrderCount ? 3 : 2;
+        return 2;
     }
 
     /**
@@ -1780,12 +1754,12 @@ export class CanvasRenderer {
     }
 
     /**
-     * Set whether to show order count
+     * Set whether to show order count in the qty column
      */
     public setShowOrderCount(show: boolean): void {
         if (this.showOrderCount !== show) {
             this.showOrderCount = show;
-            // Recalculate and resize canvas based on new column count
+            // Redraw everything: the render refits the qty column to the new text
             const newWidth = this.calculateCanvasWidth();
             this.resize(newWidth, this.height);
         }
@@ -1963,21 +1937,15 @@ export class CanvasRenderer {
      * Calculate canvas width based on enabled features
      */
     private calculateCanvasWidth(): number {
-        // Order count column width (fixed)
-        const orderColWidth = this.showOrderCount ? COL_WIDTH : 0;
-
         // Two quantity columns (bid and ask) with dynamic width
         const qtyColumnsWidth = 2 * this.qtyColWidth;
 
         // Price column with dynamic width
         const priceColWidth = this.priceColWidth;
 
-        // Two order count columns (bid and ask) if enabled
-        const orderCountColumnsWidth = this.showOrderCount ? (2 * orderColWidth) : 0;
-
         // Volume bar column
         const barWidth = this.showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
 
-        return Math.round(orderCountColumnsWidth + qtyColumnsWidth + priceColWidth + barWidth);
+        return Math.round(qtyColumnsWidth + priceColWidth + barWidth);
     }
 }

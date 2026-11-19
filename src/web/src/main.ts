@@ -19,6 +19,9 @@ import { MBOManager } from './mbo-manager';
 import { SortedLevels } from './sorted-levels';
 import { aggregateLevels } from './aggregation';
 
+// Bid qty, price and ask qty at their default width. The renderer widens them to fit their text
+const FIXED_COLUMNS_WIDTH = 3 * COL_WIDTH;
+
 /**
  * Main Price Ladder component for web.
  * Currently uses pure TypeScript implementation.
@@ -55,18 +58,14 @@ export class PriceLadder {
         const showVolumeBars = config.showVolumeBars !== undefined ? config.showVolumeBars : true;
         const showOrderCount = config.showOrderCount !== undefined ? config.showOrderCount : true;
 
-        // Fixed data columns width
-        const fixedDataColumns = showOrderCount ? 5 : 3;
-        const fixedColumnsWidth = fixedDataColumns * COL_WIDTH;
-
         // Calculate bar column width from container (or use default)
         const containerWidth = config.container.clientWidth || 800;
-        const availableWidth = containerWidth - fixedColumnsWidth;
+        const availableWidth = containerWidth - FIXED_COLUMNS_WIDTH;
         this.barColumnWidth = showVolumeBars
             ? Math.max(MIN_BAR_COLUMN_WIDTH, availableWidth)
             : 0;
 
-        const defaultWidth = Math.round(fixedColumnsWidth + this.barColumnWidth);
+        const defaultWidth = Math.round(FIXED_COLUMNS_WIDTH + this.barColumnWidth);
 
         // Apply defaults
         this.config = {
@@ -166,13 +165,10 @@ export class PriceLadder {
      * Handle container resize for responsive layout
      */
     private handleResize(): void {
-        const showOrderCount = this.config.showOrderCount;
         const showVolumeBars = this.config.showVolumeBars;
-        const fixedDataColumns = showOrderCount ? 5 : 3;
-        const fixedColumnsWidth = fixedDataColumns * COL_WIDTH;
 
         const containerWidth = this.container.clientWidth || 800;
-        const availableWidth = containerWidth - fixedColumnsWidth;
+        const availableWidth = containerWidth - FIXED_COLUMNS_WIDTH;
         const newBarColumnWidth = showVolumeBars
             ? Math.max(MIN_BAR_COLUMN_WIDTH, availableWidth)
             : 0;
@@ -180,7 +176,7 @@ export class PriceLadder {
         if (newBarColumnWidth !== this.barColumnWidth) {
             this.barColumnWidth = newBarColumnWidth;
             this.renderer.updateBarColumnWidth(newBarColumnWidth);
-            const newWidth = Math.round(fixedColumnsWidth + newBarColumnWidth);
+            const newWidth = Math.round(FIXED_COLUMNS_WIDTH + newBarColumnWidth);
             this.canvas.width = newWidth;
             // Also update CSS width to prevent stretching
             this.canvas.style.width = `${newWidth}px`;
@@ -468,14 +464,11 @@ export class PriceLadder {
     }
 
     /**
-     * Calculate width based on visible columns
-     * Base 6 columns: [bid_orders][bid_qty][price][ask_qty][ask_orders][bars]
-     * Remove columns when features are disabled
+     * Calculate width based on visible columns: [bid_qty][price][ask_qty][bars], bars when enabled
      */
     private calculateWidth(): number {
-        const dataColumns = this.config.showOrderCount ? 5 : 3;
         const barWidth = this.config.showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
-        return Math.round((dataColumns * COL_WIDTH) + barWidth);
+        return Math.round(FIXED_COLUMNS_WIDTH + barWidth);
     }
 
     /**
@@ -498,7 +491,7 @@ export class PriceLadder {
     }
 
     /**
-     * Set order count visibility
+     * Show or hide the order count in the qty column
      */
     public setShowOrderCount(show: boolean): void {
         this.config.showOrderCount = show;

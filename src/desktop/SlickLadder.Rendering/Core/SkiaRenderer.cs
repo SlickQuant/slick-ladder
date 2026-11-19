@@ -20,7 +20,6 @@ public class SkiaRenderer : IDisposable
     private readonly SKPaint _bidBackgroundPaint;
     private readonly SKPaint _askBackgroundPaint;
     private readonly SKPaint _priceBackgroundPaint;
-    private readonly SKPaint _orderCountBackgroundPaint;
     private readonly SKPaint _backgroundPaint;
     private readonly SKPaint _textPaint;
     private readonly SKPaint _bidVolumePaint;
@@ -35,10 +34,10 @@ public class SkiaRenderer : IDisposable
     private readonly HashSet<int> _debugDirtyRows = new HashSet<int>();
     private decimal _priceFormatTickSize; // Display tick size _priceFormat was built for
     private string _priceFormat = "F2";
-    private decimal _quantityTextThreshold; // MinQuantityThreshold _quantityTexts were made with
+    private decimal _quantityTextThreshold; // MinQuantityThreshold the quantity text caches were made with
     private readonly TextCache<decimal> _priceTexts;
     private readonly TextCache<decimal> _quantityTexts;
-    private readonly TextCache<int> _orderCountTexts = new(count => $"({count})");
+    private readonly TextCache<(decimal Quantity, int Orders, Side Side)> _quantityWithCountTexts;
     private bool _debugOverlayAllRows;
 
     private readonly RenderConfig _config;
@@ -96,7 +95,6 @@ public class SkiaRenderer : IDisposable
         _bidBackgroundPaint = new SKPaint { Color = _config.BidBackground, Style = SKPaintStyle.Fill };
         _askBackgroundPaint = new SKPaint { Color = _config.AskBackground, Style = SKPaintStyle.Fill };
         _priceBackgroundPaint = new SKPaint { Color = _config.PriceBackground, Style = SKPaintStyle.Fill };
-        _orderCountBackgroundPaint = new SKPaint { Color = _config.OrderCountBackground, Style = SKPaintStyle.Fill };
         _backgroundPaint = new SKPaint { Color = _config.BackgroundColor, Style = SKPaintStyle.Fill };
 
         // Text is drawn as cached blobs (TextBlobCache), so the paints carry only color and AA
@@ -140,6 +138,9 @@ public class SkiaRenderer : IDisposable
         _segmentTextBlobs = new TextBlobCache(new SKFont(typeface, 10)); // Smaller font for segments
         _priceTexts = new TextCache<decimal>(price => price.ToString(_priceFormat));
         _quantityTexts = new TextCache<decimal>(FormatQuantityText);
+        _quantityWithCountTexts = new TextCache<(decimal Quantity, int Orders, Side Side)>(key => key.Side == Side.BID
+            ? $"({key.Orders}) {_quantityTexts.Get(key.Quantity)}"
+            : $"{_quantityTexts.Get(key.Quantity)} ({key.Orders})");
     }
 
     /// <summary>
@@ -275,7 +276,8 @@ public class SkiaRenderer : IDisposable
         // The price column is sized from this frame's rows, so build them first. Bar lengths
         // depend on the column widths, which is why a width change below rebuilds the rows
         BuildRows(snapshot, viewport, maxVolume, visibleRows, midRow, displayTickSize, referencePrice);
-        var newQtyColWidth = CalculateQuantityColumnWidth(maxQuantity);
+        var newQtyColWidth = CalculateQuantityColumnWidth(maxQuantity, Math.Max(_bidStats.MaxOrders, _askStats.MaxOrders),
+            viewport.ShowOrderCount);
         var newPriceColWidth = CalculatePriceColumnWidth(viewport.RemovalMode);
         if (Math.Abs(viewport.QtyColWidth - newQtyColWidth) > 0.5f || Math.Abs(viewport.PriceColWidth - newPriceColWidth) > 0.5f)
         {
@@ -324,16 +326,7 @@ public class SkiaRenderer : IDisposable
 
     private void DrawColumnBackgrounds(SKCanvas canvas, ViewportManager viewport)
     {
-        // Column order: Bid Order Count | Bid Qty | Price | Ask Qty | Ask Order Count | Volume Bars
-
-        // Bid order count column (darker background to match web - NOT the same as bid qty)
-        if (viewport.ShowOrderCount)
-        {
-            canvas.DrawRect(
-                viewport.BidOrderCountColumnX, 0,
-                RenderConfig.ColumnWidth, viewport.Height,
-                _orderCountBackgroundPaint);
-        }
+        // Column order: Bid Qty | Price | Ask Qty | Volume Bars
 
         // Bid quantity column (blue background) - uses dynamic width
         canvas.DrawRect(
@@ -352,33 +345,14 @@ public class SkiaRenderer : IDisposable
             viewport.AskQtyColumnX, 0,
             viewport.QtyColWidth, viewport.Height,
             _askBackgroundPaint);
-
-        // Ask order count column (darker background to match web - NOT the same as ask qty)
-        if (viewport.ShowOrderCount)
-        {
-            canvas.DrawRect(
-                viewport.AskOrderCountColumnX, 0,
-                RenderConfig.ColumnWidth, viewport.Height,
-                _orderCountBackgroundPaint);
-        }
     }
 
     private void DrawRowBackgrounds(SKCanvas canvas, ViewportManager viewport, float y)
     {
         // The columns tile [0, columnsRight) edge to edge (same float sums), so the background
         // only needs to fill what's right of them
-        var columnsRight = viewport.ShowOrderCount
-            ? viewport.AskOrderCountColumnX + RenderConfig.ColumnWidth
-            : viewport.AskQtyColumnX + viewport.QtyColWidth;
+        var columnsRight = viewport.AskQtyColumnX + viewport.QtyColWidth;
         canvas.DrawRect(columnsRight, y, Math.Max(0, viewport.Width - columnsRight), RenderConfig.RowHeight, _backgroundPaint);
-
-        if (viewport.ShowOrderCount)
-        {
-            canvas.DrawRect(
-                viewport.BidOrderCountColumnX, y,
-                RenderConfig.ColumnWidth, RenderConfig.RowHeight,
-                _orderCountBackgroundPaint);
-        }
 
         canvas.DrawRect(
             viewport.BidQtyColumnX, y,
@@ -394,14 +368,6 @@ public class SkiaRenderer : IDisposable
             viewport.AskQtyColumnX, y,
             viewport.QtyColWidth, RenderConfig.RowHeight,
             _askBackgroundPaint);
-
-        if (viewport.ShowOrderCount)
-        {
-            canvas.DrawRect(
-                viewport.AskOrderCountColumnX, y,
-                RenderConfig.ColumnWidth, RenderConfig.RowHeight,
-                _orderCountBackgroundPaint);
-        }
     }
 
     private void DrawGridLine(SKCanvas canvas, ViewportManager viewport, float y)
@@ -415,6 +381,7 @@ public class SkiaRenderer : IDisposable
     /// </summary>
     private readonly record struct LevelStats(
         decimal MaxQuantity,
+        int MaxOrders, // Most orders on a level with quantity
         int NonEmpty, // Levels with quantity
         bool NonEmptyAscending, // Those strictly ascending by price
         bool Ascending) // All levels ascending by price, so the visible ones can be found by binary search
@@ -422,6 +389,7 @@ public class SkiaRenderer : IDisposable
         public static LevelStats Scan(BookLevel[] levels)
         {
             decimal maxQuantity = 0;
+            var maxOrders = 0;
             var nonEmpty = 0;
             var nonEmptyAscending = true;
             var ascending = true;
@@ -436,11 +404,12 @@ public class SkiaRenderer : IDisposable
                 if (level.Quantity > 0)
                 {
                     if (nonEmpty > 0 && price <= lastNonEmptyPrice) nonEmptyAscending = false;
+                    if (level.NumOrders > maxOrders) maxOrders = level.NumOrders;
                     lastNonEmptyPrice = price;
                     nonEmpty++;
                 }
             }
-            return new LevelStats(maxQuantity, nonEmpty, nonEmptyAscending, ascending);
+            return new LevelStats(maxQuantity, maxOrders, nonEmpty, nonEmptyAscending, ascending);
         }
     }
 
@@ -464,22 +433,17 @@ public class SkiaRenderer : IDisposable
     }
 
     /// <summary>
-    /// Calculate dynamic quantity column width based on maximum quantity in snapshot
+    /// Quantity column width that fits the largest quantity and order count in the snapshot. The
+    /// font is monospace and both sides' text has the same length, so the ask text is measured.
     /// Mirrors TypeScript calculateQuantityColumnWidth() in canvas-renderer.ts
     /// </summary>
-    private float CalculateQuantityColumnWidth(decimal maxQty)
+    private float CalculateQuantityColumnWidth(decimal maxQty, int maxOrders, bool showOrderCount)
     {
         if (maxQty == 0)
         {
             return RenderConfig.ColumnWidth;
         }
-
-        // Format quantity (trim trailing zeros for decimals, use N0 for integers)
-        var maxQtyText = maxQty % 1 == 0
-            ? maxQty.ToString("N0")  // Integer: use thousands separators
-            : maxQty.ToString("0.################").TrimEnd('0').TrimEnd('.');  // Decimal: trim trailing zeros
-
-        return ColumnWidthFor(maxQtyText);
+        return ColumnWidthFor(QuantityText(maxQty, maxOrders, Side.ASK, showOrderCount));
     }
 
     /// <summary>
@@ -831,8 +795,7 @@ public class SkiaRenderer : IDisposable
                 // Only the bars changed, and a narrow ladder puts the whole bar column past the right edge
                 continue;
             }
-            else if (!_onGpu && (viewport.RemovalMode == LevelRemovalMode.ShowEmpty || viewport.ShowOrderCount ||
-                     !next.Ask.Level.HasOwnOrders))
+            else if (!_onGpu && (viewport.RemovalMode == LevelRemovalMode.ShowEmpty || !next.Ask.Level.HasOwnOrders))
             {
                 // Only the bars changed (the volume scale moved): reset the bar column, draw the bars
                 ClearRow(canvas, viewport, rowIndex, barColumn);
@@ -1487,12 +1450,29 @@ public class SkiaRenderer : IDisposable
     /// </summary>
     private string FormatQuantity(decimal quantity)
     {
+        EnsureQuantityTexts();
+        return _quantityTexts.Get(quantity);
+    }
+
+    /// <summary>
+    /// Qty cell text. With order count on, the count sits on the outer side: "(5) 102" on bids,
+    /// "102 (5)" on asks (mirrors TypeScript quantityText)
+    /// </summary>
+    private string QuantityText(decimal quantity, int orders, Side side, bool showOrderCount)
+    {
+        EnsureQuantityTexts();
+        return showOrderCount ? _quantityWithCountTexts.Get((quantity, orders, side)) : _quantityTexts.Get(quantity);
+    }
+
+    // Quantity text depends on MinQuantityThreshold, so clear both text caches when it changes
+    private void EnsureQuantityTexts()
+    {
         if (_quantityTextThreshold != _config.MinQuantityThreshold)
         {
             _quantityTexts.Clear();
+            _quantityWithCountTexts.Clear();
             _quantityTextThreshold = _config.MinQuantityThreshold;
         }
-        return _quantityTexts.Get(quantity);
     }
 
     private string FormatQuantityText(decimal quantity)
@@ -1566,6 +1546,16 @@ public class SkiaRenderer : IDisposable
     private void DrawCellText(SKCanvas canvas, string text, float centerX, float y)
     {
         DrawCenteredText(canvas, _textBlobs, text, centerX, y, _textPaint);
+    }
+
+    // A level's qty cell text, centered in the qty column starting at columnX
+    private void DrawQuantity(SKCanvas canvas, in BookLevel level, ViewportManager viewport, float columnX, float textY)
+    {
+        DrawCellText(
+            canvas,
+            QuantityText(level.Quantity, level.NumOrders, level.Side, viewport.ShowOrderCount),
+            columnX + (viewport.QtyColWidth / 2),
+            textY);
     }
 
     /// <summary>
@@ -1644,29 +1634,15 @@ public class SkiaRenderer : IDisposable
         // Calculate text baseline (centered vertically in row)
         var textY = TextY(y);
 
-        // Column order: Bid Order Count | Bid Qty | Price | Ask Qty | Ask Order Count | Volume Bars
-        // BID: Draw bid order count, bid qty, and price only (leave ask columns empty)
+        // Column order: Bid Qty | Price | Ask Qty | Volume Bars
+        // BID: Draw bid qty and price only (leave ask column empty)
 
         var isEmpty = level.Quantity == 0;
-
-        // Bid order count (if enabled and not empty)
-        if (viewport.ShowOrderCount && !isEmpty)
-        {
-            DrawCellText(
-                canvas,
-                _orderCountTexts.Get(level.NumOrders),
-                viewport.BidOrderCountColumnX + (RenderConfig.ColumnWidth / 2),
-                textY);
-        }
 
         // Bid quantity (skip if empty) - uses dynamic width
         if (!isEmpty)
         {
-            DrawCellText(
-                canvas,
-                FormatQuantity(level.Quantity),
-                viewport.BidQtyColumnX + (viewport.QtyColWidth / 2),
-                textY);
+            DrawQuantity(canvas, in level, viewport, viewport.BidQtyColumnX, textY);
         }
 
         // Own order highlight in PriceLevel mode
@@ -1710,8 +1686,8 @@ public class SkiaRenderer : IDisposable
         // Calculate text baseline (centered vertically in row)
         var textY = TextY(y);
 
-        // Column order: Bid Order Count | Bid Qty | Price | Ask Qty | Ask Order Count | Volume Bars
-        // ASK: Draw price, ask qty, and ask order count only (leave bid columns empty)
+        // Column order: Bid Qty | Price | Ask Qty | Volume Bars
+        // ASK: Draw price and ask qty only (leave bid column empty)
 
         var isEmpty = level.Quantity == 0;
 
@@ -1725,27 +1701,13 @@ public class SkiaRenderer : IDisposable
         // Ask quantity (skip if empty) - uses dynamic width
         if (!isEmpty)
         {
-            DrawCellText(
-                canvas,
-                FormatQuantity(level.Quantity),
-                viewport.AskQtyColumnX + (viewport.QtyColWidth / 2),
-                textY);
+            DrawQuantity(canvas, in level, viewport, viewport.AskQtyColumnX, textY);
         }
 
         // Own order highlight in PriceLevel mode
         if (level.HasOwnOrders)
         {
             canvas.DrawRect(viewport.AskQtyColumnX, y + 1, viewport.QtyColWidth, RenderConfig.RowHeight - 2, _ownOrderBorderPaint);
-        }
-
-        // Ask order count (if enabled and not empty)
-        if (viewport.ShowOrderCount && !isEmpty)
-        {
-            DrawCellText(
-                canvas,
-                _orderCountTexts.Get(level.NumOrders),
-                viewport.AskOrderCountColumnX + (RenderConfig.ColumnWidth / 2),
-                textY);
         }
 
         // Draw volume bars
@@ -1777,24 +1739,10 @@ public class SkiaRenderer : IDisposable
         var textY = TextY(y);
         var isEmpty = level.Quantity == 0;
 
-        // Bid order count (if enabled and not empty)
-        if (viewport.ShowOrderCount && !isEmpty)
-        {
-            DrawCellText(
-                canvas,
-                _orderCountTexts.Get(level.NumOrders),
-                viewport.BidOrderCountColumnX + (RenderConfig.ColumnWidth / 2),
-                textY);
-        }
-
         // Bid quantity (skip if empty) - uses dynamic width
         if (!isEmpty)
         {
-            DrawCellText(
-                canvas,
-                FormatQuantity(level.Quantity),
-                viewport.BidQtyColumnX + (viewport.QtyColWidth / 2),
-                textY);
+            DrawQuantity(canvas, in level, viewport, viewport.BidQtyColumnX, textY);
         }
 
         // Draw volume bars
@@ -1829,21 +1777,7 @@ public class SkiaRenderer : IDisposable
         // Ask quantity (skip if empty) - uses dynamic width
         if (!isEmpty)
         {
-            DrawCellText(
-                canvas,
-                FormatQuantity(level.Quantity),
-                viewport.AskQtyColumnX + (viewport.QtyColWidth / 2),
-                textY);
-        }
-
-        // Ask order count (if enabled and not empty)
-        if (viewport.ShowOrderCount && !isEmpty)
-        {
-            DrawCellText(
-                canvas,
-                _orderCountTexts.Get(level.NumOrders),
-                viewport.AskOrderCountColumnX + (RenderConfig.ColumnWidth / 2),
-                textY);
+            DrawQuantity(canvas, in level, viewport, viewport.AskQtyColumnX, textY);
         }
 
         // Draw volume bars
@@ -2072,7 +2006,6 @@ public class SkiaRenderer : IDisposable
         _bidBackgroundPaint?.Dispose();
         _askBackgroundPaint?.Dispose();
         _priceBackgroundPaint?.Dispose();
-        _orderCountBackgroundPaint?.Dispose();
         _backgroundPaint?.Dispose();
         _textPaint?.Dispose();
         _bidVolumePaint?.Dispose();

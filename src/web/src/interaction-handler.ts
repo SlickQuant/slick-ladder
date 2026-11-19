@@ -1,4 +1,4 @@
-import { Side, ClickButton, COL_WIDTH } from './types';
+import { Side, ClickButton } from './types';
 import { CanvasRenderer } from './canvas-renderer';
 
 /**
@@ -164,8 +164,7 @@ export class InteractionHandler {
         }
 
         // Check if click is in bar column
-        const showOrderCount = this.renderer.getShowOrderCount();
-        const barStartX = showOrderCount ? COL_WIDTH * 5 : COL_WIDTH * 3;
+        const barStartX = this.renderer.getBarColumnX();
         const barColumnWidth = this.renderer.getBarColumnWidth();
 
         if (x >= barStartX && x < barStartX + barColumnWidth) {
