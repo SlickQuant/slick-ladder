@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-18
+
 ### Added
 - **NuGet packages**: `SlickLadder.Core`, `SlickLadder.Rendering`, `SlickLadder.Avalonia` and `SlickLadder.WPF`, released with the npm package at the same version and published to nuget.org with trusted publishing. They come with Source Link and `.snupkg` symbols, and the GitHub release attaches both the packages and the symbols.
 - **Level click button**: `onLevelClick` gets the mouse button as a third argument, and desktop's `LevelClickEventArgs` has a `Button` property. Both use the new `ClickButton` enum (`Left`, `Middle`, `Right`). Web now reports middle and right clicks too.
@@ -240,6 +242,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fixed** for any bug fixes
 - **Security** in case of vulnerabilities
 
-[Unreleased]: https://github.com/SlickQuant/slick-ladder/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/SlickQuant/slick-ladder/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/SlickQuant/slick-ladder/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/SlickQuant/slick-ladder/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/SlickQuant/slick-ladder/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/SlickQuant/slick-ladder/compare/v0.1.8...v0.2.0
 [0.1.1]: https://github.com/SlickQuant/slick-ladder/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/SlickQuant/slick-ladder/releases/tag/v0.1.0

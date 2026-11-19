@@ -57,7 +57,8 @@ SlickLadder renders order book ladders across web, WASM, and desktop (WPF/Avalon
 - Own order highlighting with gold border
 - Price level scrolling with mouse wheel (when auto-center is off)
 - Auto-center on the bid/ask midpoint, or re-center on demand with Space / middle-click
-- Hover highlighting and click interactions
+- Hover highlighting, and left, middle and right clicks on the quantity columns, passed to your handler with the button
+- A row cut off at the bottom of the ladder shows the part that fits
 
 ### Built-in Metrics
 - Real-time FPS monitoring
