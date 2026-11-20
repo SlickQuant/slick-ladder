@@ -53,11 +53,14 @@ SlickLadder renders order book ladders across web, WASM, and desktop (WPF/Avalon
 ### Display Features
 - Configurable tick sizes (0.01, 0.05, 0.10, 0.25, 1.00)
 - **Display tick size aggregation**: group multiple raw price levels into coarser display buckets (e.g. show 0.10 rows when tick size is 0.01)
+- Columns: `Work | Bid | Price | Ask | LTQ | Volume`, with a header row on top. Work, LTQ and the header can each be turned off
+- **Work column**: your own working orders at each price as `10 (2)` (quantity and order count), green for buys and red for sells
+- **LTQ column**: the last trade's quantity on its price. Green when the buyer was the aggressor, red for the seller, white when unknown
 - Toggle volume bars and order counts (shown in the qty column: `(5) 102` on bids, `102 (5)` on asks)
 - Own order highlighting with gold border
 - Price level scrolling with mouse wheel (when auto-center is off)
 - Auto-center on the bid/ask midpoint, or re-center on demand with Space / middle-click
-- Hover highlighting, and left, middle and right clicks on the quantity columns, passed to your handler with the button
+- Hover highlighting, and left, middle and right clicks on the quantity and Work columns, passed to your handlers with the button
 - A row cut off at the bottom of the ladder shows the part that fits
 
 ### Built-in Metrics
@@ -189,6 +192,9 @@ const ladder = new PriceLadder({
     readOnly: false,
     showVolumeBars: true,
     showOrderCount: true,
+    showWorkColumn: true,
+    showLtqColumn: true,
+    showHeader: true,
     colors: customColors,
     onLevelClick: (price, side, button) => {
         const action = side === Side.ASK ? 'BUY' : 'SELL';
@@ -211,6 +217,12 @@ ladder.resize(600, 900);
 // Toggle features
 ladder.setShowVolumeBars(false);
 ladder.setShowOrderCount(true);
+
+// Our working orders at a price (Work column). Quantity 0 clears it
+ladder.setWorkingOrders(100.25, Side.BID, 30, 2);
+
+// A trade from the feed (LTQ column). aggressor: Side.BID (buyer), Side.ASK (seller) or null (unknown)
+ladder.processTrade({ price: 100.26, quantity: 5, aggressor: Side.BID });
 
 // Clean up when done
 ladder.destroy();
@@ -365,10 +377,17 @@ core.ProcessOrderUpdate(new OrderUpdate {
     Priority = 1
 }, OrderUpdateType.Add);
 
+// Our working orders (Work column) and trades (LTQ column), in either mode
+core.SetWorkingOrders(100.25m, Side.BID, 30, 2); // Quantity 0 clears it
+core.ProcessTrade(100.26m, 5, Side.BID);         // Aggressor null when unknown
+
 // Auto-center is on by default. Turn it off to scroll freely,
 // then Space, middle-click or Recenter() brings the spread back to the middle
 ladderControl.GetViewport()!.AutoCenter = false;
 ladderControl.Recenter();
+
+// Work, LTQ and the header are on by default
+ladderControl.GetViewport()!.ShowLtqColumn = false;
 ```
 
 ### Desktop (Avalonia)
@@ -396,7 +415,7 @@ core.ProcessPriceLevelUpdate(update);
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `container` | `HTMLElement` | **required** | DOM element to render into |
-| `width` | `number` | auto | Canvas width in pixels |
+| `width` | `number` | auto | Starting canvas width in pixels. By default it fits the columns at their default widths. The canvas follows the columns as they widen to fit their text, and doesn't change with the container |
 | `height` | `number` | `600` | Canvas height in pixels |
 | `rowHeight` | `number` | `24` | Height of each price row in pixels |
 | `visibleLevels` | `number` | `50` | Number of price levels to track |
@@ -406,11 +425,15 @@ core.ProcessPriceLevelUpdate(update);
 | `readOnly` | `boolean` | `false` | Disable click interactions |
 | `showVolumeBars` | `boolean` | `true` | Show volume bar visualization |
 | `showOrderCount` | `boolean` | `true` | Show each level's order count in the qty column: `(5) 102` on bids, `102 (5)` on asks |
+| `showWorkColumn` | `boolean` | `true` | Work column left of Bid: your working orders, set with `setWorkingOrders` |
+| `showLtqColumn` | `boolean` | `true` | LTQ column right of Ask: the last trade from `processTrade` |
+| `showHeader` | `boolean` | `true` | Column titles above the rows |
 | `mboOrderSizeFilter` | `number` | `0` | Minimum order size to display in MBO mode |
 | `removalMode` | `'showEmpty' \| 'removeRow'` | `'removeRow'` | How to handle empty price levels |
 | `autoCenter` | `boolean` | `true` | Keep the bid/ask midpoint on the middle row. Wheel scroll is off while enabled. When disabled, Space or middle-click re-centers (on a qty column, only when `onLevelClick` doesn't handle it) |
-| `colors` | `CanvasColors` | (see below) | Custom color scheme |
+| `colors` | `Partial<CanvasColors>` | (see below) | Custom colors, merged over the defaults |
 | `onLevelClick` | `function` | - | Called with the price, side and mouse button when a qty column is clicked. Return `true` if handled |
+| `onWorkClick` | `function` | - | Called with the row's price and mouse button when a Work cell is clicked. Return `true` if handled |
 | `onPriceHover` | `function` | - | Callback when price is hovered |
 
 ### Default Colors
@@ -426,7 +449,14 @@ const DEFAULT_COLORS = {
     text: '#e0e0e0',             // Text color
     gridLine: '#444444',         // Grid lines
     ownOrderBorder: '#ffd700',   // Own order highlight (gold)
-    hoverBackground: 'rgba(255, 255, 255, 0.1)'
+    hoverBackground: 'rgba(255, 255, 255, 0.1)',
+    headerBackground: '#2b2b2b', // Header row
+    workBackground: '#252525',   // Work column
+    ltqBackground: '#252525',    // LTQ column
+    ltqBuyBackground: '#4caf50', // LTQ cell, buyer aggressor (green)
+    ltqSellBackground: '#f44336', // LTQ cell, seller aggressor (red)
+    ltqUnknownBackground: '#ffffff', // LTQ cell, aggressor unknown (white)
+    ltqText: '#000000'           // LTQ cell text
 };
 ```
 
@@ -441,6 +471,12 @@ const DEFAULT_COLORS = {
 | `setDataMode` | `'PriceLevel' \| 'MBO'` | `void` | Switch data mode |
 | `setShowVolumeBars` | `boolean` | `void` | Toggle volume bars |
 | `setShowOrderCount` | `boolean` | `void` | Toggle the order count in the qty column |
+| `setShowWorkColumn` | `boolean` | `void` | Toggle the Work column |
+| `setShowLtqColumn` | `boolean` | `void` | Toggle the LTQ column |
+| `setShowHeader` | `boolean` | `void` | Toggle the header row |
+| `setWorkingOrders` | `price, side, quantity, count` | `void` | Set your working orders at a price, shown in the Work column. Quantity 0 clears it. Kept apart from the book, so it shows before market data has the level |
+| `processTrade` | `Trade` | `void` | Show a trade in the LTQ column. Only the last trade is shown |
+| `displayPrice` | `price, side` | `number` | The row price an order at `price` on `side` shows on: its display bucket when `displayTickSize` aggregates (bids round down, asks up). Match `onWorkClick` prices with your orders through it |
 | `setRemovalMode` | `'showEmpty' \| 'removeRow'` | `void` | Set how empty price levels are displayed |
 | `setAutoCenter` | `boolean` | `void` | Toggle auto-center (enabling re-centers immediately) |
 | `getAutoCenter` | - | `boolean` | Whether auto-center is on |
@@ -491,6 +527,17 @@ interface OrderUpdate {
     priority: number;
 }
 
+interface WorkingOrders {
+    quantity: number;
+    count: number;
+}
+
+interface Trade {
+    price: number;
+    quantity: number;
+    aggressor?: Side | null; // BID: buyer lifted the ask, ASK: seller hit the bid, null: unknown
+}
+
 interface RenderMetrics {
     fps: number;
     frameTime: number;
@@ -507,6 +554,7 @@ Fired when a quantity column is clicked with the left, middle or right button (u
 - Clicking on **BID qty column** triggers a BUY
 - Clicking on **ASK qty column** triggers a SELL
 - Return `true` when you handle the click. A middle-click you don't handle re-centers the ladder, like a middle-click anywhere else.
+- Clicks on the header row aren't level clicks.
 
 ```typescript
 onLevelClick: (price: number | null, side: Side, button: ClickButton) => boolean | void
@@ -517,6 +565,15 @@ onLevelClick: (price: number | null, side: Side, button: ClickButton) => boolean
 | `price` | `number \| null` | The price level that was clicked, `null` for an empty row |
 | `side` | `Side` | `Side.ASK` for BUY, `Side.BID` for SELL |
 | `button` | `ClickButton` | `Left`, `Middle` or `Right` |
+
+#### onWorkClick
+Fired when a Work cell is clicked with the left, middle or right button (unless `readOnly` is `true`), for example to cancel your orders at that price.
+
+```typescript
+onWorkClick: (price: number | null, button: ClickButton) => boolean | void
+```
+
+`price` is the row's price: its level's price, or in Show Empty Rows the row's own price, since working orders can sit on a price with no level. It's `null` on a Remove Rows row with no level. With `displayTickSize` aggregating, it's the bucket's price, so find your orders on the row with `ladder.displayPrice(order.price, order.side) === price`. Return `true` when you handle the click. A middle-click you don't handle re-centers the ladder.
 
 #### onPriceHover
 Fired when the mouse hovers over a price level.
@@ -546,6 +603,25 @@ viewModel.OnLevelClick += (LevelClickEventArgs trade) =>
 | `Side` | `Side` | `Side.ASK` for BUY, `Side.BID` for SELL |
 | `Button` | `ClickButton` | `Left`, `Middle` or `Right` |
 | `Handled` | `bool` | Set it to `true` when you handle the click. A middle-click left unhandled re-centers the ladder |
+
+#### OnWorkClick
+Fired when a Work cell is clicked, with `WorkClickEventArgs`: `Price` (the row's price, as on web), `Button` and `Handled`.
+
+```csharp
+viewModel.OnWorkClick += work =>
+{
+    // DisplayPrice maps an order to its row's price (its bucket when DisplayTickSize aggregates)
+    var orders = myOrders.Where(order => viewModel.DisplayPrice(order.Price, order.Side) == work.Price);
+    CancelOrders(orders);
+    work.Handled = true;
+};
+```
+
+A custom host can route its own clicks with `viewModel.HandleClick(viewport, x, y, button)`, which raises `OnLevelClick` for a qty cell and `OnWorkClick` for a Work cell.
+
+### Work and LTQ Cells
+
+Working orders and the last trade sit on the row of their price. With `displayTickSize` above `tickSize`, working orders bucket like their side's levels (bids down, asks up). A trade rounds up when the buyer was the aggressor, down for the seller, and to the nearest bucket when unknown. In Remove Rows mode a price only has a row while it has a level, so a trade that took out its level isn't shown.
 
 ## Architecture
 
@@ -764,6 +840,8 @@ The demo applications include:
 - Tick size configuration
 - Update rate slider (10 - 10,000 updates/sec)
 - Volume bars and order count toggles
+- Work, LTQ and header toggles. Clicking a qty cell places a working order that's pulled a few seconds later, and clicking a Work cell cancels the orders on that row
+- Simulated trades for the LTQ column
 - Auto-center toggle
 - Real-time performance metrics
 

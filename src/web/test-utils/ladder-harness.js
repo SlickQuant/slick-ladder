@@ -23,10 +23,14 @@ function fakeContext(canvas) {
     return ctx;
 }
 
-// Screen model: per row of a canvas, the text, bars and borders on it, each keyed by its x.
-// Background fills wipe what they cover (inside the clip) and drawImage copies whole rows, so
-// two canvases' models compare incremental rendering with a full redraw without real pixels
+// Screen model: per row of a canvas, the text (with its color), bars, LTQ cell fills and borders
+// on it, each keyed by its x. Background fills wipe what they cover (inside the clip) and
+// drawImage copies whole rows, so two canvases' models compare incremental rendering with a full
+// redraw without real pixels. Row 0 is the header when the ladder has one
 function trackScreen(ctx, canvas, { rowHeight, colors }) {
+    // Bars and LTQ fills share colors, so both are recorded as fills
+    const fills = new Set([colors.bidBar, colors.askBar, colors.ltqBuyBackground, colors.ltqSellBackground,
+        colors.ltqUnknownBackground]);
     const rows = canvas.rows = new Map();
     const saved = [];
     let clip = null;
@@ -58,11 +62,11 @@ function trackScreen(ctx, canvas, { rowHeight, colors }) {
                 const items = rows.get(row);
                 if (items) rows.set(row, items.filter((item) => parseFloat(item) < x0 || parseFloat(item) >= x1));
             });
-        } else if (this.fillStyle === colors.bidBar || this.fillStyle === colors.askBar) {
-            add(x, y, `bar ${this.fillStyle} ${width.toFixed(2)}`);
+        } else if (fills.has(this.fillStyle)) {
+            add(x, y, `fill ${this.fillStyle} ${width.toFixed(2)}`);
         }
     };
-    ctx.fillText = function (text, x, y) { add(x, y, `text ${this.font} ${text}`); };
+    ctx.fillText = function (text, x, y) { add(x, y, `text ${this.font} ${this.fillStyle} ${text}`); };
     ctx.strokeRect = function (x, y) { add(x, y, `border ${this.strokeStyle}`); };
     // Row-aligned, full-width copies: drawImage(source, dx, dy) or the 8-argument form
     ctx.drawImage = (source, ...args) => {
@@ -111,10 +115,14 @@ globalThis.document = { createElement: () => fakeCanvas() };
 globalThis.OffscreenCanvas = class {
     getContext() { return fakeContext(this); }
 };
+// Observers are kept so resizeContainers() can fire them, as a container resize does
+const resizeCallbacks = new Set();
 globalThis.ResizeObserver = class {
-    observe() {}
-    disconnect() {}
+    constructor(callback) { this.callback = callback; }
+    observe() { resizeCallbacks.add(this.callback); }
+    disconnect() { resizeCallbacks.delete(this.callback); }
 };
+const resizeContainers = () => { for (const callback of resizeCallbacks) callback([]); };
 globalThis.requestAnimationFrame = () => 0; // Tests render explicitly, no loop
 globalThis.cancelAnimationFrame = noop;
 globalThis.localStorage = { getItem: () => null, setItem: noop };
@@ -127,4 +135,4 @@ const render = (ladder) => ladder.renderer.render(ladder.getSnapshot());
 // One rAF frame as the render loop runs it: idle ladders skip the snapshot and render
 const frame = (ladder) => ladder.renderFrame();
 
-module.exports = { ...require('../.test-build/main.js'), fakeContainer, render, frame, trackScreens, screenRows };
+module.exports = { ...require('../.test-build/main.js'), fakeContainer, render, frame, trackScreens, screenRows, resizeContainers };

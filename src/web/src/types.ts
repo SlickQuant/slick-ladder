@@ -37,6 +37,20 @@ export interface Order {
     isOwnOrder?: boolean;
 }
 
+// Our own working orders at one price: their total quantity and how many there are
+export interface WorkingOrders {
+    quantity: number;
+    count: number;
+}
+
+// A trade from the feed. aggressor is the side that crossed the spread (BID = buyer lifted the
+// ask, ASK = seller hit the bid), null or missing when unknown
+export interface Trade {
+    price: number;
+    quantity: number;
+    aggressor?: Side | null;
+}
+
 export interface SegmentRenderState {
     basePixelsPerUnit: number;      // Auto-calculated from max order quantity
     userScaleFactor: number;        // 1.0 default (0.1 to 1000.0 range)
@@ -70,6 +84,11 @@ export interface OrderBookSnapshot {
     // MBO mode: Individual orders per price level (null in PriceLevel mode)
     bidOrders?: Map<number, Order[]> | null;
     askOrders?: Map<number, Order[]> | null;
+
+    // Our own working orders by price (Work column) and the last trade (LTQ column)
+    bidWork?: Map<number, WorkingOrders> | null;
+    askWork?: Map<number, WorkingOrders> | null;
+    lastTrade?: Trade | null;
 }
 
 export interface PriceLadderConfig {
@@ -84,12 +103,16 @@ export interface PriceLadderConfig {
     readOnly?: boolean;
     showVolumeBars?: boolean;
     showOrderCount?: boolean; // Order count in the qty column: "(5) 102" on bids, "102 (5)" on asks. Default: true
+    showWorkColumn?: boolean; // Work column left of Bid: our working orders as "10 (2)". Default: true
+    showLtqColumn?: boolean; // LTQ column right of Ask: the last trade's quantity on its price. Default: true
+    showHeader?: boolean; // Column titles above the rows. Default: true
     mboOrderSizeFilter?: number;
     removalMode?: 'showEmpty' | 'removeRow';
     autoCenter?: boolean; // Keep the bid/ask midpoint on the middle row, default: true. When off, Space or middle-click re-centers
     minQuantityThreshold?: number; // Minimum quantity to display (filters out 0 and near-zero quantities), default: 0.0001
-    colors?: CanvasColors;
+    colors?: Partial<CanvasColors>; // Merged over DEFAULT_COLORS
     onLevelClick?: (price: number | null, side: Side, button: ClickButton) => boolean | void; // Return true when handled. An unhandled middle-click re-centers
+    onWorkClick?: (price: number | null, button: ClickButton) => boolean | void; // Work cell clicked, with its row's price. Return true when handled. An unhandled middle-click re-centers
     onPriceHover?: (price: number | null) => void;
 }
 
@@ -125,6 +148,13 @@ export interface CanvasColors {
     gridLine: string;           // Grid line color
     ownOrderBorder: string;     // Border color for own orders
     hoverBackground: string;    // Hover overlay color
+    headerBackground: string;   // Header row
+    workBackground: string;     // Work column
+    ltqBackground: string;      // LTQ column
+    ltqBuyBackground: string;   // LTQ cell, buyer was the aggressor
+    ltqSellBackground: string;  // LTQ cell, seller was the aggressor
+    ltqUnknownBackground: string; // LTQ cell, aggressor unknown
+    ltqText: string;            // LTQ cell text
 }
 
 export const COL_WIDTH = 66.7;
@@ -160,5 +190,12 @@ export const DEFAULT_COLORS: CanvasColors = {
     text: '#e0e0e0',
     gridLine: '#444444',          // More visible grid lines
     ownOrderBorder: '#ffd700',
-    hoverBackground: 'rgba(255, 255, 255, 0.1)'
+    hoverBackground: 'rgba(255, 255, 255, 0.1)',
+    headerBackground: '#2b2b2b',
+    workBackground: '#252525',
+    ltqBackground: '#252525',
+    ltqBuyBackground: '#4caf50',
+    ltqSellBackground: '#f44336',
+    ltqUnknownBackground: '#ffffff',
+    ltqText: '#000000'
 };

@@ -83,8 +83,30 @@ public class UpdateBatcher
         }
 
         _pendingUpdateCount++;
+        FlushIfDue();
+        return true;
+    }
 
-        // Check if we should flush
+    /// <summary>
+    /// Count a change made outside the queues (a trade) as a pending update, so the next flush
+    /// emits a snapshot even when no level changed. Flushes like a queued update when a batch is due.
+    /// Returns false while paused
+    /// </summary>
+    public bool MarkPending()
+    {
+        if (_isPaused)
+        {
+            return false;
+        }
+
+        _pendingUpdateCount++;
+        FlushIfDue();
+        return true;
+    }
+
+    // Flush when the batch is full or its time window has passed
+    private void FlushIfDue()
+    {
         var elapsedTicks = _batchTimer.ElapsedTicks - _lastFlushTicks;
         var elapsedMicroseconds = elapsedTicks / TICKS_PER_MICROSECOND;
 
@@ -92,8 +114,6 @@ public class UpdateBatcher
         {
             FlushBatch();
         }
-
-        return true;
     }
 
     /// <summary>
@@ -163,16 +183,7 @@ public class UpdateBatcher
         }
 
         _pendingUpdateCount++;
-
-        // Check if we should flush
-        var elapsedTicks = _batchTimer.ElapsedTicks - _lastFlushTicks;
-        var elapsedMicroseconds = elapsedTicks / TICKS_PER_MICROSECOND;
-
-        if (_pendingUpdateCount >= MAX_BATCH_SIZE || elapsedMicroseconds >= BATCH_INTERVAL_MICROSECONDS)
-        {
-            FlushBatch();
-        }
-
+        FlushIfDue();
         return true;
     }
 

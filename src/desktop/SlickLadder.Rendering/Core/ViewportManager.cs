@@ -15,17 +15,23 @@ public class ViewportManager
     public int Height { get; set; }
 
     // Column layout (MUST match web version exactly!)
-    // Order: Bid Qty | Price | Ask Qty | Volume Bars
+    // Order: Work | Bid Qty | Price | Ask Qty | LTQ | Volume Bars, optional ones when enabled.
+    // Each x is the sum of the widths left of it, so the column fills tile edge to edge
     // Dynamic quantity column width (default to standard column width)
     public float QtyColWidth { get; set; } = RenderConfig.ColumnWidth;
     // Dynamic price column width (default to standard column width)
     public float PriceColWidth { get; set; } = RenderConfig.ColumnWidth;
+    // Dynamic Work and LTQ column widths, set by the renderer to fit their cells
+    public float WorkColWidth { get; set; } = RenderConfig.ColumnWidth;
+    public float LtqColWidth { get; set; } = RenderConfig.ColumnWidth;
 
-    public float BidQtyColumnX => 0;
-    public float PriceColumnX => QtyColWidth;
-    public float AskQtyColumnX => QtyColWidth + PriceColWidth;
+    public float? WorkColumnX => ShowWorkColumn ? 0 : null;
+    public float BidQtyColumnX => ShowWorkColumn ? WorkColWidth : 0;
+    public float PriceColumnX => BidQtyColumnX + QtyColWidth;
+    public float AskQtyColumnX => PriceColumnX + PriceColWidth;
+    public float? LtqColumnX => ShowLtqColumn ? AskQtyColumnX + QtyColWidth : null;
 
-    public float? VolumeBarColumnX => ShowVolumeBars ? GetFixedColumnsWidth() : null;
+    public float? VolumeBarColumnX => ShowVolumeBars ? FixedColumnsWidth : null;
 
     /// <summary>
     /// Side of the quantity column under x, null outside both
@@ -37,8 +43,10 @@ public class ViewportManager
         return null;
     }
 
-    // Bid Qty + Price + Ask Qty, all dynamic
-    private float GetFixedColumnsWidth() => QtyColWidth + PriceColWidth + QtyColWidth;
+    /// <summary>
+    /// Right edge of the columns left of the bars: Work through LTQ, all dynamic
+    /// </summary>
+    public float FixedColumnsWidth => ShowLtqColumn ? LtqColumnX!.Value + LtqColWidth : AskQtyColumnX + QtyColWidth;
 
     // Responsive bar column width: fills remaining canvas width (min 100px)
     public float VolumeBarMaxWidth
@@ -46,7 +54,7 @@ public class ViewportManager
         get
         {
             if (!ShowVolumeBars) return 0;
-            var fixedColumnsWidth = GetFixedColumnsWidth();
+            var fixedColumnsWidth = FixedColumnsWidth;
             var barColumnWidth = Math.Max(RenderConfig.MinBarColumnWidth, Width - fixedColumnsWidth);
             return barColumnWidth;
         }
@@ -66,6 +74,9 @@ public class ViewportManager
     // Feature toggles
     public bool ShowVolumeBars { get; set; } = true;
     public bool ShowOrderCount { get; set; } = false; // In the qty column: "(5) 102" on bids, "102 (5)" on asks
+    public bool ShowWorkColumn { get; set; } = true; // Our working orders as "10 (2)", left of Bid Qty
+    public bool ShowLtqColumn { get; set; } = true; // The last trade's quantity on its price, right of Ask Qty
+    public bool ShowHeader { get; set; } = true; // Column titles above the rows
     public LevelRemovalMode RemovalMode { get; set; } = LevelRemovalMode.RemoveRow;
 
     // Price configuration
@@ -85,6 +96,76 @@ public class ViewportManager
 
     // Constants
     private const int RowHeight = RenderConfig.RowHeight;
+
+    /// <summary>Header height in pixels, 0 without one. Rows start below it</summary>
+    public int HeaderHeight => ShowHeader ? RowHeight : 0;
+
+    /// <summary>Rows below the header, counting one cut off at the bottom (the renderer's visible rows)</summary>
+    public int RowCount => Math.Max(0, (Height - HeaderHeight + RowHeight - 1) / RowHeight);
+
+    /// <summary>Y of a row's top edge</summary>
+    public int RowTop(int rowIndex) => HeaderHeight + rowIndex * RowHeight;
+
+    /// <summary>
+    /// A Work cell at x
+    /// </summary>
+    public bool WorkColumnAt(float x) => ShowWorkColumn && x >= 0 && x < WorkColWidth;
+
+    /// <summary>
+    /// Price of the level drawn at y, null on the header, an empty row or below the rows. Lays the
+    /// rows out as SkiaRenderer does (mirrors rowToLevelInfo in canvas-renderer.ts)
+    /// </summary>
+    public decimal? LevelPriceAt(in OrderBookSnapshot snapshot, float y) => PriceAt(snapshot, y, rowLabel: false);
+
+    /// <summary>
+    /// Price of the row at y as drawn: its level's price, else in Show Empty Rows the row's own
+    /// price, which holds working orders even without a level. Null on the header, below the rows
+    /// or on a Remove Rows row with no level (mirrors rowPrice in canvas-renderer.ts)
+    /// </summary>
+    public decimal? RowPriceAt(in OrderBookSnapshot snapshot, float y) => PriceAt(snapshot, y, rowLabel: true);
+
+    // rowLabel: a Show Empty Rows row with no level gives its own price
+    private decimal? PriceAt(in OrderBookSnapshot snapshot, float y, bool rowLabel)
+    {
+        if (y < HeaderHeight)
+        {
+            return null;
+        }
+        var rowIndex = (int)((y - HeaderHeight) / RowHeight);
+        var rowCount = RowCount;
+        if (rowIndex >= rowCount)
+        {
+            return null;
+        }
+        var midRow = rowCount / 2;
+
+        if (RemovalMode == LevelRemovalMode.RemoveRow)
+        {
+            var layout = DensePackingLayout.Build(
+                SkiaRenderer.NonEmptyLevels(snapshot.Asks, SkiaRenderer.LevelStats.Scan(snapshot.Asks)),
+                SkiaRenderer.NonEmptyLevels(snapshot.Bids, SkiaRenderer.LevelStats.Scan(snapshot.Bids)),
+                DensePackingScrollOffset, rowCount, midRow);
+            return layout.LevelAt(rowIndex)?.Price;
+        }
+
+        // Show Empty Rows: a level is on the row its price maps to, as SkiaRenderer.PlaceLevels puts
+        // it, and the row's own price is its label
+        var referencePrice = CenterPrice != 0 ? CenterPrice : (snapshot.MidPrice ?? 50000m);
+        return LevelOnRow(snapshot.Asks, rowIndex, midRow, referencePrice) ?? LevelOnRow(snapshot.Bids, rowIndex, midRow, referencePrice) ??
+            (rowLabel ? Math.Round((referencePrice - (rowIndex - midRow) * DisplayTickSize) / DisplayTickSize) * DisplayTickSize : null);
+    }
+
+    private decimal? LevelOnRow(BookLevel[] levels, int rowIndex, int midRow, decimal referencePrice)
+    {
+        foreach (ref readonly var level in levels.AsSpan())
+        {
+            if (level.Quantity > 0 && midRow - (int)Math.Round((level.Price - referencePrice) / DisplayTickSize) == rowIndex)
+            {
+                return level.Price;
+            }
+        }
+        return null;
+    }
 
     /// <summary>
     /// Get the visible price range for viewport culling

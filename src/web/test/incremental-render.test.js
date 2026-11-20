@@ -4,8 +4,8 @@
 // Mirrors tests/SlickUI.Core.Tests/IncrementalRenderTests.cs
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { PriceLadder, Side, OrderUpdateType, fakeContainer, frame, render, trackScreens, screenRows } =
-    require('../test-utils/ladder-harness');
+const { PriceLadder, Side, OrderUpdateType, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, fakeContainer, frame, render, trackScreens,
+    screenRows, resizeContainers } = require('../test-utils/ladder-harness');
 const { Feed, seededRandom, TICK_SIZE } = require('../test-utils/random-feed');
 
 trackScreens();
@@ -18,7 +18,7 @@ const create = (config) => new PriceLadder({ container: fakeContainer(400), heig
 
 // Counts what the incremental ladder did, so a pass means those paths ran
 function spy(renderer) {
-    const counts = { full: 0, moved: 0, shifted: 0 };
+    const counts = { full: 0, moved: 0, shifted: 0, work: 0, ltq: 0 };
     for (const [name, key] of [['renderFull', 'full'], ['moveRows', 'moved']]) {
         const original = renderer[name].bind(renderer);
         renderer[name] = (...args) => { counts[key]++; return original(...args); };
@@ -31,6 +31,21 @@ function spy(renderer) {
         return shifted;
     };
     return counts;
+}
+
+// Working orders and a trade near the mid tick, so Work and LTQ cells come and go, move rows and
+// resize their columns
+function workAndTrades(ladder, i, mid) {
+    if (i % 5 === 0) {
+        const side = i % 2 ? Side.BID : Side.ASK;
+        const tick = side === Side.BID ? mid - 1 - (i % 4) : mid + 1 + (i % 4);
+        const quantity = i % 15 === 0 ? 0 : 10 ** (i % 6);
+        ladder.setWorkingOrders(tick * TICK_SIZE, side, quantity, 1 + (i % 3));
+    }
+    if (i % 3 === 0) {
+        const aggressor = [Side.BID, Side.ASK, null][i % 9 / 3];
+        ladder.processTrade({ price: (mid + (i % 7) - 3) * TICK_SIZE, quantity: 1 + (i * 37) % 2000, aggressor });
+    }
 }
 
 // Runs `frames` frames: step(ladder, frame) changes both ladders' books the same way, then the
@@ -46,15 +61,19 @@ function assertMatchesFullRedraw(config, frames, step) {
         reference.renderer.needsFullRedraw = true;
         frame(reference);
         assert.deepEqual(screenRows(ladder.canvas, ROWS), screenRows(reference.canvas, ROWS), `frame ${i}`);
+        // Frames with Work or LTQ cells on screen
+        counts.work += ladder.renderer.rows.some((row) => row.workCount > 0) ? 1 : 0;
+        counts.ltq += ladder.renderer.rows.some((row) => row.ltqQuantity > 0) ? 1 : 0;
     }
     assert.ok(counts.full < frames / 2, `${counts.full} of ${frames} frames were full redraws`);
     return counts;
 }
 
 for (const removalMode of ['removeRow', 'showEmpty']) {
-    for (const showOrderCount of [true, false]) {
-        const config = { removalMode, showOrderCount };
-        const name = `${removalMode}, order count ${showOrderCount}`;
+    for (const [showOrderCount, showHeader] of [[true, true], [false, false]]) {
+        // Header off also hides the Work and LTQ columns: the layout before they existed
+        const config = { removalMode, showOrderCount, showHeader, showWorkColumn: showHeader, showLtqColumn: showHeader };
+        const name = `${removalMode}, order count ${showOrderCount}, header ${showHeader}`;
 
         // Levels come and go, the mid walks, and own orders get flagged: rows move (Remove Rows)
         // or the canvas shifts (Show Empty Rows), and bars rescale. The second height cuts off
@@ -75,14 +94,16 @@ for (const removalMode of ['removeRow', 'showEmpty']) {
                         const tick = side === Side.BID ? feed.mid - 1 - (i % 5) : feed.mid + 1 + (i % 5);
                         ladder.setHasOwnOrders(tick * TICK_SIZE, side, i % 3 !== 0);
                     }
+                    workAndTrades(ladder, i, feed.mid);
                 });
                 assert.ok(removalMode === 'removeRow' ? counts.moved > 0 : counts.shifted > 0, JSON.stringify(counts));
+                assert.ok(!showHeader || (counts.work > 30 && counts.ltq > 30), JSON.stringify(counts));
             });
         }
 
         test(`${name}: random MBO orders match a full redraw every frame`, () => {
             const books = new Map();
-            assertMatchesFullRedraw({ ...config, mode: 'MBO' }, 200, (ladder, i) => {
+            const counts = assertMatchesFullRedraw({ ...config, mode: 'MBO' }, 200, (ladder, i) => {
                 // Same seed per ladder, so both get the same orders
                 if (!books.has(ladder)) books.set(ladder, { random: seededRandom(11), orders: new Map(), nextId: 1 });
                 const book = books.get(ladder);
@@ -108,7 +129,9 @@ for (const removalMode of ['removeRow', 'showEmpty']) {
                         }
                     }
                 }
+                workAndTrades(ladder, i, 10000);
             });
+            assert.ok(!showHeader || (counts.work > 30 && counts.ltq > 30), JSON.stringify(counts));
         });
     }
 }
@@ -120,9 +143,12 @@ test('a row cut off at the bottom shows its level', () => {
         const ladder = create({ removalMode, height: 10 * 24 + 10 });
         ladder.processBatch(new Feed(3).seed());
         frame(ladder);
-        const cutOff = screenRows(ladder.canvas, 11)[10];
+        const { renderer } = ladder;
+        const last = renderer.rowCount() - 1;
+        assert.ok(renderer.rowTop(last) + renderer.rowHeight > renderer.height, 'last row is cut off');
+        const cutOff = screenRows(ladder.canvas, 11)[renderer.rowTop(last) / renderer.rowHeight];
         assert.ok(cutOff.some((item) => item.includes(' text ')), `${removalMode}: ${cutOff}`);
-        assert.notEqual(ladder.renderer.rowToLevelInfo(10), null, `${removalMode}: click on it`);
+        assert.notEqual(renderer.rowToLevelInfo(last), null, `${removalMode}: click on it`);
     }
 });
 
@@ -200,27 +226,29 @@ test('MBO segments repaint when a level total stays the same', () => {
     }
 });
 
-// Bug: a container resize sets canvas.width, which clears the canvas, then rendered only rows
-// with changes, so an idle ladder stayed blank
-test('a container resize repaints every row', () => {
+// Bug: a container resize set the canvas width itself, stretching the bar column to the
+// container, but the renderer kept drawing at its old width and the rest of the canvas showed
+// black. The ladder now keeps its own width (its columns and the bar column) whatever the
+// container does
+test('a container resize leaves the canvas at the width the renderer draws', () => {
     for (const removalMode of ['removeRow', 'showEmpty']) {
         const container = fakeContainer(400);
-        const create = () => new PriceLadder({ container, height: HEIGHT, tickSize: TICK_SIZE, removalMode });
-        const [ladder, reference] = [create(), create()];
-        for (const l of [ladder, reference]) {
-            const feed = new Feed(3);
-            l.processBatch(feed.seed());
-            frame(l);
-        }
+        const ladder = new PriceLadder({ container, height: HEIGHT, tickSize: TICK_SIZE, removalMode });
+        ladder.processBatch(new Feed(3).seed());
+        frame(ladder);
+        const { renderer } = ladder;
+        const width = ladder.canvas.width;
+        assert.equal(width, renderer.width, removalMode);
+        assert.equal(width, Math.round(renderer.getColumnPositions().barX + COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER),
+            `${removalMode}: the columns and the bar column`);
 
-        container.clientWidth = 500;
-        ladder.handleResize();
-        reference.handleResize();
-        reference.renderer.needsFullRedraw = true;
-        frame(reference);
-        const rows = screenRows(ladder.canvas, ROWS);
-        assert.ok(rows.flat().length > 0, `${removalMode}: blank after resize`);
-        assert.deepEqual(rows, screenRows(reference.canvas, ROWS), removalMode);
+        for (const clientWidth of [1200, 300]) {
+            container.clientWidth = clientWidth;
+            resizeContainers();
+            frame(ladder);
+            assert.equal(ladder.canvas.width, width, `${removalMode}: container ${clientWidth}`);
+            assert.equal(renderer.width, width, `${removalMode}: container ${clientWidth}`);
+        }
     }
 });
 

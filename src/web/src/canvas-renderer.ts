@@ -40,14 +40,23 @@ type RowState = {
     ask: RowLevel;
     bid: RowLevel;
     overlaps: RowLevel[] | null;  // More levels on this row, always redrawn
+    workQuantity: number;         // Our working orders on this row's price, 0 for none
+    workCount: number;
+    workSides: number;            // WORK_BUY | WORK_SELL
+    ltqQuantity: number;          // Last trade on this row's price, 0 for none
+    ltqAggressor: number;         // Side, -1 when unknown
 };
+
+const WORK_BUY = 1;
+const WORK_SELL = 2;
 
 const createLevel = (side: Side): RowLevel => ({
     present: false, side, price: 0, quantity: 0, numOrders: 0, hasOwnOrders: false, orders: undefined, bar: 0
 });
 
 const createRow = (): RowState => ({
-    drawn: false, label: NaN, ask: createLevel(Side.ASK), bid: createLevel(Side.BID), overlaps: null
+    drawn: false, label: NaN, ask: createLevel(Side.ASK), bid: createLevel(Side.BID), overlaps: null,
+    workQuantity: 0, workCount: 0, workSides: 0, ltqQuantity: 0, ltqAggressor: -1
 });
 
 // Overlaps are never changed once built, so they can be shared
@@ -61,11 +70,18 @@ function resetRow(row: RowState, label: number): void {
     row.bid.present = false;
     row.bid.orders = undefined;
     row.overlaps = null;
+    row.workQuantity = 0;
+    row.workCount = 0;
+    row.workSides = 0;
+    row.ltqQuantity = 0;
+    row.ltqAggressor = -1;
 }
 
 // Rows that draw the same pixels
 function sameRow(a: RowState, b: RowState, compareBars: boolean): boolean {
     return a.drawn && b.drawn && a.overlaps === null && b.overlaps === null && Object.is(a.label, b.label) &&
+        a.workQuantity === b.workQuantity && a.workCount === b.workCount && a.workSides === b.workSides &&
+        a.ltqQuantity === b.ltqQuantity && a.ltqAggressor === b.ltqAggressor &&
         sameLevel(a.ask, b.ask, compareBars) && sameLevel(a.bid, b.bid, compareBars);
 }
 
@@ -277,14 +293,28 @@ class MaxOrderScan {
 }
 
 type ColumnPositions = {
+    readonly workX: number;       // -1 when hidden
     readonly bidQtyX: number;
     readonly priceX: number;
     readonly askQtyX: number;
-    readonly barX: number;
+    readonly ltqX: number;        // -1 when hidden
+    readonly barX: number;        // -1 when hidden
     // What they were computed from
     readonly showVolumeBars: boolean;
     readonly qtyColWidth: number;
     readonly priceColWidth: number;
+    readonly workColWidth: number;
+    readonly ltqColWidth: number;
+};
+
+/**
+ * Optional columns and the header, fixed for a renderer's life (the ladder makes a new renderer
+ * when one is toggled)
+ */
+export type LayoutOptions = {
+    showWorkColumn?: boolean; // Default true
+    showLtqColumn?: boolean;  // Default true
+    showHeader?: boolean;     // Default true
 };
 
 /**
@@ -324,6 +354,8 @@ export class CanvasRenderer {
     private lastHeight: number = 0;
     private lastQtyColWidth: number = 0;
     private lastPriceColWidth: number = 0;
+    private lastWorkColWidth: number = 0;
+    private lastLtqColWidth: number = 0;
     private lastBarColumnWidth: number = 0;
     private lastMboOrderSizeFilter: number = 0;
     private lastSegmentPixelsPerUnit: number = 0;
@@ -341,6 +373,9 @@ export class CanvasRenderer {
     // Layout configuration
     private showVolumeBars: boolean = true;
     private showOrderCount: boolean = true; // In the qty column: "(5) 102" on bids, "102 (5)" on asks
+    private readonly showWorkColumn: boolean;
+    private readonly showLtqColumn: boolean;
+    private readonly headerHeight: number; // 0 without a header. Rows start below it
 
     private mboOrderSizeFilter: number;
     private minQuantityThreshold: number;
@@ -348,6 +383,8 @@ export class CanvasRenderer {
     // Dynamic column widths
     private qtyColWidth: number = COL_WIDTH; // Dynamic quantity column width
     private priceColWidth: number = COL_WIDTH; // Dynamic price column width
+    private workColWidth: number = COL_WIDTH;
+    private ltqColWidth: number = COL_WIDTH;
 
     // Largest level quantity, the volume bar scale (0 when bars are hidden)
     private maxQuantity: number = 0;
@@ -388,7 +425,8 @@ export class CanvasRenderer {
         tickSize: number = 0.01,
         mboOrderSizeFilter: number = DEFAULT_MBO_ORDER_SIZE_FILTER,
         minQuantityThreshold: number = DEFAULT_MIN_QUANTITY_THRESHOLD,
-        displayTickSize: number = tickSize
+        displayTickSize: number = tickSize,
+        layout: LayoutOptions = {}
     ) {
         this.canvas = canvas;
         this.width = width;
@@ -397,13 +435,16 @@ export class CanvasRenderer {
         this.colors = colors;
         this.showVolumeBars = showVolumeBars;
         this.showOrderCount = showOrderCount;
+        this.showWorkColumn = layout.showWorkColumn ?? true;
+        this.showLtqColumn = layout.showLtqColumn ?? true;
+        this.headerHeight = (layout.showHeader ?? true) ? rowHeight : 0;
         this.tickSize = tickSize;
         this.displayTickSize = Math.max(tickSize, displayTickSize);
         this.updatePriceFormat();
         this.mboOrderSizeFilter = Math.max(0, mboOrderSizeFilter);
         this.minQuantityThreshold = minQuantityThreshold;
         this.quantityDecimals = decimalPlaces(minQuantityThreshold);
-        this.visibleRows = Math.floor(height / rowHeight);
+        this.visibleRows = this.fullRows();
 
         // Calculate initial bar column width
         this.barColumnWidth = this.calculateBarColumnWidth();
@@ -517,6 +558,11 @@ export class CanvasRenderer {
         return side === Side.BID ? `(${numOrders}) ${text}` : `${text} (${numOrders})`;
     }
 
+    // Work cell text: "10 (2)" (mirrors SkiaRenderer.WorkText)
+    private workText(quantity: number, count: number): string {
+        return `${this.formatQuantity(quantity)} (${count})`;
+    }
+
     /**
      * Width of a column that fits text: at least COL_WIDTH, with 10px padding on each side.
      * Measuring is cached, since the widest text rarely changes
@@ -569,24 +615,51 @@ export class CanvasRenderer {
     }
 
     /**
+     * Work and LTQ column widths that fit the cells on this frame's rows (mirrors
+     * SkiaRenderer.CalculateCellColumnWidths)
+     */
+    private calculateCellColumnWidths(): [number, number] {
+        // Each cell's text is measured: a larger quantity can have shorter text ("1" vs "0.12345678").
+        // Few rows have cells, and measuring is cached
+        let workWidth = COL_WIDTH;
+        let ltqWidth = COL_WIDTH;
+        for (const row of this.nextRows) {
+            if (row.workCount > 0) {
+                workWidth = Math.max(workWidth, this.columnWidthFor(this.workText(row.workQuantity, row.workCount)));
+            }
+            if (row.ltqQuantity > 0) {
+                ltqWidth = Math.max(ltqWidth, this.columnWidthFor(this.formatQuantity(row.ltqQuantity)));
+            }
+        }
+        return [workWidth, ltqWidth];
+    }
+
+    /**
      * Get X positions for all columns. The same object until a column width or toggle changes
      */
     private getColumnPositions(): ColumnPositions {
         const cached = this.columns;
         if (cached !== null && cached.showVolumeBars === this.showVolumeBars && cached.qtyColWidth === this.qtyColWidth &&
-            cached.priceColWidth === this.priceColWidth) {
+            cached.priceColWidth === this.priceColWidth && cached.workColWidth === this.workColWidth &&
+            cached.ltqColWidth === this.ltqColWidth) {
             return cached;
         }
 
-        // Bid qty | Price | Ask qty | Volume bars (if enabled)
-        const bidQtyX = 0;
+        // Work | Bid qty | Price | Ask qty | LTQ | Volume bars, optional ones when enabled. Each x
+        // is the sum of the widths left of it, so the column fills tile edge to edge
+        const workX = this.showWorkColumn ? 0 : -1;
+        const bidQtyX = this.showWorkColumn ? this.workColWidth : 0;
         const priceX = bidQtyX + this.qtyColWidth;
         const askQtyX = priceX + this.priceColWidth;
-        const barX = this.showVolumeBars ? askQtyX + this.qtyColWidth : -1;
+        const askQtyEnd = askQtyX + this.qtyColWidth;
+        const ltqX = this.showLtqColumn ? askQtyEnd : -1;
+        const columnsEnd = this.showLtqColumn ? ltqX + this.ltqColWidth : askQtyEnd;
+        const barX = this.showVolumeBars ? columnsEnd : -1;
 
         return this.columns = {
-            bidQtyX, priceX, askQtyX, barX,
-            showVolumeBars: this.showVolumeBars, qtyColWidth: this.qtyColWidth, priceColWidth: this.priceColWidth
+            workX, bidQtyX, priceX, askQtyX, ltqX, barX,
+            showVolumeBars: this.showVolumeBars, qtyColWidth: this.qtyColWidth, priceColWidth: this.priceColWidth,
+            workColWidth: this.workColWidth, ltqColWidth: this.ltqColWidth
         };
     }
 
@@ -683,26 +756,76 @@ export class CanvasRenderer {
     private drawFullBackground(): void {
         this.offscreenCtx.fillStyle = this.colors.background;
         this.offscreenCtx.fillRect(0, 0, this.width, this.height);
-
-        // Get column positions
-        const cols = this.getColumnPositions();
-
-        // BID qty column (blue)
-        this.offscreenCtx.fillStyle = this.colors.bidQtyBackground;
-        this.offscreenCtx.fillRect(cols.bidQtyX, 0, this.qtyColWidth, this.height);
-
-        // Price column (light gray)
-        this.offscreenCtx.fillStyle = this.colors.priceBackground;
-        this.offscreenCtx.fillRect(cols.priceX, 0, this.priceColWidth, this.height);
-
-        // ASK qty column (red)
-        this.offscreenCtx.fillStyle = this.colors.askQtyBackground;
-        this.offscreenCtx.fillRect(cols.askQtyX, 0, this.qtyColWidth, this.height);
+        this.fillColumns(0, this.height);
 
         // Each row's top grid line, as drawRowBackground draws it
         this.offscreenCtx.fillStyle = this.colors.gridLine;
-        for (let y = 0; y < this.height; y += this.rowHeight) {
+        for (let y = this.headerHeight; y < this.height; y += this.rowHeight) {
             this.offscreenCtx.fillRect(0, y, this.width, 1);
+        }
+        this.drawHeader();
+    }
+
+    /**
+     * Column backgrounds from y down height pixels (mirrors SkiaRenderer.DrawColumns)
+     */
+    private fillColumns(y: number, height: number): void {
+        const ctx = this.offscreenCtx;
+        const cols = this.getColumnPositions();
+        if (cols.workX >= 0) {
+            ctx.fillStyle = this.colors.workBackground;
+            ctx.fillRect(cols.workX, y, this.workColWidth, height);
+        }
+        ctx.fillStyle = this.colors.bidQtyBackground;
+        ctx.fillRect(cols.bidQtyX, y, this.qtyColWidth, height);
+        ctx.fillStyle = this.colors.priceBackground;
+        ctx.fillRect(cols.priceX, y, this.priceColWidth, height);
+        ctx.fillStyle = this.colors.askQtyBackground;
+        ctx.fillRect(cols.askQtyX, y, this.qtyColWidth, height);
+        if (cols.ltqX >= 0) {
+            ctx.fillStyle = this.colors.ltqBackground;
+            ctx.fillRect(cols.ltqX, y, this.ltqColWidth, height);
+        }
+    }
+
+    /**
+     * Column titles over the rows (mirrors SkiaRenderer.DrawHeader). Only full redraws draw it:
+     * anything that moves a column redraws everything
+     */
+    private drawHeader(): void {
+        if (this.headerHeight === 0) {
+            return;
+        }
+        const ctx = this.offscreenCtx;
+        const cols = this.getColumnPositions();
+        ctx.fillStyle = this.colors.headerBackground;
+        ctx.fillRect(0, 0, this.width, this.headerHeight);
+
+        // A separator on both sides and each column edge, pixel aligned so it stays one sharp pixel
+        ctx.fillStyle = this.colors.gridLine;
+        const right = this.width - 1;
+        ctx.fillRect(0, 0, 1, this.headerHeight);
+        ctx.fillRect(right, 0, 1, this.headerHeight);
+        for (const x of [cols.bidQtyX, cols.priceX, cols.askQtyX, cols.ltqX, cols.barX]) {
+            if (x > 0 && x < right) {
+                ctx.fillRect(Math.floor(x), 0, 1, this.headerHeight);
+            }
+        }
+
+        ctx.fillStyle = this.colors.text;
+        ctx.textAlign = 'center';
+        const textY = this.headerHeight / 2;
+        if (cols.workX >= 0) {
+            ctx.fillText('Work', cols.workX + this.workColWidth / 2, textY);
+        }
+        ctx.fillText('Bid', cols.bidQtyX + this.qtyColWidth / 2, textY);
+        ctx.fillText('Price', cols.priceX + this.priceColWidth / 2, textY);
+        ctx.fillText('Ask', cols.askQtyX + this.qtyColWidth / 2, textY);
+        if (cols.ltqX >= 0) {
+            ctx.fillText('LTQ', cols.ltqX + this.ltqColWidth / 2, textY);
+        }
+        if (cols.barX >= 0 && cols.barX < this.width) {
+            ctx.fillText('Volume', cols.barX + (this.width - cols.barX) / 2, textY); // Centered on the part on screen
         }
     }
 
@@ -752,9 +875,13 @@ export class CanvasRenderer {
         const newQtyColWidth = this.calculateQuantityColumnWidth(maxQuantity,
             Math.max(this.bidStats.maxOrders, this.askStats.maxOrders));
         const newPriceColWidth = this.calculatePriceColumnWidth();
-        if (newQtyColWidth !== this.qtyColWidth || newPriceColWidth !== this.priceColWidth) {
+        const [newWorkColWidth, newLtqColWidth] = this.calculateCellColumnWidths();
+        if (newQtyColWidth !== this.qtyColWidth || newPriceColWidth !== this.priceColWidth ||
+            newWorkColWidth !== this.workColWidth || newLtqColWidth !== this.ltqColWidth) {
             this.qtyColWidth = newQtyColWidth;
             this.priceColWidth = newPriceColWidth;
+            this.workColWidth = newWorkColWidth;
+            this.ltqColWidth = newLtqColWidth;
             // Resize canvas to accommodate new column widths
             const newCanvasWidth = this.calculateCanvasWidth();
             if (newCanvasWidth !== this.width) {
@@ -817,6 +944,8 @@ export class CanvasRenderer {
             this.lastHeight !== this.height ||
             this.lastQtyColWidth !== this.qtyColWidth ||
             this.lastPriceColWidth !== this.priceColWidth ||
+            this.lastWorkColWidth !== this.workColWidth ||
+            this.lastLtqColWidth !== this.ltqColWidth ||
             this.lastBarColumnWidth !== this.barColumnWidth ||
             this.lastMboOrderSizeFilter !== this.mboOrderSizeFilter ||
             this.lastSegmentPixelsPerUnit !== this.segmentPixelsPerUnit() ||
@@ -837,6 +966,8 @@ export class CanvasRenderer {
         this.lastHeight = this.height;
         this.lastQtyColWidth = this.qtyColWidth;
         this.lastPriceColWidth = this.priceColWidth;
+        this.lastWorkColWidth = this.workColWidth;
+        this.lastLtqColWidth = this.ltqColWidth;
         this.lastBarColumnWidth = this.barColumnWidth;
         this.lastMboOrderSizeFilter = this.mboOrderSizeFilter;
         this.lastSegmentPixelsPerUnit = this.segmentPixelsPerUnit();
@@ -849,9 +980,19 @@ export class CanvasRenderer {
         return this.segmentState.basePixelsPerUnit * this.segmentState.userScaleFactor;
     }
 
-    // Rows on screen, counting one cut off at the bottom (mirrors SkiaRenderer's visibleRows)
+    // Rows below the header, counting one cut off at the bottom (mirrors SkiaRenderer's visibleRows)
     private rowCount(): number {
-        return Math.ceil(this.height / this.rowHeight);
+        return Math.max(0, Math.ceil((this.height - this.headerHeight) / this.rowHeight));
+    }
+
+    // Rows that fit whole below the header
+    private fullRows(): number {
+        return Math.max(0, Math.floor((this.height - this.headerHeight) / this.rowHeight));
+    }
+
+    // Y of a row's top edge (mirrors SkiaRenderer.RowTop)
+    private rowTop(rowIndex: number): number {
+        return this.headerHeight + rowIndex * this.rowHeight;
     }
 
     private markRowDirty(rowIndex: number): void {
@@ -892,6 +1033,7 @@ export class CanvasRenderer {
                     this.placeLevel(rows[rowIndex].bid, layout.nonEmptyBids[bidIndex], snapshot.bidOrders);
                 }
             }
+            this.placeCells(rows, snapshot, layout, 0, 0);
             return;
         }
 
@@ -904,6 +1046,75 @@ export class CanvasRenderer {
         }
         this.placeLevels(rows, snapshot.asks, this.askStats, snapshot.askOrders, Side.ASK, midRow, referencePrice);
         this.placeLevels(rows, snapshot.bids, this.bidStats, snapshot.bidOrders, Side.BID, midRow, referencePrice);
+        this.placeCells(rows, snapshot, null, midRow, referencePrice);
+    }
+
+    /**
+     * Put our working orders and the last trade on the rows of their prices (mirrors
+     * SkiaRenderer.PlaceCells). layout is the Remove Rows layout, null in Show Empty Rows
+     */
+    private placeCells(rows: RowState[], snapshot: OrderBookSnapshot, layout: DensePackingLayout | null,
+        midRow: number, referencePrice: number): void {
+        if (this.showWorkColumn) {
+            for (const [work, side, bit] of [[snapshot.bidWork, Side.BID, WORK_BUY], [snapshot.askWork, Side.ASK, WORK_SELL]] as const) {
+                if (!work) {
+                    continue;
+                }
+                for (const [price, orders] of work) {
+                    const rowIndex = this.rowOfPrice(price, side === Side.BID, layout, midRow, referencePrice);
+                    if (rowIndex >= 0) {
+                        const row = rows[rowIndex];
+                        row.workQuantity += orders.quantity;
+                        row.workCount += orders.count;
+                        row.workSides |= bit;
+                    }
+                }
+            }
+        }
+
+        const trade = snapshot.lastTrade;
+        if (this.showLtqColumn && trade && trade.quantity > 0) {
+            // A seller aggressor hit a bid, so its price is looked up among the bids first
+            const rowIndex = this.rowOfPrice(trade.price, trade.aggressor === Side.ASK, layout, midRow, referencePrice);
+            if (rowIndex >= 0) {
+                rows[rowIndex].ltqQuantity = trade.quantity;
+                rows[rowIndex].ltqAggressor = trade.aggressor ?? -1;
+            }
+        }
+    }
+
+    /**
+     * Row showing a price, -1 if none. Show Empty Rows maps it like placeLevels. Remove Rows finds
+     * the level with that price, on the bid side first when bidFirst
+     */
+    private rowOfPrice(price: number, bidFirst: boolean, layout: DensePackingLayout | null, midRow: number,
+        referencePrice: number): number {
+        const rowCount = this.rowCount();
+        if (layout === null) {
+            const rowIndex = midRow - Math.round((price - referencePrice) / this.displayTickSize);
+            return rowIndex >= 0 && rowIndex < rowCount ? rowIndex : -1;
+        }
+        const first = bidFirst ? this.denseBidRow(layout, price) : this.denseAskRow(layout, price);
+        const rowIndex = first >= 0 ? first : bidFirst ? this.denseAskRow(layout, price) : this.denseBidRow(layout, price);
+        return rowIndex < rowCount ? rowIndex : -1;
+    }
+
+    // Remove Rows: row of the ask level at price, -1 if it isn't drawn (inverse of buildRows' ask loop)
+    private denseAskRow(layout: DensePackingLayout, price: number): number {
+        const i = layout.nonEmptyAsks.length - 1 - layout.startAskIndex - this.levelIndex(layout.nonEmptyAsks, price);
+        return i >= 0 && i < layout.askRowsToRender ? layout.firstRowIndex + i : -1;
+    }
+
+    private denseBidRow(layout: DensePackingLayout, price: number): number {
+        const i = layout.nonEmptyBids.length - 1 - layout.startBidIndex - this.levelIndex(layout.nonEmptyBids, price);
+        return i >= 0 && i < layout.bidRowsToRender ? layout.firstRowIndex + layout.askRowsToRender + i : -1;
+    }
+
+    // Index of the level at price (within half a display tick) in ascending levels, levels.length if none
+    private levelIndex(levels: BookLevel[], price: number): number {
+        const tolerance = this.displayTickSize / 2;
+        const index = firstAtOrAbove(levels, price - tolerance);
+        return index < levels.length && levels[index].price < price + tolerance ? index : levels.length;
     }
 
     /**
@@ -977,12 +1188,16 @@ export class CanvasRenderer {
             return false;
         }
 
-        // The main canvas still shows the last frame
-        this.offscreenCtx.drawImage(this.canvas, 0, 0, this.width, this.height,
-            0, shift * this.rowHeight, this.width, this.height);
+        // The main canvas still shows the last frame. Only the rows move, the header stays
+        const shiftPixels = shift * this.rowHeight;
+        const height = this.height - this.headerHeight - Math.abs(shiftPixels);
+        if (height > 0) {
+            this.offscreenCtx.drawImage(this.canvas, 0, this.headerHeight + Math.max(0, -shiftPixels), this.width, height,
+                0, this.headerHeight + Math.max(0, shiftPixels), this.width, height);
+        }
 
         // Rotate the states. A row keeps its state only if it came from a strip that was fully on screen
-        const fullRows = Math.floor(this.height / this.rowHeight);
+        const fullRows = this.fullRows();
         const before = this.rows.slice();
         for (let rowIndex = 0; rowIndex < before.length; rowIndex++) {
             const from = rowIndex - shift;
@@ -1031,7 +1246,7 @@ export class CanvasRenderer {
                 // Only the bars changed (the volume scale moved): replay the row clipped to the bar
                 // column. The clip is pixel aligned, so its edge pixel comes out as in a full redraw.
                 // Text never reaches the bar column, so it's skipped
-                const y = rowIndex * this.rowHeight;
+                const y = this.rowTop(rowIndex);
                 ctx.save();
                 ctx.beginPath();
                 ctx.rect(barColumn, y, this.width - barColumn, this.rowHeight);
@@ -1045,8 +1260,8 @@ export class CanvasRenderer {
 
         // One copy for every changed row (rows in between are the same on both canvases)
         if (this.maxDirtyRow >= 0) {
-            const y = this.minDirtyRow * this.rowHeight;
-            const height = Math.min((this.maxDirtyRow + 1) * this.rowHeight, this.height) - y;
+            const y = this.rowTop(this.minDirtyRow);
+            const height = Math.min(this.rowTop(this.maxDirtyRow + 1), this.height) - y;
             this.ctx.drawImage(this.offscreenCanvas as any, 0, y, this.width, height, 0, y, this.width, height);
         }
     }
@@ -1056,7 +1271,7 @@ export class CanvasRenderer {
      * or removed above a row shift it in Remove Rows mode
      */
     private findMovedRows(source: Int32Array): boolean {
-        const fullRows = Math.floor(this.height / this.rowHeight); // A row cut off at the bottom can't be a source
+        const fullRows = this.fullRows(); // A row cut off at the bottom can't be a source
         let anyMoved = false;
         for (let rowIndex = 0; rowIndex < source.length; rowIndex++) {
             source[rowIndex] = -1;
@@ -1099,9 +1314,9 @@ export class CanvasRenderer {
             while (end < source.length && source[end] >= 0 && source[end] - end === from - rowIndex) {
                 end++;
             }
-            const y = rowIndex * this.rowHeight;
+            const y = this.rowTop(rowIndex);
             const height = Math.min((end - rowIndex) * this.rowHeight, this.height - y); // May be cut off at the bottom
-            this.offscreenCtx.drawImage(this.canvas, 0, from * this.rowHeight, this.width, height,
+            this.offscreenCtx.drawImage(this.canvas, 0, this.rowTop(from), this.width, height,
                 0, y, this.width, height);
 
             for (; rowIndex < end; rowIndex++) {
@@ -1170,9 +1385,10 @@ export class CanvasRenderer {
 
     /**
      * A row's content over its blank strip. textToo false draws only what can reach the bar
-     * column (bars, segments, own-order borders), in the same order
+     * column (LTQ fill, bars, segments, own-order borders), in the same order
      */
     private drawRowContent(row: RowState, rowIndex: number, textToo: boolean): void {
+        this.drawCells(row, rowIndex, textToo);
         if (Number.isNaN(row.label)) {
             // Remove Rows: one level per row
             const level = row.ask.present ? row.ask : row.bid;
@@ -1196,6 +1412,36 @@ export class CanvasRenderer {
         this.drawOverlaps(row, rowIndex, Side.BID, textToo);
     }
 
+    /**
+     * Work and LTQ cells (mirrors SkiaRenderer.DrawCells). The LTQ fill's antialiased right edge
+     * can touch the bar column's first pixel, so it's drawn without text too
+     */
+    private drawCells(row: RowState, rowIndex: number, textToo: boolean): void {
+        const ctx = this.offscreenCtx;
+        const cols = this.getColumnPositions();
+        const y = this.rowTop(rowIndex);
+        const textY = y + this.rowHeight / 2;
+
+        if (row.ltqQuantity > 0) {
+            ctx.fillStyle = row.ltqAggressor === Side.BID ? this.colors.ltqBuyBackground
+                : row.ltqAggressor === Side.ASK ? this.colors.ltqSellBackground : this.colors.ltqUnknownBackground;
+            ctx.fillRect(cols.ltqX, y + 1, this.ltqColWidth, this.rowHeight - 1); // Below the row's grid line
+            if (textToo) {
+                ctx.fillStyle = this.colors.ltqText;
+                ctx.textAlign = 'center';
+                ctx.fillText(this.formatQuantity(row.ltqQuantity), cols.ltqX + this.ltqColWidth / 2, textY);
+            }
+        }
+
+        if (textToo && row.workCount > 0) {
+            // Buy orders green, sell orders red, both on one row in the normal text color
+            ctx.fillStyle = row.workSides === WORK_BUY ? this.colors.bidBar
+                : row.workSides === WORK_SELL ? this.colors.askBar : this.colors.text;
+            ctx.textAlign = 'center';
+            ctx.fillText(this.workText(row.workQuantity, row.workCount), cols.workX + this.workColWidth / 2, textY);
+        }
+    }
+
     private drawOverlaps(row: RowState, rowIndex: number, side: Side, textToo: boolean): void {
         if (row.overlaps === null) {
             return;
@@ -1208,7 +1454,7 @@ export class CanvasRenderer {
     }
 
     private renderRow(rowIndex: number, row: RowLevel, textToo: boolean): void {
-        const y = rowIndex * this.rowHeight;
+        const y = this.rowTop(rowIndex);
         const textY = y + this.rowHeight / 2;
 
         // Get column positions
@@ -1279,26 +1525,12 @@ export class CanvasRenderer {
      * to the next row, so redrawing this row never touches that row's pixels
      */
     private drawRowBackground(rowIndex: number): void {
-        const y = rowIndex * this.rowHeight;
+        const y = this.rowTop(rowIndex);
 
         // Base row background
         this.offscreenCtx.fillStyle = this.colors.background;
         this.offscreenCtx.fillRect(0, y, this.width, this.rowHeight);
-
-        // Get column positions
-        const cols = this.getColumnPositions();
-
-        // Bid qty column
-        this.offscreenCtx.fillStyle = this.colors.bidQtyBackground;
-        this.offscreenCtx.fillRect(cols.bidQtyX, y, this.qtyColWidth, this.rowHeight);
-
-        // Price column
-        this.offscreenCtx.fillStyle = this.colors.priceBackground;
-        this.offscreenCtx.fillRect(cols.priceX, y, this.priceColWidth, this.rowHeight);
-
-        // Ask qty column
-        this.offscreenCtx.fillStyle = this.colors.askQtyBackground;
-        this.offscreenCtx.fillRect(cols.askQtyX, y, this.qtyColWidth, this.rowHeight);
+        this.fillColumns(y, this.rowHeight);
 
         // Grid line (a 1px rect, as on desktop)
         this.offscreenCtx.fillStyle = this.colors.gridLine;
@@ -1309,7 +1541,7 @@ export class CanvasRenderer {
      * Render only the price label for a row (used in Show Empty mode)
      */
     private renderPriceOnly(rowIndex: number, price: number): void {
-        const y = rowIndex * this.rowHeight;
+        const y = this.rowTop(rowIndex);
         const priceText = this.formatPrice(price);
 
         // Get column positions
@@ -1327,7 +1559,7 @@ export class CanvasRenderer {
      * Render data overlay (quantity, orders, bars) for a row that has a level
      */
     private renderDataOverlay(rowIndex: number, row: RowLevel, textToo: boolean): void {
-        const y = rowIndex * this.rowHeight;
+        const y = this.rowTop(rowIndex);
         const textY = y + this.rowHeight / 2;
 
         // Get column positions
@@ -1584,16 +1816,33 @@ export class CanvasRenderer {
     }
 
     /**
-     * Column index under screen X: [0:bid_qty][1:price][2:ask_qty][3:bars and beyond], -1 left
-     * of the ladder. Found from the columns' pixel positions, since their widths change
+     * Column id under screen X: 0 bid qty, 1 price, 2 ask qty, 3 bars and beyond, 4 Work, 5 LTQ,
+     * -1 left of the ladder. Ids, not positions: Work sits left of bid qty. Found from the
+     * columns' pixel positions, since their widths change
      */
     public screenXToColumn(x: number): number {
         const cols = this.getColumnPositions();
-        if (x < cols.bidQtyX) return -1;
+        if (x < 0) return -1;
+        if (x < cols.bidQtyX) return this.getWorkColumn(); // Only with the Work column, otherwise bidQtyX is 0
         if (x < cols.priceX) return this.getBidQtyColumn();
         if (x < cols.askQtyX) return this.getPriceColumn();
         if (x < cols.askQtyX + this.qtyColWidth) return this.getAskQtyColumn();
+        if (cols.ltqX >= 0 && x < cols.ltqX + this.ltqColWidth) return this.getLtqColumn();
         return 3;
+    }
+
+    /**
+     * Get the Work column id
+     */
+    public getWorkColumn(): number {
+        return 4;
+    }
+
+    /**
+     * Get the LTQ column id
+     */
+    public getLtqColumn(): number {
+        return 5;
     }
 
     /**
@@ -1618,15 +1867,28 @@ export class CanvasRenderer {
     }
 
     /**
-     * Convert screen Y coordinate to row index
+     * Convert screen Y coordinate to row index, negative on the header
      */
     public screenYToRow(y: number): number {
-        return Math.floor(y / this.rowHeight);
+        return Math.floor((y - this.headerHeight) / this.rowHeight);
     }
 
     /**
      * Convert row index to price
      */
+    /**
+     * Price of a row as drawn (mirrors ViewportManager.RowPriceAt): its level's price, the ask
+     * first, else its Show Empty Rows label, which holds working orders even without a level.
+     * Null for the header or a Remove Rows row with no level
+     */
+    public rowPrice(rowIndex: number): number | null {
+        const row = this.rows[rowIndex];
+        if (row === undefined) return null;
+        if (row.ask.present) return row.ask.price;
+        if (row.bid.present) return row.bid.price;
+        return Number.isNaN(row.label) ? null : parseFloat(this.formatPrice(row.label)); // Formatted: no float noise
+    }
+
     public rowToPrice(rowIndex: number): number | null {
         const levelInfo = this.rowToLevelInfo(rowIndex);
         return levelInfo?.price ?? null;
@@ -1636,7 +1898,7 @@ export class CanvasRenderer {
      * Convert row index to level info (price and quantity)
      */
     public rowToLevelInfo(rowIndex: number): { price: number; quantity: number; side: Side } | null {
-        if (!this.currentSnapshot) return null;
+        if (!this.currentSnapshot || rowIndex < 0) return null; // Negative: the header
 
         if (this.removalMode === 'removeRow') {
             // Dense packing mode: use the same layout logic as rendering. Levels may have changed
@@ -1722,7 +1984,7 @@ export class CanvasRenderer {
     private resizeCanvas(width: number, height: number): void {
         this.width = width;
         this.height = height;
-        this.visibleRows = Math.floor(height / this.rowHeight);
+        this.visibleRows = this.fullRows();
 
         // Recalculate bar column width based on new width
         this.barColumnWidth = this.calculateBarColumnWidth();
@@ -1943,9 +2205,12 @@ export class CanvasRenderer {
         // Price column with dynamic width
         const priceColWidth = this.priceColWidth;
 
+        // Work and LTQ columns when shown
+        const cellColumnsWidth = (this.showWorkColumn ? this.workColWidth : 0) + (this.showLtqColumn ? this.ltqColWidth : 0);
+
         // Volume bar column
         const barWidth = this.showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
 
-        return Math.round(qtyColumnsWidth + priceColWidth + barWidth);
+        return Math.round(qtyColumnsWidth + priceColWidth + cellColumnsWidth + barWidth);
     }
 }

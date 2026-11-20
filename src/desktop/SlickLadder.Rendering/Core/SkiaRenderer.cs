@@ -29,6 +29,15 @@ public class SkiaRenderer : IDisposable
     private readonly SKPaint _dirtyRowPaint;
     private readonly SKPaint _ownOrderBorderPaint;
     private readonly SKPaint _segmentTextPaint;
+    private readonly SKPaint _headerBackgroundPaint;
+    private readonly SKPaint _workBackgroundPaint;
+    private readonly SKPaint _ltqBackgroundPaint;
+    private readonly SKPaint _ltqBuyPaint;
+    private readonly SKPaint _ltqSellPaint;
+    private readonly SKPaint _ltqUnknownPaint;
+    private readonly SKPaint _ltqTextPaint;
+    private readonly SKPaint _workBuyTextPaint;
+    private readonly SKPaint _workSellTextPaint;
     private readonly TextBlobCache _textBlobs;
     private readonly TextBlobCache _segmentTextBlobs;
     private readonly HashSet<int> _debugDirtyRows = new HashSet<int>();
@@ -38,6 +47,7 @@ public class SkiaRenderer : IDisposable
     private readonly TextCache<decimal> _priceTexts;
     private readonly TextCache<decimal> _quantityTexts;
     private readonly TextCache<(decimal Quantity, int Orders, Side Side)> _quantityWithCountTexts;
+    private readonly TextCache<(decimal Quantity, int Count)> _workTexts;
     private bool _debugOverlayAllRows;
 
     private readonly RenderConfig _config;
@@ -61,6 +71,7 @@ public class SkiaRenderer : IDisposable
     private bool _needsFullRedraw = true;
     private bool _pixelsChanged; // RenderRows wrote pixels this call
     private decimal _currentDisplayTickSize = 0.01m; // Set at start of each Render() call
+    private int _headerHeight; // Rows start below it. Set at start of each Render() call
 
     // What the cache shows: a state per row, the layout they were drawn under and the reference
     // price (Show Empty Rows) that mapped prices to rows. _nextRows is the frame being built
@@ -133,6 +144,18 @@ public class SkiaRenderer : IDisposable
 
         _segmentTextPaint = new SKPaint { Color = SKColors.White, IsAntialias = true };
 
+        // Fills are non-AA like the column backgrounds: on raster the LTQ fill then never reaches
+        // the bar column's first pixel, which the bars-only redraw resets
+        _headerBackgroundPaint = new SKPaint { Color = _config.HeaderBackground, Style = SKPaintStyle.Fill };
+        _workBackgroundPaint = new SKPaint { Color = _config.WorkBackground, Style = SKPaintStyle.Fill };
+        _ltqBackgroundPaint = new SKPaint { Color = _config.LtqBackground, Style = SKPaintStyle.Fill };
+        _ltqBuyPaint = new SKPaint { Color = _config.LtqBuyBackground, Style = SKPaintStyle.Fill };
+        _ltqSellPaint = new SKPaint { Color = _config.LtqSellBackground, Style = SKPaintStyle.Fill };
+        _ltqUnknownPaint = new SKPaint { Color = _config.LtqUnknownBackground, Style = SKPaintStyle.Fill };
+        _ltqTextPaint = new SKPaint { Color = _config.LtqTextColor, IsAntialias = true };
+        _workBuyTextPaint = new SKPaint { Color = _config.BidVolumeBar, IsAntialias = true };
+        _workSellTextPaint = new SKPaint { Color = _config.AskVolumeBar, IsAntialias = true };
+
         var typeface = SKTypeface.FromFamilyName(_config.FontFamily);
         _textBlobs = new TextBlobCache(new SKFont(typeface, _config.FontSize));
         _segmentTextBlobs = new TextBlobCache(new SKFont(typeface, 10)); // Smaller font for segments
@@ -141,6 +164,7 @@ public class SkiaRenderer : IDisposable
         _quantityWithCountTexts = new TextCache<(decimal Quantity, int Orders, Side Side)>(key => key.Side == Side.BID
             ? $"({key.Orders}) {_quantityTexts.Get(key.Quantity)}"
             : $"{_quantityTexts.Get(key.Quantity)} ({key.Orders})");
+        _workTexts = new TextCache<(decimal Quantity, int Count)>(key => $"{_quantityTexts.Get(key.Quantity)} ({key.Count})");
     }
 
     /// <summary>
@@ -254,9 +278,10 @@ public class SkiaRenderer : IDisposable
 
         var maxVolume = viewport.ShowVolumeBars ? maxQuantity : 0m;
 
-        // Calculate visible rows - add 1 to ensure we fill to the bottom
-        var visibleRows = (viewport.Height + RenderConfig.RowHeight - 1) / RenderConfig.RowHeight;
+        // Rows below the header, counting one cut off at the bottom
+        var visibleRows = viewport.RowCount;
         var midRow = visibleRows / 2;
+        _headerHeight = viewport.HeaderHeight;
         _currentDisplayTickSize = viewport.DisplayTickSize;
         var displayTickSize = _currentDisplayTickSize;
         if (viewport.AutoCenter)
@@ -279,10 +304,14 @@ public class SkiaRenderer : IDisposable
         var newQtyColWidth = CalculateQuantityColumnWidth(maxQuantity, Math.Max(_bidStats.MaxOrders, _askStats.MaxOrders),
             viewport.ShowOrderCount);
         var newPriceColWidth = CalculatePriceColumnWidth(viewport.RemovalMode);
-        if (Math.Abs(viewport.QtyColWidth - newQtyColWidth) > 0.5f || Math.Abs(viewport.PriceColWidth - newPriceColWidth) > 0.5f)
+        var (newWorkColWidth, newLtqColWidth) = CalculateCellColumnWidths();
+        if (Math.Abs(viewport.QtyColWidth - newQtyColWidth) > 0.5f || Math.Abs(viewport.PriceColWidth - newPriceColWidth) > 0.5f ||
+            Math.Abs(viewport.WorkColWidth - newWorkColWidth) > 0.5f || Math.Abs(viewport.LtqColWidth - newLtqColWidth) > 0.5f)
         {
             viewport.QtyColWidth = newQtyColWidth;
             viewport.PriceColWidth = newPriceColWidth;
+            viewport.WorkColWidth = newWorkColWidth;
+            viewport.LtqColWidth = newLtqColWidth;
             _needsFullRedraw = true; // Force full redraw when column widths change
             BuildRows(snapshot, viewport, maxVolume, visibleRows, midRow, displayTickSize, referencePrice);
         }
@@ -317,6 +346,9 @@ public class SkiaRenderer : IDisposable
             !ReferenceEquals(snapshot.Asks, _lastSnapshot.Asks) ||
             !ReferenceEquals(snapshot.BidOrders, _lastSnapshot.BidOrders) ||
             !ReferenceEquals(snapshot.AskOrders, _lastSnapshot.AskOrders) ||
+            !ReferenceEquals(snapshot.BidWork, _lastSnapshot.BidWork) ||
+            !ReferenceEquals(snapshot.AskWork, _lastSnapshot.AskWork) ||
+            !ReferenceEquals(snapshot.LastTrade, _lastSnapshot.LastTrade) ||
             snapshot.Timestamp != _lastSnapshot.Timestamp ||
             snapshot.MidPrice != _lastSnapshot.MidPrice ||
             snapshot.BestBid != _lastSnapshot.BestBid ||
@@ -324,50 +356,79 @@ public class SkiaRenderer : IDisposable
             new ViewState(new LayoutState(viewport, _config, _segmentState), viewport) != _lastView;
     }
 
-    private void DrawColumnBackgrounds(SKCanvas canvas, ViewportManager viewport)
+    /// <summary>
+    /// Column backgrounds from y down height pixels, in order: Work | Bid Qty | Price | Ask Qty | LTQ
+    /// (mirrors fillColumns in canvas-renderer.ts)
+    /// </summary>
+    private void DrawColumns(SKCanvas canvas, ViewportManager viewport, float y, float height)
     {
-        // Column order: Bid Qty | Price | Ask Qty | Volume Bars
-
-        // Bid quantity column (blue background) - uses dynamic width
-        canvas.DrawRect(
-            viewport.BidQtyColumnX, 0,
-            viewport.QtyColWidth, viewport.Height,
-            _bidBackgroundPaint);
-
-        // Price column (gray background) - uses dynamic width
-        canvas.DrawRect(
-            viewport.PriceColumnX, 0,
-            viewport.PriceColWidth, viewport.Height,
-            _priceBackgroundPaint);
-
-        // Ask quantity column (red background) - uses dynamic width
-        canvas.DrawRect(
-            viewport.AskQtyColumnX, 0,
-            viewport.QtyColWidth, viewport.Height,
-            _askBackgroundPaint);
+        if (viewport.WorkColumnX is { } workX)
+        {
+            canvas.DrawRect(workX, y, viewport.WorkColWidth, height, _workBackgroundPaint);
+        }
+        canvas.DrawRect(viewport.BidQtyColumnX, y, viewport.QtyColWidth, height, _bidBackgroundPaint);
+        canvas.DrawRect(viewport.PriceColumnX, y, viewport.PriceColWidth, height, _priceBackgroundPaint);
+        canvas.DrawRect(viewport.AskQtyColumnX, y, viewport.QtyColWidth, height, _askBackgroundPaint);
+        if (viewport.LtqColumnX is { } ltqX)
+        {
+            canvas.DrawRect(ltqX, y, viewport.LtqColWidth, height, _ltqBackgroundPaint);
+        }
     }
 
     private void DrawRowBackgrounds(SKCanvas canvas, ViewportManager viewport, float y)
     {
         // The columns tile [0, columnsRight) edge to edge (same float sums), so the background
         // only needs to fill what's right of them
-        var columnsRight = viewport.AskQtyColumnX + viewport.QtyColWidth;
+        var columnsRight = viewport.FixedColumnsWidth;
         canvas.DrawRect(columnsRight, y, Math.Max(0, viewport.Width - columnsRight), RenderConfig.RowHeight, _backgroundPaint);
+        DrawColumns(canvas, viewport, y, RenderConfig.RowHeight);
+    }
 
-        canvas.DrawRect(
-            viewport.BidQtyColumnX, y,
-            viewport.QtyColWidth, RenderConfig.RowHeight,
-            _bidBackgroundPaint);
+    /// <summary>
+    /// Column titles over the rows (mirrors drawHeader in canvas-renderer.ts). Only full redraws
+    /// draw it: anything that moves a column is a layout change
+    /// </summary>
+    private void DrawHeader(SKCanvas canvas, ViewportManager viewport)
+    {
+        if (_headerHeight == 0)
+        {
+            return;
+        }
+        canvas.DrawRect(0, 0, viewport.Width, _headerHeight, _headerBackgroundPaint);
 
-        canvas.DrawRect(
-            viewport.PriceColumnX, y,
-            viewport.PriceColWidth, RenderConfig.RowHeight,
-            _priceBackgroundPaint);
+        // A separator on both sides and each column edge, pixel aligned so it stays one sharp pixel
+        var right = viewport.Width - 1;
+        canvas.DrawRect(0, 0, 1, _headerHeight, _gridLinePaint);
+        canvas.DrawRect(right, 0, 1, _headerHeight, _gridLinePaint);
+        ReadOnlySpan<float> edges = stackalloc float[]
+        {
+            viewport.BidQtyColumnX, viewport.PriceColumnX, viewport.AskQtyColumnX,
+            viewport.LtqColumnX ?? -1, viewport.VolumeBarColumnX ?? -1
+        };
+        foreach (var x in edges)
+        {
+            if (x > 0 && x < right)
+            {
+                canvas.DrawRect(MathF.Floor(x), 0, 1, _headerHeight, _gridLinePaint);
+            }
+        }
 
-        canvas.DrawRect(
-            viewport.AskQtyColumnX, y,
-            viewport.QtyColWidth, RenderConfig.RowHeight,
-            _askBackgroundPaint);
+        var textY = TextY(0);
+        if (viewport.WorkColumnX is { } workX)
+        {
+            DrawCellText(canvas, "Work", workX + viewport.WorkColWidth / 2, textY);
+        }
+        DrawCellText(canvas, "Bid", viewport.BidQtyColumnX + viewport.QtyColWidth / 2, textY);
+        DrawCellText(canvas, "Price", viewport.PriceColumnX + viewport.PriceColWidth / 2, textY);
+        DrawCellText(canvas, "Ask", viewport.AskQtyColumnX + viewport.QtyColWidth / 2, textY);
+        if (viewport.LtqColumnX is { } ltqX)
+        {
+            DrawCellText(canvas, "LTQ", ltqX + viewport.LtqColWidth / 2, textY);
+        }
+        if (viewport.VolumeBarColumnX is { } barX && barX < viewport.Width)
+        {
+            DrawCellText(canvas, "Volume", barX + (viewport.Width - barX) / 2, textY); // Centered on the part on screen
+        }
     }
 
     private void DrawGridLine(SKCanvas canvas, ViewportManager viewport, float y)
@@ -379,7 +440,7 @@ public class SkiaRenderer : IDisposable
     /// What a render needs from all of one side's levels, found in one pass (mirrors TypeScript
     /// LevelStats). Everything after it reads only the levels it draws
     /// </summary>
-    private readonly record struct LevelStats(
+    internal readonly record struct LevelStats(
         decimal MaxQuantity,
         int MaxOrders, // Most orders on a level with quantity
         int NonEmpty, // Levels with quantity
@@ -477,6 +538,30 @@ public class SkiaRenderer : IDisposable
     }
 
     /// <summary>
+    /// Work and LTQ column widths that fit the cells on this frame's rows (_nextRows). Mirrors
+    /// TypeScript calculateCellColumnWidths() in canvas-renderer.ts
+    /// </summary>
+    private (float Work, float Ltq) CalculateCellColumnWidths()
+    {
+        // Each cell's text is measured: a larger quantity can have shorter text ("1" vs "0.12345678").
+        // Few rows have cells, and texts and their widths are cached
+        var workWidth = RenderConfig.ColumnWidth;
+        var ltqWidth = RenderConfig.ColumnWidth;
+        foreach (ref readonly var row in _nextRows.AsSpan())
+        {
+            if (row.WorkCount > 0)
+            {
+                workWidth = Math.Max(workWidth, ColumnWidthFor(WorkText(row.WorkQuantity, row.WorkCount)));
+            }
+            if (row.LtqQuantity > 0)
+            {
+                ltqWidth = Math.Max(ltqWidth, ColumnWidthFor(FormatQuantity(row.LtqQuantity)));
+            }
+        }
+        return (workWidth, ltqWidth);
+    }
+
+    /// <summary>
     /// Width of a column that fits text: at least ColumnWidth, with 10px padding on each side
     /// </summary>
     private float ColumnWidthFor(string text)
@@ -569,7 +654,8 @@ public class SkiaRenderer : IDisposable
         {
             // Dense packing: asks then bids on consecutive rows, empty rows elsewhere
             Array.Fill(rows, new RowState { Drawn = true });
-            var layout = BuildDensePackingLayout(snapshot, viewport, visibleRows, midRow);
+            var layout = DensePackingLayout.Build(NonEmptyLevels(snapshot.Asks, _askStats), NonEmptyLevels(snapshot.Bids, _bidStats),
+                viewport.DensePackingScrollOffset, visibleRows, midRow);
 
             for (int i = 0; i < layout.AskRowsToRender; i++)
             {
@@ -591,6 +677,7 @@ public class SkiaRenderer : IDisposable
                     rows[row].Bid = CreateRowLevel(layout.NonEmptyBids[bidIndex], snapshot.BidOrders, viewport, maxVolume);
                 }
             }
+            PlaceCells(rows, snapshot, viewport, layout, midRow, displayTickSize, referencePrice);
             return;
         }
 
@@ -604,6 +691,91 @@ public class SkiaRenderer : IDisposable
 
         PlaceLevels(rows, snapshot.Asks, _askStats, snapshot.AskOrders, isAsk: true, viewport, maxVolume, midRow, displayTickSize, referencePrice);
         PlaceLevels(rows, snapshot.Bids, _bidStats, snapshot.BidOrders, isAsk: false, viewport, maxVolume, midRow, displayTickSize, referencePrice);
+        PlaceCells(rows, snapshot, viewport, null, midRow, displayTickSize, referencePrice);
+    }
+
+    private const byte WorkBuy = 1;
+    private const byte WorkSell = 2;
+
+    /// <summary>
+    /// Put our working orders and the last trade on the rows of their prices (mirrors TypeScript
+    /// placeCells). layout is the Remove Rows layout, null in Show Empty Rows
+    /// </summary>
+    private static void PlaceCells(
+        RowState[] rows,
+        in OrderBookSnapshot snapshot,
+        ViewportManager viewport,
+        DensePackingLayout? layout,
+        int midRow,
+        decimal displayTickSize,
+        decimal referencePrice)
+    {
+        if (viewport.ShowWorkColumn)
+        {
+            PlaceWork(rows, snapshot.BidWork, WorkBuy, layout, midRow, displayTickSize, referencePrice);
+            PlaceWork(rows, snapshot.AskWork, WorkSell, layout, midRow, displayTickSize, referencePrice);
+        }
+
+        var trade = snapshot.LastTrade;
+        if (viewport.ShowLtqColumn && trade != null && trade.Quantity > 0)
+        {
+            // A seller aggressor hit a bid, so its price is looked up among the bids first
+            var rowIndex = RowOfPrice(rows.Length, trade.Price, trade.Aggressor == Side.ASK, layout, midRow, displayTickSize, referencePrice);
+            if (rowIndex >= 0)
+            {
+                rows[rowIndex].LtqQuantity = trade.Quantity;
+                rows[rowIndex].LtqAggressor = trade.Aggressor.HasValue ? (sbyte)trade.Aggressor.Value : (sbyte)-1;
+            }
+        }
+    }
+
+    private static void PlaceWork(RowState[] rows, Dictionary<decimal, WorkingOrders>? work, byte side, DensePackingLayout? layout,
+        int midRow, decimal displayTickSize, decimal referencePrice)
+    {
+        if (work == null)
+        {
+            return;
+        }
+        foreach (var (price, orders) in work)
+        {
+            var rowIndex = RowOfPrice(rows.Length, price, side == WorkBuy, layout, midRow, displayTickSize, referencePrice);
+            if (rowIndex >= 0)
+            {
+                ref var row = ref rows[rowIndex];
+                row.WorkQuantity += orders.Quantity;
+                row.WorkCount += orders.Count;
+                row.WorkSides |= side;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Row showing a price, -1 if none. Show Empty Rows maps it like PlaceLevels. Remove Rows finds
+    /// the level with that price, on the bid side first when bidFirst
+    /// </summary>
+    private static int RowOfPrice(int rowCount, decimal price, bool bidFirst, DensePackingLayout? layout, int midRow,
+        decimal displayTickSize, decimal referencePrice)
+    {
+        int rowIndex;
+        if (layout is not { } dense)
+        {
+            rowIndex = midRow - (int)Math.Round((price - referencePrice) / displayTickSize);
+        }
+        else
+        {
+            var tolerance = displayTickSize / 2;
+            var askRow = dense.AskRow(LevelIndex(dense.NonEmptyAsks, price, tolerance));
+            var bidRow = dense.BidRow(LevelIndex(dense.NonEmptyBids, price, tolerance));
+            rowIndex = bidFirst ? (bidRow >= 0 ? bidRow : askRow) : (askRow >= 0 ? askRow : bidRow);
+        }
+        return rowIndex >= 0 && rowIndex < rowCount ? rowIndex : -1;
+    }
+
+    // Index of the level at price (within tolerance) in ascending levels, levels.Length if none
+    private static int LevelIndex(BookLevel[] levels, decimal price, decimal tolerance)
+    {
+        var index = FirstAtOrAbove(levels, price - tolerance);
+        return index < levels.Length && levels[index].Price < price + tolerance ? index : levels.Length;
     }
 
     /// <summary>
@@ -691,15 +863,20 @@ public class SkiaRenderer : IDisposable
         }
         var shift = (int)steps;
 
+        // Only the rows move, the header stays
         if (_onGpu)
         {
             // Skia copies the texture before a draw writes to it while a snapshot of it is held
             using var frame = _surface!.Snapshot();
-            _surface.Canvas.DrawImage(frame, 0, shift * RenderConfig.RowHeight);
+            var canvas = _surface.Canvas;
+            canvas.Save();
+            canvas.ClipRect(new SKRect(0, _headerHeight, _rowsPixels.Width, _rowsPixels.Height));
+            canvas.DrawImage(frame, 0, shift * RenderConfig.RowHeight);
+            canvas.Restore();
         }
         else
         {
-            var pixels = _pixmap.GetPixelSpan();
+            var pixels = _pixmap.GetPixelSpan()[(_headerHeight * _pixmap.RowBytes)..];
             var shiftBytes = Math.Abs(shift) * RenderConfig.RowHeight * _pixmap.RowBytes;
             if (shift > 0)
             {
@@ -713,7 +890,7 @@ public class SkiaRenderer : IDisposable
         _pixelsChanged = true;
 
         // A row keeps its state only if it came from a strip that was fully on screen
-        var fullRows = _rowsPixels.Height / RenderConfig.RowHeight;
+        var fullRows = FullRows();
         if (shift > 0)
         {
             for (int rowIndex = _rows.Length - 1; rowIndex >= 0; rowIndex--)
@@ -737,12 +914,13 @@ public class SkiaRenderer : IDisposable
     {
         _pixelsChanged = true;
         canvas.Clear(_config.BackgroundColor);
-        DrawColumnBackgrounds(canvas, viewport);
+        DrawColumns(canvas, viewport, 0, viewport.Height);
         DrawGridLines(canvas, viewport);
+        DrawHeader(canvas, viewport);
 
         for (int rowIndex = 0; rowIndex < _nextRows.Length; rowIndex++)
         {
-            DrawRowContent(canvas, viewport, in _nextRows[rowIndex], maxVolume, rowIndex * RenderConfig.RowHeight);
+            DrawRowContent(canvas, viewport, in _nextRows[rowIndex], maxVolume, RowTop(rowIndex));
         }
 
         if (_config.DebugDirtyRows)
@@ -781,7 +959,7 @@ public class SkiaRenderer : IDisposable
                 continue;
             }
 
-            var y = rowIndex * RenderConfig.RowHeight;
+            var y = RowTop(rowIndex);
             if (barColumn < 0 || !cached.SameAs(in next, compareBars: false))
             {
                 // Blank strip, then content. The blank strip carries only this row's top grid
@@ -868,7 +1046,7 @@ public class SkiaRenderer : IDisposable
         if (_onGpu)
         {
             // Callers clip to fromX
-            var y = rowIndex * RenderConfig.RowHeight;
+            var y = RowTop(rowIndex);
             DrawRowBackgrounds(canvas, viewport, y);
             DrawGridLine(canvas, viewport, y);
         }
@@ -885,7 +1063,7 @@ public class SkiaRenderer : IDisposable
     {
         var bytesPerPixel = _rowTemplateInfo.BytesPerPixel;
         var length = (width - fromX) * bytesPerPixel;
-        var top = rowIndex * RenderConfig.RowHeight;
+        var top = RowTop(rowIndex);
         var lines = Math.Min(RenderConfig.RowHeight, height - top);
         if (fromX == 0 && rowBytes == _rowTemplateRowBytes)
         {
@@ -906,7 +1084,7 @@ public class SkiaRenderer : IDisposable
     /// </summary>
     private bool FindMovedRows(Span<int> source)
     {
-        var fullRows = _rowsPixels.Height / RenderConfig.RowHeight; // A row cut off at the bottom can't be a source
+        var fullRows = FullRows(); // A row cut off at the bottom can't be a source
         var anyMoved = false;
         for (int rowIndex = 0; rowIndex < source.Length; rowIndex++)
         {
@@ -951,7 +1129,7 @@ public class SkiaRenderer : IDisposable
             return;
         }
 
-        var pixels = _pixmap.GetPixelSpan();
+        var pixels = _pixmap.GetPixelSpan()[(_headerHeight * _pixmap.RowBytes)..]; // Row strips start below the header
         var stripBytes = RenderConfig.RowHeight * _pixmap.RowBytes;
         Span<bool> overwritten = stackalloc bool[source.Length];
 
@@ -1012,9 +1190,9 @@ public class SkiaRenderer : IDisposable
             {
                 end++;
             }
-            var y = rowIndex * RenderConfig.RowHeight;
+            var y = RowTop(rowIndex);
             var height = Math.Min((end - rowIndex) * RenderConfig.RowHeight, _rowsPixels.Height - y); // May be cut off at the bottom
-            _surface.Canvas.DrawImage(frame, SKRect.Create(0, from * RenderConfig.RowHeight, width, height),
+            _surface.Canvas.DrawImage(frame, SKRect.Create(0, RowTop(from), width, height),
                 SKRect.Create(0, y, width, height));
 
             for (; rowIndex < end; rowIndex++)
@@ -1026,6 +1204,7 @@ public class SkiaRenderer : IDisposable
 
     private void DrawRowContent(SKCanvas canvas, ViewportManager viewport, in RowState row, decimal maxVolume, float y)
     {
+        DrawCells(canvas, viewport, in row, y);
         if (viewport.RemovalMode == LevelRemovalMode.RemoveRow)
         {
             if (row.Ask.Present)
@@ -1057,6 +1236,37 @@ public class SkiaRenderer : IDisposable
             DrawBidLevelQuantity(canvas, row.Bid.Level, viewport, maxVolume, y, row.Bid.Orders);
         }
         DrawOverlaps(canvas, viewport, in row, isAsk: false, maxVolume, y);
+    }
+
+    /// <summary>
+    /// Work and LTQ cells (mirrors drawCells in canvas-renderer.ts). The LTQ fill sits below the
+    /// row's grid line
+    /// </summary>
+    private void DrawCells(SKCanvas canvas, ViewportManager viewport, in RowState row, float y)
+    {
+        if (row.LtqQuantity > 0 && viewport.LtqColumnX is { } ltqX)
+        {
+            var fill = row.LtqAggressor switch
+            {
+                (sbyte)Side.BID => _ltqBuyPaint,
+                (sbyte)Side.ASK => _ltqSellPaint,
+                _ => _ltqUnknownPaint
+            };
+            canvas.DrawRect(ltqX, y + 1, viewport.LtqColWidth, RenderConfig.RowHeight - 1, fill);
+            DrawCenteredText(canvas, _textBlobs, FormatQuantity(row.LtqQuantity), ltqX + viewport.LtqColWidth / 2, TextY(y), _ltqTextPaint);
+        }
+
+        if (row.WorkCount > 0 && viewport.WorkColumnX is { } workX)
+        {
+            // Buy orders green, sell orders red, both on one row in the normal text color
+            var paint = row.WorkSides switch
+            {
+                WorkBuy => _workBuyTextPaint,
+                WorkSell => _workSellTextPaint,
+                _ => _textPaint
+            };
+            DrawCenteredText(canvas, _textBlobs, WorkText(row.WorkQuantity, row.WorkCount), workX + viewport.WorkColWidth / 2, TextY(y), paint);
+        }
     }
 
     private void DrawOverlaps(SKCanvas canvas, ViewportManager viewport, in RowState row, bool isAsk, decimal maxVolume, float y)
@@ -1100,7 +1310,12 @@ public class SkiaRenderer : IDisposable
         decimal MinQuantityThreshold,
         long MboOrderSizeFilter,
         double SegmentPixelsPerUnit,
-        double SegmentScrollOffset)
+        double SegmentScrollOffset,
+        bool ShowWorkColumn,
+        bool ShowLtqColumn,
+        bool ShowHeader,
+        float WorkColWidth,
+        float LtqColWidth)
     {
         public LayoutState(ViewportManager viewport, RenderConfig config, SegmentRenderState segments) : this(
             viewport.Width,
@@ -1116,7 +1331,12 @@ public class SkiaRenderer : IDisposable
             config.MinQuantityThreshold,
             config.MboOrderSizeFilter,
             segments.BasePixelsPerUnit * segments.UserScaleFactor,
-            segments.HorizontalScrollOffset)
+            segments.HorizontalScrollOffset,
+            viewport.ShowWorkColumn,
+            viewport.ShowLtqColumn,
+            viewport.ShowHeader,
+            viewport.WorkColWidth,
+            viewport.LtqColWidth)
         {
         }
     }
@@ -1143,10 +1363,17 @@ public class SkiaRenderer : IDisposable
         public RowLevel Ask;
         public RowLevel Bid;
         public List<(RowLevel Level, bool IsAsk)>? Overlaps; // More levels on this row, always redrawn
+        public decimal WorkQuantity; // Our working orders on this row's price, 0 for none
+        public int WorkCount;
+        public byte WorkSides;       // WorkBuy | WorkSell
+        public decimal LtqQuantity;  // Last trade on this row's price, 0 for none
+        public sbyte LtqAggressor;   // Side, -1 when unknown
 
         public readonly bool SameAs(in RowState other, bool compareBars = true)
         {
             return Drawn && other.Drawn && Overlaps == null && other.Overlaps == null && Label == other.Label &&
+                   WorkQuantity == other.WorkQuantity && WorkCount == other.WorkCount && WorkSides == other.WorkSides &&
+                   LtqQuantity == other.LtqQuantity && LtqAggressor == other.LtqAggressor &&
                    Ask.SameAs(in other.Ask, compareBars) && Bid.SameAs(in other.Bid, compareBars);
         }
     }
@@ -1183,7 +1410,7 @@ public class SkiaRenderer : IDisposable
     {
         for (int rowIndex = 0; rowIndex <= visibleRows; rowIndex++)
         {
-            var y = rowIndex * RenderConfig.RowHeight;
+            var y = viewport.RowTop(rowIndex);
             if (y < 0 || y >= viewport.Height)
             {
                 continue;
@@ -1206,7 +1433,7 @@ public class SkiaRenderer : IDisposable
                 continue;
             }
 
-            var y = rowIndex * RenderConfig.RowHeight;
+            var y = viewport.RowTop(rowIndex);
             if (y < 0 || y >= viewport.Height)
             {
                 continue;
@@ -1216,106 +1443,11 @@ public class SkiaRenderer : IDisposable
         }
     }
 
-    private readonly struct DensePackingLayout
-    {
-        public readonly BookLevel[] NonEmptyAsks;
-        public readonly BookLevel[] NonEmptyBids;
-        public readonly int StartAskIndex;
-        public readonly int AskRowsToRender;
-        public readonly int StartBidIndex;
-        public readonly int BidRowsToRender;
-        public readonly float TopOffset;
-        public readonly int FirstRowIndex;
-
-        public DensePackingLayout(
-            BookLevel[] nonEmptyAsks,
-            BookLevel[] nonEmptyBids,
-            int startAskIndex,
-            int askRowsToRender,
-            int startBidIndex,
-            int bidRowsToRender,
-            float topOffset,
-            int firstRowIndex)
-        {
-            NonEmptyAsks = nonEmptyAsks;
-            NonEmptyBids = nonEmptyBids;
-            StartAskIndex = startAskIndex;
-            AskRowsToRender = askRowsToRender;
-            StartBidIndex = startBidIndex;
-            BidRowsToRender = bidRowsToRender;
-            TopOffset = topOffset;
-            FirstRowIndex = firstRowIndex;
-        }
-    }
-
-    private DensePackingLayout BuildDensePackingLayout(
-        OrderBookSnapshot snapshot,
-        ViewportManager viewport,
-        int visibleRows,
-        int midRow)
-    {
-        var nonEmptyAsks = NonEmptyLevels(snapshot.Asks, _askStats);
-        var nonEmptyBids = NonEmptyLevels(snapshot.Bids, _bidStats);
-        var scrollOffset = viewport.DensePackingScrollOffset;
-        var totalLevels = nonEmptyAsks.Length + nonEmptyBids.Length;
-
-        var virtualTopRow = nonEmptyAsks.Length - midRow + scrollOffset;
-
-        int startAskIndex, askRowsToRender;
-        int startBidIndex, bidRowsToRender;
-        float topOffset = 0;
-
-        if (virtualTopRow < 0)
-        {
-            topOffset = -virtualTopRow * RenderConfig.RowHeight;
-            startAskIndex = 0;
-            askRowsToRender = Math.Min(nonEmptyAsks.Length, Math.Max(0, visibleRows + virtualTopRow));
-            startBidIndex = 0;
-            var bidRowsAvailable = Math.Max(0, visibleRows + virtualTopRow - nonEmptyAsks.Length);
-            bidRowsToRender = Math.Min(nonEmptyBids.Length, bidRowsAvailable);
-        }
-        else if (virtualTopRow < nonEmptyAsks.Length)
-        {
-            startAskIndex = virtualTopRow;
-            askRowsToRender = Math.Min(nonEmptyAsks.Length - startAskIndex, visibleRows);
-            startBidIndex = 0;
-            var bidRowsAvailable = visibleRows - askRowsToRender;
-            bidRowsToRender = Math.Min(nonEmptyBids.Length, bidRowsAvailable);
-        }
-        else if (virtualTopRow < totalLevels)
-        {
-            startAskIndex = nonEmptyAsks.Length;
-            askRowsToRender = 0;
-            var bidStartRow = virtualTopRow - nonEmptyAsks.Length;
-            startBidIndex = bidStartRow;
-            bidRowsToRender = Math.Min(nonEmptyBids.Length - startBidIndex, visibleRows);
-        }
-        else
-        {
-            startAskIndex = nonEmptyAsks.Length;
-            askRowsToRender = 0;
-            startBidIndex = nonEmptyBids.Length;
-            bidRowsToRender = 0;
-        }
-
-        var firstRowIndex = (int)(topOffset / RenderConfig.RowHeight);
-
-        return new DensePackingLayout(
-            nonEmptyAsks,
-            nonEmptyBids,
-            startAskIndex,
-            askRowsToRender,
-            startBidIndex,
-            bidRowsToRender,
-            topOffset,
-            firstRowIndex);
-    }
-
     /// <summary>
     /// Levels with quantity, ascending by price, one per price (the last one wins). Snapshots
     /// arrive sorted and unique, so the dedupe + sort only runs for input that isn't
     /// </summary>
-    private static BookLevel[] NonEmptyLevels(BookLevel[] levels, in LevelStats stats)
+    internal static BookLevel[] NonEmptyLevels(BookLevel[] levels, in LevelStats stats)
     {
         if (!stats.NonEmptyAscending)
         {
@@ -1341,15 +1473,20 @@ public class SkiaRenderer : IDisposable
         return nonEmpty;
     }
 
+    // Each row's top grid line, as ClearRow draws it
     private void DrawGridLines(SKCanvas canvas, ViewportManager viewport)
     {
-        var visibleRows = viewport.Height / RenderConfig.RowHeight;
-
-        for (int i = 0; i <= visibleRows; i++)
+        for (var y = _headerHeight; y < viewport.Height; y += RenderConfig.RowHeight)
         {
-            DrawGridLine(canvas, viewport, i * RenderConfig.RowHeight);
+            DrawGridLine(canvas, viewport, y);
         }
     }
+
+    // Y of a row's top edge in the frame being rendered
+    private int RowTop(int rowIndex) => _headerHeight + rowIndex * RenderConfig.RowHeight;
+
+    // Rows that fit whole below the header of the pixels _rows describes
+    private int FullRows() => Math.Max(0, (_rowsPixels.Height - _headerHeight) / RenderConfig.RowHeight);
 
     /// <summary>
     /// Draw individual order bars for MBO mode with proportional sizing (mirrors TypeScript drawIndividualOrders)
@@ -1464,13 +1601,23 @@ public class SkiaRenderer : IDisposable
         return showOrderCount ? _quantityWithCountTexts.Get((quantity, orders, side)) : _quantityTexts.Get(quantity);
     }
 
-    // Quantity text depends on MinQuantityThreshold, so clear both text caches when it changes
+    /// <summary>
+    /// Work cell text: "10 (2)" (mirrors TypeScript workText)
+    /// </summary>
+    private string WorkText(decimal quantity, int count)
+    {
+        EnsureQuantityTexts();
+        return _workTexts.Get((quantity, count));
+    }
+
+    // Quantity text depends on MinQuantityThreshold, so clear the text caches when it changes
     private void EnsureQuantityTexts()
     {
         if (_quantityTextThreshold != _config.MinQuantityThreshold)
         {
             _quantityTexts.Clear();
             _quantityWithCountTexts.Clear();
+            _workTexts.Clear();
             _quantityTextThreshold = _config.MinQuantityThreshold;
         }
     }
@@ -2015,6 +2162,15 @@ public class SkiaRenderer : IDisposable
         _dirtyRowPaint?.Dispose();
         _ownOrderBorderPaint?.Dispose();
         _segmentTextPaint?.Dispose();
+        _headerBackgroundPaint?.Dispose();
+        _workBackgroundPaint?.Dispose();
+        _ltqBackgroundPaint?.Dispose();
+        _ltqBuyPaint?.Dispose();
+        _ltqSellPaint?.Dispose();
+        _ltqUnknownPaint?.Dispose();
+        _ltqTextPaint?.Dispose();
+        _workBuyTextPaint?.Dispose();
+        _workSellTextPaint?.Dispose();
         _textBlobs.Dispose();
         _segmentTextBlobs.Dispose();
         _cachedImage?.Dispose();

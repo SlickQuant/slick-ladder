@@ -1,4 +1,4 @@
-import { BookLevel } from './types';
+import { BookLevel, Side, Trade, WorkingOrders } from './types';
 
 /**
  * Returns the number of decimal places needed to represent a value.
@@ -19,8 +19,47 @@ export function getDecimalPlaces(value: number): number {
  * with displayTickSize=0.10 → bid stays at 50000.00, ask moves to 50000.10).
  */
 export function bucketPrice(price: number, displayTickSize: number, roundUp: boolean = false): number {
-    const raw = (roundUp ? Math.ceil : Math.floor)(price / displayTickSize) * displayTickSize;
+    return snapToBucket(price, displayTickSize, roundUp ? Math.ceil : Math.floor);
+}
+
+// A tick count this close to a whole number is that number. Float division puts 100.3 / 0.1 at
+// 1002.9999999999999, which Math.floor would round a bucket low
+const WHOLE_TICK_EPSILON = 1e-6;
+
+function snapToBucket(price: number, displayTickSize: number, round: (ticks: number) => number): number {
+    const ticks = price / displayTickSize;
+    const whole = Math.round(ticks);
+    const raw = round(Math.abs(ticks - whole) < WHOLE_TICK_EPSILON ? whole : ticks) * displayTickSize;
     return parseFloat(raw.toFixed(getDecimalPlaces(displayTickSize)));
+}
+
+// Nearest whole tick, half away from zero like C# MidpointRounding.AwayFromZero. The epsilon
+// absorbs float error (100.15 / 0.1 = 1001.4999...)
+const roundHalfAway = (ticks: number): number => Math.sign(ticks) * Math.floor(Math.abs(ticks) + 0.5 + 1e-6);
+
+/**
+ * Display bucket of a trade's price: a buyer aggressor lifted an ask, so it rounds up like asks,
+ * a seller hit a bid and rounds down like bids. Unknown rounds to the nearest bucket.
+ * Mirrors PriceLadderViewModel.TradeBucketPrice
+ */
+export function tradeBucketPrice(trade: Trade, displayTickSize: number): number {
+    const round = trade.aggressor === Side.BID ? Math.ceil : trade.aggressor === Side.ASK ? Math.floor : roundHalfAway;
+    return snapToBucket(trade.price, displayTickSize, round);
+}
+
+/**
+ * Working orders summed into display buckets, rounding like the levels of their side
+ */
+export function aggregateWork(work: Map<number, WorkingOrders>, displayTickSize: number, roundUp: boolean): Map<number, WorkingOrders> {
+    const buckets = new Map<number, WorkingOrders>();
+    for (const [price, orders] of work) {
+        const bp = bucketPrice(price, displayTickSize, roundUp);
+        const existing = buckets.get(bp);
+        buckets.set(bp, existing
+            ? { quantity: existing.quantity + orders.quantity, count: existing.count + orders.count }
+            : orders);
+    }
+    return buckets;
 }
 
 /**

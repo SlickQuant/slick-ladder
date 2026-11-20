@@ -17,7 +17,7 @@ const event = (fields) => ({ preventDefault: () => {}, ...fields });
 const assertNear = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`);
 
 // Bug: recreating the renderer (volume bars / order count toggle) reset removal mode to 'removeRow'
-for (const toggle of ['setShowVolumeBars', 'setShowOrderCount']) {
+for (const toggle of ['setShowVolumeBars', 'setShowOrderCount', 'setShowWorkColumn', 'setShowLtqColumn', 'setShowHeader']) {
     test(`${toggle} keeps removal mode set at runtime`, () => {
         const ladder = createLadder();
         ladder.setRemovalMode('showEmpty');
@@ -285,7 +285,7 @@ test('showEmpty: a deep book places the same levels as a full scan', () => {
     renderer.render(snapshotOf([level(Side.ASK, 100.01, 1)], [level(Side.BID, 100, 1)]));
     const reference = renderer.getCenterPrice();
     const midRow = Math.floor(renderer.visibleRows / 2);
-    const bottom = midRow - Math.ceil(height / renderer.rowHeight) + 1; // Ticks from the reference price
+    const bottom = midRow - renderer.rowCount() + 1; // Ticks from the reference price
     const ticks = [];
     for (let tick = -1000; tick <= 1000; tick++) ticks.push(tick);
     ticks.push(midRow + 0.49, midRow + 0.5, midRow + 0.51, bottom - 0.49, bottom - 0.5, bottom - 0.51);
@@ -304,8 +304,9 @@ test('showEmpty: a deep book places the same levels as a full scan', () => {
     const windowed = bars(snapshotOf(asks, bids));
     const scanned = bars(snapshotOf([...asks].reverse(), [...bids].reverse()));
     assert.deepEqual(windowed, scanned);
-    assert.equal(windowed.size, Math.ceil(height / renderer.rowHeight), 'a bar on every row');
-    assert.equal(windowed.get(0).length, 4, 'top row: its own price and the one 0.49 ticks above, both sides');
+    assert.equal(windowed.size, renderer.rowCount(), 'a bar on every row');
+    const topRow = renderer.rowTop(0) / renderer.rowHeight; // Below the header
+    assert.equal(windowed.get(topRow).length, 4, 'top row: its own price and the one 0.49 ticks above, both sides');
 });
 
 // A queue of 8+ orders keeps its largest order by array, so a changed queue must be scanned again
@@ -326,8 +327,9 @@ test('MBO: segments rescale when a long queue\'s largest order changes', () => {
 // Bug: the segment drag limit was found only when the segment scale changed by 20% or more, so a
 // level that grew wider without a new largest order couldn't be dragged to its end
 test('MBO: a segment drag reaches the end of the widest level as the book changes', () => {
-    // No order count: it would widen the qty column, and the refit canvas has a narrower bar column
-    const ladder = new PriceLadder({ container: fakeContainer(), mode: 'MBO', showOrderCount: false });
+    // A wide ladder, so one order fits its bar column. No order count: it would widen the qty
+    // column, and the refit canvas has the default, narrower bar column
+    const ladder = new PriceLadder({ container: fakeContainer(), width: 800, mode: 'MBO', showOrderCount: false });
     const { renderer } = ladder;
     apply(ladder, [[Side.BID, 100, 100, 1], [Side.ASK, 100.01, 100, 2]]);
     render(ladder);
@@ -422,7 +424,7 @@ test('level click passes the mouse button, back/forward buttons are ignored', ()
     const { ladder, bidX, priceX, askX, listeners } = clickLadder((...args) => { calls.push(args); return true; });
     const row = [...Array(30).keys()].find((r) => ladder.renderer.rowToLevelInfo(r) !== null);
     const price = ladder.renderer.rowToLevelInfo(row).price;
-    const at = (button, clientX) => event({ button, clientX, clientY: row * 24 + 1 });
+    const at = (button, clientX) => event({ button, clientX, clientY: ladder.renderer.rowTop(row) + 1 });
 
     listeners.click(at(0, bidX));
     listeners.auxclick(at(1, askX));
@@ -444,9 +446,10 @@ for (const [label, onLevelClick, recenters] of [
     test(`middle-click on a qty column when onLevelClick ${label}: ${recenters ? 're-centers' : 'stays'}`, () => {
         const { ladder, bidX, listeners } = clickLadder(onLevelClick, { removalMode: 'showEmpty' });
         ladder.renderer.setCenterPrice(105);
-        listeners.mousedown(event({ button: 1, clientX: bidX, clientY: 0 }));
+        const clientY = ladder.renderer.rowTop(0) + 1;
+        listeners.mousedown(event({ button: 1, clientX: bidX, clientY }));
         assertNear(ladder.renderer.getCenterPrice(), 105); // Decided on auxclick
-        listeners.auxclick(event({ button: 1, clientX: bidX, clientY: 0 }));
+        listeners.auxclick(event({ button: 1, clientX: bidX, clientY }));
         assertNear(ladder.renderer.getCenterPrice(), recenters ? 100.01 : 105);
     });
 }
@@ -472,7 +475,7 @@ test('click on a wide ladder\'s price column is not a level click', () => {
     const { priceX, askQtyX } = renderer.getColumnPositions();
     assert.ok(renderer.qtyColWidth > COL_WIDTH, 'qty column wider than the default');
     const row = [...Array(30).keys()].find((r) => renderer.rowToLevelInfo(r) !== null);
-    const at = (clientX) => event({ button: 0, clientX, clientY: row * 24 + 1 });
+    const at = (clientX) => event({ button: 0, clientX, clientY: renderer.rowTop(row) + 1 });
 
     listeners.click(at(priceX + renderer.priceColWidth - 1));
     assert.deepEqual(calls, []);
@@ -497,11 +500,14 @@ test('bar drag starts at the bar column of a wide ladder', () => {
     assert.equal(interactionHandler.isDraggingBar, true, 'bar column');
 });
 
-// Text drawn by a full repaint, with its x (the first render may resize, which swaps the context)
+// Text drawn on the rows by a full repaint, with its x (the first render may resize, which swaps
+// the context). Header titles are left out
 function renderTexts(ladder) {
     render(ladder);
     const texts = [];
-    ladder.renderer.offscreenCtx.fillText = (text, x) => texts.push([text, x]);
+    ladder.renderer.offscreenCtx.fillText = (text, x, y) => {
+        if (y >= ladder.renderer.headerHeight) texts.push([text, x]);
+    };
     ladder.renderer.needsFullRedraw = true;
     render(ladder);
     return texts;

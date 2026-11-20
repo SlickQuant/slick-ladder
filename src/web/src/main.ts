@@ -8,19 +8,25 @@ import {
     Side,
     OrderUpdate,
     OrderUpdateType,
+    CanvasColors,
+    Trade,
+    WorkingOrders,
     DEFAULT_COLORS,
     COL_WIDTH,
     VOLUME_BAR_WIDTH_MULTIPLIER,
-    MIN_BAR_COLUMN_WIDTH,
     DEFAULT_MBO_ORDER_SIZE_FILTER,
     DEFAULT_MIN_QUANTITY_THRESHOLD
 } from './types';
 import { MBOManager } from './mbo-manager';
 import { SortedLevels } from './sorted-levels';
-import { aggregateLevels } from './aggregation';
+import { aggregateLevels, aggregateWork, bucketPrice, tradeBucketPrice } from './aggregation';
 
-// Bid qty, price and ask qty at their default width. The renderer widens them to fit their text
-const FIXED_COLUMNS_WIDTH = 3 * COL_WIDTH;
+// The ladder's width with every column at its default width: bid qty, price, ask qty, and the
+// Work, LTQ and bar columns when shown. The renderer widens columns to fit their text and the
+// canvas with them
+const defaultLadderWidth = (showVolumeBars: boolean, showWorkColumn: boolean, showLtqColumn: boolean): number =>
+    Math.round((3 + (showWorkColumn ? 1 : 0) + (showLtqColumn ? 1 : 0)) * COL_WIDTH +
+        (showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0));
 
 /**
  * Main Price Ladder component for web.
@@ -44,33 +50,25 @@ export class PriceLadder {
     private bookChanged: boolean = true; // Since the last render
     private sortedBids: SortedLevels = new SortedLevels(); // The maps' levels in price order, for snapshots
     private sortedAsks: SortedLevels = new SortedLevels();
+    private bidWork: Map<number, WorkingOrders> = new Map(); // Our working orders by price
+    private askWork: Map<number, WorkingOrders> = new Map();
+    private lastTrade: Trade | null = null;
 
     // Animation frame request
     private rafId: number = 0;
-
-    // Responsive layout
-    private barColumnWidth: number = 0;
-    private resizeObserver?: ResizeObserver;
 
     constructor(config: PriceLadderConfig) {
         this.container = config.container;
 
         const showVolumeBars = config.showVolumeBars !== undefined ? config.showVolumeBars : true;
         const showOrderCount = config.showOrderCount !== undefined ? config.showOrderCount : true;
-
-        // Calculate bar column width from container (or use default)
-        const containerWidth = config.container.clientWidth || 800;
-        const availableWidth = containerWidth - FIXED_COLUMNS_WIDTH;
-        this.barColumnWidth = showVolumeBars
-            ? Math.max(MIN_BAR_COLUMN_WIDTH, availableWidth)
-            : 0;
-
-        const defaultWidth = Math.round(FIXED_COLUMNS_WIDTH + this.barColumnWidth);
+        const showWorkColumn = config.showWorkColumn ?? true;
+        const showLtqColumn = config.showLtqColumn ?? true;
 
         // Apply defaults
         this.config = {
             container: config.container,
-            width: config.width || defaultWidth,
+            width: config.width || defaultLadderWidth(showVolumeBars, showWorkColumn, showLtqColumn),
             height: config.height || 600,
             rowHeight: config.rowHeight || 24,
             visibleLevels: config.visibleLevels || 50,
@@ -80,12 +78,16 @@ export class PriceLadder {
             readOnly: config.readOnly || false,
             showVolumeBars,
             showOrderCount,
+            showWorkColumn,
+            showLtqColumn,
+            showHeader: config.showHeader ?? true,
             mboOrderSizeFilter: Math.max(0, config.mboOrderSizeFilter ?? DEFAULT_MBO_ORDER_SIZE_FILTER),
             minQuantityThreshold: config.minQuantityThreshold ?? DEFAULT_MIN_QUANTITY_THRESHOLD,
             removalMode: config.removalMode || 'removeRow',
             autoCenter: config.autoCenter ?? true,
-            colors: config.colors || DEFAULT_COLORS,
+            colors: { ...DEFAULT_COLORS, ...config.colors },
             onLevelClick: config.onLevelClick || (() => {}),
+            onWorkClick: config.onWorkClick || (() => {}),
             onPriceHover: config.onPriceHover || (() => {})
         };
         this.dataMode = this.config.mode;
@@ -96,12 +98,6 @@ export class PriceLadder {
         // // Prevent canvas from stretching to fill container
         // this.canvas.style.maxWidth = '100%';
         this.container.appendChild(this.canvas);
-
-        // Add resize observer for responsive layout
-        this.resizeObserver = new ResizeObserver(() => {
-            this.handleResize();
-        });
-        this.resizeObserver.observe(this.container);
 
         // Create renderer
         this.renderer = this.createRenderer();
@@ -129,13 +125,18 @@ export class PriceLadder {
             this.config.width,
             this.config.height,
             this.config.rowHeight,
-            this.config.colors,
+            this.config.colors as CanvasColors, // Merged with DEFAULT_COLORS in the constructor
             this.config.showVolumeBars,
             this.config.showOrderCount,
             this.config.tickSize,
             this.config.mboOrderSizeFilter,
             this.config.minQuantityThreshold,
-            this.config.displayTickSize
+            this.config.displayTickSize,
+            {
+                showWorkColumn: this.config.showWorkColumn,
+                showLtqColumn: this.config.showLtqColumn,
+                showHeader: this.config.showHeader
+            }
         );
         renderer.setRemovalMode(this.config.removalMode);
         renderer.setAutoCenter(this.config.autoCenter);
@@ -151,6 +152,9 @@ export class PriceLadder {
         this.interactionHandler.onPriceClick = (price, side, button) =>
             this.config.onLevelClick(price, side, button) === true;
 
+        this.interactionHandler.onWorkClick = (price, button) =>
+            this.config.onWorkClick(price, button) === true;
+
         this.interactionHandler.onPriceHover = (price) => {
             this.config.onPriceHover?.(price);
         };
@@ -159,30 +163,6 @@ export class PriceLadder {
             const currentOffset = this.renderer.getScrollOffset();
             this.renderer.setScrollOffset(currentOffset + scrollTicks);
         };
-    }
-
-    /**
-     * Handle container resize for responsive layout
-     */
-    private handleResize(): void {
-        const showVolumeBars = this.config.showVolumeBars;
-
-        const containerWidth = this.container.clientWidth || 800;
-        const availableWidth = containerWidth - FIXED_COLUMNS_WIDTH;
-        const newBarColumnWidth = showVolumeBars
-            ? Math.max(MIN_BAR_COLUMN_WIDTH, availableWidth)
-            : 0;
-
-        if (newBarColumnWidth !== this.barColumnWidth) {
-            this.barColumnWidth = newBarColumnWidth;
-            this.renderer.updateBarColumnWidth(newBarColumnWidth);
-            const newWidth = Math.round(FIXED_COLUMNS_WIDTH + newBarColumnWidth);
-            this.canvas.width = newWidth;
-            // Also update CSS width to prevent stretching
-            this.canvas.style.width = `${newWidth}px`;
-            // Trigger a re-render with current snapshot
-            this.renderNow();
-        }
     }
 
     /**
@@ -306,7 +286,7 @@ export class PriceLadder {
                 ? (bestBid + bestAsk) / 2
                 : null;
 
-            return {
+            return this.attachCells({
                 bestBid,
                 bestAsk,
                 midPrice,
@@ -315,7 +295,7 @@ export class PriceLadder {
                 timestamp: Date.now(),
                 bidOrders: isAggregating ? null : this.mboManager.getBidOrders(),
                 askOrders: isAggregating ? null : this.mboManager.getAskOrders()
-            };
+            });
         }
 
         // The maps hold only levels with quantity. Levels below the threshold show as "<threshold"
@@ -329,14 +309,34 @@ export class PriceLadder {
             ? (bestBid + bestAsk) / 2
             : null;
 
-        return {
+        return this.attachCells({
             bestBid,
             bestAsk,
             midPrice,
             bids,
             asks,
             timestamp: Date.now()
-        };
+        });
+    }
+
+    /**
+     * Add our working orders and the last trade to a snapshot, in display buckets when the
+     * display tick aggregates levels
+     */
+    protected attachCells(snapshot: OrderBookSnapshot): OrderBookSnapshot {
+        const dts = this.config.displayTickSize;
+        const trade = this.lastTrade;
+        if (dts > this.config.tickSize) {
+            snapshot.bidWork = aggregateWork(this.bidWork, dts, false);
+            snapshot.askWork = aggregateWork(this.askWork, dts, true);
+            snapshot.lastTrade = trade && { ...trade, price: tradeBucketPrice(trade, dts) };
+        } else {
+            // Read only by the render that takes the snapshot, so the maps are shared
+            snapshot.bidWork = this.bidWork;
+            snapshot.askWork = this.askWork;
+            snapshot.lastTrade = trade;
+        }
+        return snapshot;
     }
 
     /**
@@ -388,6 +388,42 @@ export class PriceLadder {
             level.hasOwnOrders = value;
             this.bookChanged = true;
         }
+    }
+
+    /**
+     * Set our own working orders at a price: their total quantity and how many there are, shown
+     * in the Work column as "10 (2)". Quantity or count 0 clears the price. Kept apart from the
+     * book, so it shows before the market data has the level
+     */
+    /**
+     * Price of the row an order at price on side shows on: its display bucket when displayTickSize
+     * aggregates levels (bids round down, asks up), else the price rounded to tick. Match a Work
+     * click's price with your orders through it
+     */
+    public displayPrice(price: number, side: Side): number {
+        const dts = this.config.displayTickSize;
+        const rounded = this.roundToTick(price);
+        return dts > this.config.tickSize ? bucketPrice(rounded, dts, side === Side.ASK) : rounded;
+    }
+
+    public setWorkingOrders(price: number, side: Side, quantity: number, count: number): void {
+        const roundedPrice = this.roundToTick(price);
+        const work = side === Side.BID ? this.bidWork : this.askWork;
+        if (quantity > 0 && count > 0) {
+            work.set(roundedPrice, { quantity, count });
+        } else if (!work.delete(roundedPrice)) {
+            return; // Nothing to clear
+        }
+        this.bookChanged = true;
+    }
+
+    /**
+     * A trade from the feed: the LTQ column shows its quantity on its price, green when the buyer
+     * was the aggressor, red for the seller, white when unknown. Only the last trade is shown
+     */
+    public processTrade(trade: Trade): void {
+        this.lastTrade = { price: this.roundToTick(trade.price), quantity: trade.quantity, aggressor: trade.aggressor ?? null };
+        this.bookChanged = true;
     }
 
     /**
@@ -464,11 +500,27 @@ export class PriceLadder {
     }
 
     /**
-     * Calculate width based on visible columns: [bid_qty][price][ask_qty][bars], bars when enabled
+     * Calculate width based on visible columns: [work][bid_qty][price][ask_qty][ltq][bars], optional ones when enabled
      */
     private calculateWidth(): number {
-        const barWidth = this.config.showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
-        return Math.round(FIXED_COLUMNS_WIDTH + barWidth);
+        return defaultLadderWidth(this.config.showVolumeBars, this.config.showWorkColumn, this.config.showLtqColumn);
+    }
+
+    /**
+     * After a column or header toggle in config: a renderer with the new layout, then a render
+     */
+    protected applyLayoutChange(): void {
+        this.config.width = this.calculateWidth();
+        this.renderer = this.createRenderer();
+        this.interactionHandler.setRenderer(this.renderer);
+        this.rerender();
+    }
+
+    /**
+     * Render the book again (WASM re-renders its last snapshot instead)
+     */
+    protected rerender(): void {
+        this.renderNow();
     }
 
     /**
@@ -476,18 +528,7 @@ export class PriceLadder {
      */
     public setShowVolumeBars(show: boolean): void {
         this.config.showVolumeBars = show;
-        // Update width based on new settings
-        const newWidth = this.calculateWidth();
-        this.config.width = newWidth;
-
-        // Recreate renderer with new settings
-        this.renderer = this.createRenderer();
-
-        // Update interaction handler with new renderer
-        this.interactionHandler.setRenderer(this.renderer);
-
-        // Re-render current snapshot
-        this.renderNow();
+        this.applyLayoutChange();
     }
 
     /**
@@ -495,18 +536,31 @@ export class PriceLadder {
      */
     public setShowOrderCount(show: boolean): void {
         this.config.showOrderCount = show;
-        // Update width based on new settings
-        const newWidth = this.calculateWidth();
-        this.config.width = newWidth;
+        this.applyLayoutChange();
+    }
 
-        // Recreate renderer with new settings
-        this.renderer = this.createRenderer();
+    /**
+     * Show or hide the Work column (our working orders, left of Bid)
+     */
+    public setShowWorkColumn(show: boolean): void {
+        this.config.showWorkColumn = show;
+        this.applyLayoutChange();
+    }
 
-        // Update interaction handler with new renderer
-        this.interactionHandler.setRenderer(this.renderer);
+    /**
+     * Show or hide the LTQ column (last traded quantity, right of Ask)
+     */
+    public setShowLtqColumn(show: boolean): void {
+        this.config.showLtqColumn = show;
+        this.applyLayoutChange();
+    }
 
-        // Re-render current snapshot
-        this.renderNow();
+    /**
+     * Show or hide the column titles above the rows
+     */
+    public setShowHeader(show: boolean): void {
+        this.config.showHeader = show;
+        this.applyLayoutChange();
     }
 
     /**
@@ -590,6 +644,9 @@ export class PriceLadder {
         this.sortedBids = new SortedLevels();
         this.sortedAsks = new SortedLevels();
         this.mboManager.reset();
+        this.bidWork.clear();
+        this.askWork.clear();
+        this.lastTrade = null;
         this.updateCount = 0;
         this.bookChanged = true;
         // Reset renderer's centerPrice for Show Empty Rows mode
@@ -606,7 +663,6 @@ export class PriceLadder {
      */
     public destroy(): void {
         cancelAnimationFrame(this.rafId);
-        this.resizeObserver?.disconnect();
         this.interactionHandler.destroy();
         this.container.removeChild(this.canvas);
     }

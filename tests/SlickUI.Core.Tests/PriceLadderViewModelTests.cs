@@ -154,23 +154,35 @@ public class LevelClickTests
         Assert.False(viewModel.HandlePriceClick(100m, Side.BID, ClickButton.Left));
     }
 
-    // Order count shares the qty column, so the columns are Bid Qty | Price | Ask Qty | Bars either way
+    // Order count shares the qty column, so the columns are Bid Qty | Price | Ask Qty | Bars either
+    // way, with Work on the left and LTQ before the bars when shown
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void QtyColumnSideAt_MatchesColumnBounds(bool showOrderCount)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public void QtyColumnSideAt_MatchesColumnBounds(bool showOrderCount, bool cellColumns)
     {
-        var viewport = new ViewportManager { ShowOrderCount = showOrderCount, QtyColWidth = 80, PriceColWidth = 70 };
-        Assert.Equal(0, viewport.BidQtyColumnX);
-        Assert.Equal(150, viewport.AskQtyColumnX);
-        Assert.Equal(230, viewport.VolumeBarColumnX);
+        var viewport = new ViewportManager
+        {
+            ShowOrderCount = showOrderCount, ShowWorkColumn = cellColumns, ShowLtqColumn = cellColumns,
+            QtyColWidth = 80, PriceColWidth = 70, WorkColWidth = 60, LtqColWidth = 50
+        };
+        var left = cellColumns ? 60 : 0;
+        Assert.Equal(cellColumns ? 0 : null, viewport.WorkColumnX);
+        Assert.Equal(left, viewport.BidQtyColumnX);
+        Assert.Equal(left + 150, viewport.AskQtyColumnX);
+        Assert.Equal(cellColumns ? left + 230 : null, viewport.LtqColumnX);
+        var bars = left + 230 + (cellColumns ? 50 : 0);
+        Assert.Equal(bars, viewport.VolumeBarColumnX);
 
-        Assert.Equal(Side.BID, viewport.QtyColumnSideAt(0));
-        Assert.Equal(Side.BID, viewport.QtyColumnSideAt(79.9f));
-        Assert.Null(viewport.QtyColumnSideAt(80)); // Price column
-        Assert.Equal(Side.ASK, viewport.QtyColumnSideAt(150));
-        Assert.Equal(Side.ASK, viewport.QtyColumnSideAt(229.9f));
-        Assert.Null(viewport.QtyColumnSideAt(230)); // Bars
+        Assert.Null(viewport.QtyColumnSideAt(left - 0.1f)); // Work column, or left of the ladder
+        Assert.Equal(Side.BID, viewport.QtyColumnSideAt(left));
+        Assert.Equal(Side.BID, viewport.QtyColumnSideAt(left + 79.9f));
+        Assert.Null(viewport.QtyColumnSideAt(left + 80)); // Price column
+        Assert.Equal(Side.ASK, viewport.QtyColumnSideAt(left + 150));
+        Assert.Equal(Side.ASK, viewport.QtyColumnSideAt(left + 229.9f));
+        Assert.Null(viewport.QtyColumnSideAt(left + 230)); // LTQ or bars
+        Assert.Null(viewport.QtyColumnSideAt(bars));
     }
 }
 

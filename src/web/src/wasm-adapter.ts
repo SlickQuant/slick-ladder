@@ -1,4 +1,4 @@
-import { PriceLevel, OrderBookSnapshot, OrderUpdate, OrderUpdateType, PriceLadderConfig, Side } from './types';
+import { PriceLevel, OrderBookSnapshot, OrderUpdate, OrderUpdateType, PriceLadderConfig, Side, Trade } from './types';
 import type { WorkerRequest, WorkerResponse } from './wasm-types';
 import { PriceLadder } from './main';
 import { aggregateLevels } from './aggregation';
@@ -21,6 +21,7 @@ export class WasmPriceLadder extends PriceLadder {
     private lastWorkerSnapshot: OrderBookSnapshot | null = null; // Before aggregation
     // key: `${side}-${price}` — levels that should have hasOwnOrders=true
     private ownOrderOverrides: Map<string, true> = new Map();
+    private cellsFrame: number = 0; // rAF that re-renders new working orders or trades, 0 when none
 
     constructor(config: PriceLadderConfig) {
         super(config);
@@ -178,47 +179,39 @@ export class WasmPriceLadder extends PriceLadder {
     }
 
     /**
-     * Set volume bars visibility
-     * Overrides base class to re-render last snapshot instead of calling getSnapshot()
+     * Re-render the last snapshot after a layout toggle (getSnapshot() would be empty: the book
+     * lives in the worker)
      */
-    public override setShowVolumeBars(show: boolean): void {
-        const config = (this as any).config;
-        config.showVolumeBars = show;
-        // Update width based on new settings
-        const newWidth = (this as any).calculateWidth();
-        config.width = newWidth;
-
-        // Recreate renderer with new settings
-        this.renderer = this.createRenderer();
-
-        // Update interaction handler with new renderer
-        const interactionHandler = (this as any).interactionHandler;
-        interactionHandler.setRenderer(this.renderer);
-
-        // Re-render last snapshot (not getSnapshot() which would be empty)
+    protected override rerender(): void {
         this.reRenderLastSnapshot();
     }
 
     /**
-     * Show or hide the order count in the qty column
-     * Overrides base class to re-render last snapshot instead of calling getSnapshot()
+     * Working orders and trades stay on this thread and are added to each worker snapshot. A
+     * change re-renders the last snapshot on the next frame, so it shows while the book is idle
      */
-    public override setShowOrderCount(show: boolean): void {
-        const config = (this as any).config;
-        config.showOrderCount = show;
-        // Update width based on new settings
-        const newWidth = (this as any).calculateWidth();
-        config.width = newWidth;
+    public override setWorkingOrders(price: number, side: Side, quantity: number, count: number): void {
+        super.setWorkingOrders(price, side, quantity, count);
+        this.scheduleCellsRender();
+    }
 
-        // Recreate renderer with new settings
-        this.renderer = this.createRenderer();
+    public override processTrade(trade: Trade): void {
+        super.processTrade(trade);
+        this.scheduleCellsRender();
+    }
 
-        // Update interaction handler with new renderer
-        const interactionHandler = (this as any).interactionHandler;
-        interactionHandler.setRenderer(this.renderer);
-
-        // Re-render last snapshot (not getSnapshot() which would be empty)
-        this.reRenderLastSnapshot();
+    // One render per frame however many trades arrive
+    private scheduleCellsRender(): void {
+        if (this.cellsFrame !== 0 || !this.lastSnapshot) {
+            return;
+        }
+        this.cellsFrame = requestAnimationFrame(() => {
+            this.cellsFrame = 0;
+            if (this.lastSnapshot) {
+                this.lastSnapshot = this.attachCells({ ...this.lastSnapshot });
+                this.renderer.render(this.lastSnapshot);
+            }
+        });
     }
 
     /**
@@ -255,6 +248,7 @@ export class WasmPriceLadder extends PriceLadder {
      */
     public override destroy(): void {
         super.destroy();
+        cancelAnimationFrame(this.cellsFrame);
         this.worker.terminate();
     }
 
@@ -289,6 +283,7 @@ export class WasmPriceLadder extends PriceLadder {
             if (dts > ts) {
                 this.lastSnapshot = this.applyAggregation(this.lastSnapshot, dts, ts);
             }
+            this.lastSnapshot = this.attachCells(this.lastSnapshot);
             this.renderer.render(this.lastSnapshot);
         }
     }
@@ -449,7 +444,7 @@ export class WasmPriceLadder extends PriceLadder {
         const config = (this as any).config;
         const dts: number = config.displayTickSize ?? config.tickSize ?? 0.01;
         const ts: number = config.tickSize ?? 0.01;
-        const aggregatedSnapshot = dts > ts ? this.applyAggregation(snapshot, dts, ts) : snapshot;
+        const aggregatedSnapshot = this.attachCells(dts > ts ? this.applyAggregation(snapshot, dts, ts) : snapshot);
 
         // Store the last snapshot for re-rendering on viewport changes
         this.lastSnapshot = aggregatedSnapshot;

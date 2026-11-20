@@ -24,6 +24,7 @@ export class InteractionHandler {
 
     // Callbacks
     public onPriceClick?: (price: number | null, side: Side, button: ClickButton) => boolean; // Returns handled
+    public onWorkClick?: (price: number | null, button: ClickButton) => boolean; // Returns handled
     public onPriceHover?: (price: number | null) => void;
     public onScroll?: (delta: number) => void;
     public onRenderNeeded?: () => void;
@@ -58,12 +59,18 @@ export class InteractionHandler {
         this.listeners.push([type, listener]);
     }
 
-    // Side of the quantity column under x, null outside both
-    private qtySideAt(x: number): Side | null {
+    // Side of the quantity cell at (x, y), null outside both qty columns or on the header
+    private qtySideAt(x: number, y: number): Side | null {
+        if (this.renderer.screenYToRow(y) < 0) return null;
         const column = this.renderer.screenXToColumn(x);
         if (column === this.renderer.getBidQtyColumn()) return Side.BID;
         if (column === this.renderer.getAskQtyColumn()) return Side.ASK;
         return null;
+    }
+
+    // A Work cell at (x, y), not the header
+    private isWorkAt(x: number, y: number): boolean {
+        return this.renderer.screenYToRow(y) >= 0 && this.renderer.screenXToColumn(x) === this.renderer.getWorkColumn();
     }
 
     private handleClick(event: MouseEvent): void {
@@ -77,17 +84,21 @@ export class InteractionHandler {
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
 
-        // Only trigger trade if clicking on quantity columns.
-        // BID qty column = BUY, ASK qty column = SELL at this price
-        const side = this.qtySideAt(x);
-        if (side === null) return;
-
-        const levelInfo = this.renderer.rowToLevelInfo(this.renderer.screenYToRow(y));
-        const price = levelInfo !== null ? levelInfo.price : null;
+        // Clicks on the quantity columns trade (BID qty column = BUY, ASK qty column = SELL at
+        // this price), and on the Work column act on our orders at the row's price
+        const row = this.renderer.screenYToRow(y);
         const button = event.button as ClickButton;
-        const handled = this.onPriceClick?.(price, side, button) === true;
+        let handled: boolean;
+        if (this.isWorkAt(x, y)) {
+            handled = this.onWorkClick?.(this.renderer.rowPrice(row), button) === true;
+        } else {
+            const side = this.qtySideAt(x, y);
+            if (side === null) return;
+            const levelInfo = this.renderer.rowToLevelInfo(row);
+            handled = this.onPriceClick?.(levelInfo !== null ? levelInfo.price : null, side, button) === true;
+        }
 
-        // Middle-click on a qty column re-centers like anywhere else unless the app took it
+        // Middle-click on a qty or Work cell re-centers like anywhere else unless the app took it
         if (button === ClickButton.Middle && !handled) {
             this.renderer.recenter();
         }
@@ -152,12 +163,13 @@ export class InteractionHandler {
 
         const rect = this.canvas.getBoundingClientRect();
         const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
 
-        // Middle button (wheel click): re-center, suppress browser autoscroll. On a qty column
-        // the level click decides on auxclick, re-centering only if the app doesn't handle it
+        // Middle button (wheel click): re-center, suppress browser autoscroll. On a qty or Work
+        // cell the click decides on auxclick, re-centering only if the app doesn't handle it
         if (event.button === ClickButton.Middle) {
             event.preventDefault();
-            if (this.readOnly || this.qtySideAt(x) === null) {
+            if (this.readOnly || (this.qtySideAt(x, y) === null && !this.isWorkAt(x, y))) {
                 this.renderer.recenter();
             }
             return;

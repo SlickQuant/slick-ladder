@@ -5,6 +5,7 @@ using System.Reactive.Subjects;
 using ReactiveUI;
 using SlickLadder.Core;
 using SlickLadder.Core.Models;
+using SlickLadder.Rendering.Core;
 
 namespace SlickLadder.Rendering.ViewModels;
 
@@ -19,12 +20,11 @@ public enum ClickButton
 }
 
 /// <summary>
-/// Event args for a price level click
+/// Event args for a click on a ladder cell
 /// </summary>
-public class LevelClickEventArgs
+public abstract class CellClickEventArgs
 {
     public decimal? Price { get; }
-    public Side Side { get; }
     public ClickButton Button { get; }
 
     /// <summary>
@@ -32,11 +32,34 @@ public class LevelClickEventArgs
     /// </summary>
     public bool Handled { get; set; }
 
-    public LevelClickEventArgs(decimal? price, Side side, ClickButton button = ClickButton.Left)
+    protected CellClickEventArgs(decimal? price, ClickButton button)
     {
         Price = price;
-        Side = side;
         Button = button;
+    }
+}
+
+/// <summary>
+/// Event args for a price level click: a qty cell, Price null for an empty row
+/// </summary>
+public class LevelClickEventArgs : CellClickEventArgs
+{
+    public Side Side { get; }
+
+    public LevelClickEventArgs(decimal? price, Side side, ClickButton button = ClickButton.Left) : base(price, button)
+    {
+        Side = side;
+    }
+}
+
+/// <summary>
+/// Event args for a Work cell click. Price is the row's: its level's price, or in Show Empty Rows
+/// the row's own price, which holds working orders even without a level. Null for a row without one
+/// </summary>
+public class WorkClickEventArgs : CellClickEventArgs
+{
+    public WorkClickEventArgs(decimal? price, ClickButton button = ClickButton.Left) : base(price, button)
+    {
     }
 }
 
@@ -55,6 +78,11 @@ public class PriceLadderViewModel : ReactiveObject, IDisposable
     /// Event fired when user clicks a price level
     /// </summary>
     public event Action<LevelClickEventArgs>? OnLevelClick;
+
+    /// <summary>
+    /// Event fired when user clicks a Work cell (our working orders)
+    /// </summary>
+    public event Action<WorkClickEventArgs>? OnWorkClick;
 
     // Every snapshot is new, so no equality check (RaiseAndSetIfChanged compares the struct by reflection)
     public OrderBookSnapshot? CurrentSnapshot
@@ -96,6 +124,14 @@ public class PriceLadderViewModel : ReactiveObject, IDisposable
             this.RaiseAndSetIfChanged(ref _displayTickSize, clamped);
         }
     }
+
+    /// <summary>
+    /// Price of the row an order at price on side shows on: its display bucket when
+    /// DisplayTickSize aggregates levels (bids round down, asks up), else the price itself. Match a
+    /// Work click's price with your orders through it
+    /// </summary>
+    public decimal DisplayPrice(decimal price, Side side) =>
+        _displayTickSize > _tickSize ? BucketPrice(price, _displayTickSize, roundUp: side == Side.ASK) : price;
 
     public PriceLadderViewModel(decimal tickSize = 0.01m)
     {
@@ -181,16 +217,45 @@ public class PriceLadderViewModel : ReactiveObject, IDisposable
     /// <summary>
     /// Handle price level click. Returns true when a handler set Handled
     /// </summary>
-    public bool HandlePriceClick(decimal? price, Side side, ClickButton button = ClickButton.Left)
+    public bool HandlePriceClick(decimal? price, Side side, ClickButton button = ClickButton.Left) =>
+        Raise(OnLevelClick, () => new LevelClickEventArgs(price, side, button));
+
+    /// <summary>
+    /// Handle a click at (x, y) on a ladder laid out by viewport: a qty cell raises OnLevelClick
+    /// with the level drawn on its row, a Work cell OnWorkClick with its row's price. Returns true
+    /// when a handler set Handled, false anywhere else (the header, other columns, no book yet)
+    /// </summary>
+    public bool HandleClick(ViewportManager viewport, float x, float y, ClickButton button)
     {
-        var handler = OnLevelClick;
+        if (CurrentSnapshot is not { } snapshot || y < viewport.HeaderHeight)
+        {
+            return false;
+        }
+        if (viewport.WorkColumnAt(x))
+        {
+            return HandleWorkClick(viewport.RowPriceAt(snapshot, y), button);
+        }
+        // BID qty column = BUY (Side.BID), ASK qty column = SELL (Side.ASK)
+        var side = viewport.QtyColumnSideAt(x);
+        return side != null && HandlePriceClick(viewport.LevelPriceAt(snapshot, y), side.Value, button);
+    }
+
+    /// <summary>
+    /// Handle a Work cell click at a row's price. Returns true when a handler set Handled
+    /// </summary>
+    public bool HandleWorkClick(decimal? price, ClickButton button = ClickButton.Left) =>
+        Raise(OnWorkClick, () => new WorkClickEventArgs(price, button));
+
+    // Args are made only when someone listens
+    private static bool Raise<T>(Action<T>? handler, Func<T> args) where T : CellClickEventArgs
+    {
         if (handler == null)
         {
             return false;
         }
-        var args = new LevelClickEventArgs(price, side, button);
-        handler(args);
-        return args.Handled;
+        var click = args();
+        handler(click);
+        return click.Handled;
     }
 
     /// <summary>
@@ -200,9 +265,48 @@ public class PriceLadderViewModel : ReactiveObject, IDisposable
 
     private static decimal BucketPrice(decimal price, decimal displayTickSize, bool roundUp = false)
     {
-        var decimalPlaces = GetDecimalPlaces(displayTickSize);
-        var raw = (roundUp ? Math.Ceiling(price / displayTickSize) : Math.Floor(price / displayTickSize)) * displayTickSize;
-        return Math.Round(raw, decimalPlaces);
+        return SnapToBucket(roundUp ? Math.Ceiling(price / displayTickSize) : Math.Floor(price / displayTickSize), displayTickSize);
+    }
+
+    private static decimal SnapToBucket(decimal ticks, decimal displayTickSize)
+    {
+        return Math.Round(ticks * displayTickSize, GetDecimalPlaces(displayTickSize));
+    }
+
+    /// <summary>
+    /// Display bucket of a trade's price: a buyer aggressor lifted an ask, so it rounds up like asks,
+    /// a seller hit a bid and rounds down like bids. Unknown rounds to the nearest bucket, half away
+    /// from zero. Mirrors tradeBucketPrice in aggregation.ts
+    /// </summary>
+    internal static decimal TradeBucketPrice(Trade trade, decimal displayTickSize)
+    {
+        var ticks = trade.Price / displayTickSize;
+        return SnapToBucket(trade.Aggressor switch
+        {
+            Side.BID => Math.Ceiling(ticks),
+            Side.ASK => Math.Floor(ticks),
+            _ => Math.Round(ticks, MidpointRounding.AwayFromZero)
+        }, displayTickSize);
+    }
+
+    /// <summary>
+    /// Working orders summed into display buckets, rounding like the levels of their side
+    /// </summary>
+    private static Dictionary<decimal, WorkingOrders>? AggregateWork(Dictionary<decimal, WorkingOrders>? work, decimal displayTickSize, bool roundUp)
+    {
+        if (work == null)
+        {
+            return null;
+        }
+        var buckets = new Dictionary<decimal, WorkingOrders>();
+        foreach (var (price, orders) in work)
+        {
+            var bp = BucketPrice(price, displayTickSize, roundUp);
+            buckets[bp] = buckets.TryGetValue(bp, out var existing)
+                ? new WorkingOrders(existing.Quantity + orders.Quantity, existing.Count + orders.Count)
+                : orders;
+        }
+        return buckets;
     }
 
     private static int GetDecimalPlaces(decimal value)
@@ -232,6 +336,12 @@ public class PriceLadderViewModel : ReactiveObject, IDisposable
         result.Asks = asks;
         result.BidOrders = null;
         result.AskOrders = null;
+        result.BidWork = AggregateWork(snapshot.BidWork, displayTickSize, roundUp: false);
+        result.AskWork = AggregateWork(snapshot.AskWork, displayTickSize, roundUp: true);
+        if (snapshot.LastTrade != null)
+        {
+            result.LastTrade = snapshot.LastTrade with { Price = TradeBucketPrice(snapshot.LastTrade, displayTickSize) };
+        }
         return result;
     }
 

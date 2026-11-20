@@ -129,6 +129,32 @@
                                  Unchecked="ShowOrderCountCheckbox_Changed"
                                  Margin="0,0,0,10"/>
 
+                        <CheckBox x:Name="ShowWorkColumnCheckbox"
+                                 Content="Show Work Column"
+                                 Foreground="White"
+                                 IsChecked="True"
+                                 ToolTip="Our working orders, left of Bid. Click a qty cell to place one"
+                                 Checked="LayoutCheckbox_Changed"
+                                 Unchecked="LayoutCheckbox_Changed"
+                                 Margin="0,0,0,10"/>
+
+                        <CheckBox x:Name="ShowLtqColumnCheckbox"
+                                 Content="Show LTQ Column"
+                                 Foreground="White"
+                                 IsChecked="True"
+                                 ToolTip="Last traded quantity, right of Ask"
+                                 Checked="LayoutCheckbox_Changed"
+                                 Unchecked="LayoutCheckbox_Changed"
+                                 Margin="0,0,0,10"/>
+
+                        <CheckBox x:Name="ShowHeaderCheckbox"
+                                 Content="Show Header"
+                                 Foreground="White"
+                                 IsChecked="True"
+                                 Checked="LayoutCheckbox_Changed"
+                                 Unchecked="LayoutCheckbox_Changed"
+                                 Margin="0,0,0,10"/>
+
                         <CheckBox x:Name="AutoCenterCheckbox"
                                  Content="Auto Center"
                                  Foreground="White"

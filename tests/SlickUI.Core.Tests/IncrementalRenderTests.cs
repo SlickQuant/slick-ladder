@@ -76,6 +76,16 @@ public class IncrementalRenderTests
         }
 
         public void SetHasOwnOrders(decimal price, Side side) => _core.SetHasOwnOrders(price, side, true);
+
+        public void SetWorkingOrders(decimal price, Side side, decimal quantity, int count) =>
+            _core.SetWorkingOrders(price, side, quantity, count);
+
+        public Book Trade(decimal price, decimal quantity, Side? aggressor)
+        {
+            _core.ProcessTrade(price, quantity, aggressor);
+            _core.Flush();
+            return this;
+        }
     }
 
     /// <summary>
@@ -87,6 +97,7 @@ public class IncrementalRenderTests
         private readonly LevelRemovalMode _mode;
         private readonly bool _retained;
         private readonly bool _showOrderCount;
+        private readonly bool _cells;
         private readonly int _width;
         private readonly GRContext? _gpu;
 
@@ -94,9 +105,11 @@ public class IncrementalRenderTests
         public ViewportManager Viewport { get; }
         public SKSurface Surface { get; }
 
-        public Ladder(LevelRemovalMode mode, bool retained, bool showOrderCount = false, int width = Width, GRContext? gpu = null)
+        // cells: the Work and LTQ columns and the header, all on or all off (the layout before them)
+        public Ladder(LevelRemovalMode mode, bool retained, bool showOrderCount = false, int width = Width, GRContext? gpu = null,
+            bool cells = true)
         {
-            (_mode, _retained, _showOrderCount, _width, _gpu) = (mode, retained, showOrderCount, width, gpu);
+            (_mode, _retained, _showOrderCount, _width, _gpu, _cells) = (mode, retained, showOrderCount, width, gpu, cells);
             Surface = NewSurface();
             Viewport = NewViewport();
         }
@@ -106,8 +119,11 @@ public class IncrementalRenderTests
             : SKSurface.Create(_gpu, false, new SKImageInfo(_width, Height));
 
         // Same settings, untouched by rendering (Render recenters and sizes columns)
-        public ViewportManager NewViewport() =>
-            new() { Width = _width, Height = Height, RemovalMode = _mode, ShowOrderCount = _showOrderCount };
+        public ViewportManager NewViewport() => new()
+        {
+            Width = _width, Height = Height, RemovalMode = _mode, ShowOrderCount = _showOrderCount,
+            ShowWorkColumn = _cells, ShowLtqColumn = _cells, ShowHeader = _cells
+        };
 
         public void Render(in OrderBookSnapshot snapshot)
         {
@@ -207,7 +223,7 @@ public class IncrementalRenderTests
         ladder.AssertMatchesFullRedraw(book.Snapshot);
     }
 
-    // With order count on, the ask qty column still sits next to the bars, so a bars-only redraw of an
+    // Without the LTQ column the ask qty column sits next to the bars, so a bars-only redraw of an
     // ask own-order row must keep the border's pixel in the bar column
     [Theory]
     [MemberData(nameof(Paths))]
@@ -215,7 +231,7 @@ public class IncrementalRenderTests
     {
         var book = Book.Seeded();
         book.SetHasOwnOrders(100.03m, Side.ASK);
-        using var ladder = new Ladder(mode, retained, showOrderCount: true);
+        using var ladder = new Ladder(mode, retained, showOrderCount: true, cells: false);
         ladder.Render(book.Snapshot);
         var qtyColWidth = ladder.Viewport.QtyColWidth;
 
@@ -224,6 +240,59 @@ public class IncrementalRenderTests
 
         Assert.Equal(qtyColWidth, ladder.Viewport.QtyColWidth);
         ladder.AssertMatchesFullRedraw(book.Snapshot);
+    }
+
+    // The LTQ column sits next to the bars: a bars-only redraw of the traded row must keep the LTQ
+    // fill's edge pixel
+    [Theory]
+    [MemberData(nameof(Paths))]
+    public void VolumeScaleChange_LtqNextToBars_MatchesFullRedraw(LevelRemovalMode mode, bool retained)
+    {
+        var book = Book.Seeded().Trade(100.03m, 1234, Side.BID);
+        using var ladder = new Ladder(mode, retained);
+        ladder.Render(book.Snapshot);
+        var ltqColWidth = ladder.Viewport.LtqColWidth;
+
+        book.Flush(new PriceLevel(Side.ASK, 100.02m, 5000, 9)); // Only the bar scale moves
+        ladder.Render(book.Snapshot);
+
+        Assert.Equal(ltqColWidth, ladder.Viewport.LtqColWidth);
+        Assert.Equal(1, CellRows(ladder.Renderer).Ltq);
+        ladder.AssertMatchesFullRedraw(book.Snapshot);
+    }
+
+    // Working orders and trades come and go and resize their columns. The header stays put while
+    // Show Empty Rows shifts the rows under it
+    [Theory]
+    [MemberData(nameof(Paths))]
+    public void WorkAndTrades_MatchFullRedraw(LevelRemovalMode mode, bool retained)
+    {
+        var book = Book.Seeded();
+        using var ladder = new Ladder(mode, retained);
+        ladder.Render(book.Snapshot);
+
+        book.SetWorkingOrders(100.00m, Side.BID, 10, 2);
+        book.SetWorkingOrders(100.02m, Side.ASK, 5, 1);
+        ladder.Render(book.Snapshot);
+        Assert.Equal(2, CellRows(ladder.Renderer).Work);
+        ladder.AssertMatchesFullRedraw(book.Snapshot, "work:");
+
+        book.Trade(100.01m, 7, Side.BID);
+        ladder.Render(book.Snapshot);
+        ladder.AssertMatchesFullRedraw(book.Snapshot, "trade:");
+
+        book.SetWorkingOrders(100.00m, Side.BID, 123456789, 12); // Widens the Work column
+        book.Trade(100.00m, 98765, null);
+        ladder.Render(book.Snapshot);
+        ladder.AssertMatchesFullRedraw(book.Snapshot, "wider:");
+
+        book.Flush(new PriceLevel(Side.ASK, 100.01m, 0, 0)); // Rows move (Remove Rows) or shift (Show Empty)
+        ladder.Render(book.Snapshot);
+        ladder.AssertMatchesFullRedraw(book.Snapshot, "moved:");
+
+        book.SetWorkingOrders(100.00m, Side.BID, 0, 0);
+        ladder.Render(book.Snapshot);
+        ladder.AssertMatchesFullRedraw(book.Snapshot, "cleared:");
     }
 
     // With order count on, the count sits on the outer side of each qty column
@@ -267,7 +336,8 @@ public class IncrementalRenderTests
     [MemberData(nameof(Paths))]
     public void GpuTarget_ShowsEveryFrame(LevelRemovalMode mode, bool retained) => OnGpu(gpu =>
     {
-        var book = Book.Seeded();
+        var book = Book.Seeded().Trade(100.03m, 1234, Side.ASK); // The LTQ fill sits next to the bars
+        book.SetWorkingOrders(100.00m, Side.BID, 10, 2);
         using var ladder = new Ladder(mode, retained, gpu: gpu);
         ladder.Render(book.Snapshot);
 
@@ -361,7 +431,7 @@ public class IncrementalRenderTests
         // The ask is on row 11 in Remove Rows (row 12 holds the bid), and on the middle row 12 in
         // Show Empty Rows (the 123456.1225 mid rounds up)
         var (removeRow, removeViewport) = Draw(LevelRemovalMode.RemoveRow);
-        var (showEmpty, _) = Draw(LevelRemovalMode.ShowEmpty);
+        var (showEmpty, showEmptyViewport) = Draw(LevelRemovalMode.ShowEmpty);
         Assert.True(removeViewport.PriceColWidth > RenderConfig.ColumnWidth, "the price must widen its column");
         var left = (int)MathF.Ceiling(removeViewport.PriceColumnX) + 1;
         var right = (int)(removeViewport.PriceColumnX + removeViewport.PriceColWidth) - 1;
@@ -369,7 +439,7 @@ public class IncrementalRenderTests
         {
             for (var x = left; x < right; x++)
             {
-                Assert.True(removeRow.GetPixel(x, 11 * RenderConfig.RowHeight + y) == showEmpty.GetPixel(x, 12 * RenderConfig.RowHeight + y),
+                Assert.True(removeRow.GetPixel(x, removeViewport.RowTop(11) + y) == showEmpty.GetPixel(x, showEmptyViewport.RowTop(12) + y),
                     $"price cell pixel ({x}, {y}) differs");
             }
         }
@@ -614,24 +684,66 @@ public class IncrementalRenderTests
 
     private static void RandomFeed(LevelRemovalMode mode, bool retained, GRContext? gpu)
     {
-        foreach (var showOrderCount in new[] { false, true })
+        // Work, LTQ and header on, then the layout without them
+        foreach (var (showOrderCount, cells) in new[] { (false, true), (true, false) })
         {
             var feed = new RandomBookFeed(seed: 7, ticksPerSecond: 150);
             var viewModel = new PriceLadderViewModel(RandomBookFeed.TickSize);
             viewModel.ProcessBatch(feed.Seed());
-            using var ladder = new Ladder(mode, retained, showOrderCount, gpu: gpu);
+            using var ladder = new Ladder(mode, retained, showOrderCount, gpu: gpu, cells: cells);
+            var (workFrames, ltqFrames) = (0, 0);
 
             for (var frame = 0; frame < 120; frame++)
             {
+                WorkAndTrades(viewModel.Core, feed, frame);
                 foreach (var batch in feed.Advance((frame + 1) * 1000.0 / 60)) viewModel.ProcessBatch(batch);
                 var snapshot = viewModel.CurrentSnapshot!.Value;
                 if (ladder.Renderer.NeedsRender(snapshot, ladder.Viewport))
                 {
                     ladder.Render(snapshot);
                 }
-                ladder.AssertMatchesFullRedraw(snapshot, $"order count {showOrderCount}, frame {frame}:");
+                ladder.AssertMatchesFullRedraw(snapshot, $"order count {showOrderCount}, cells {cells}, frame {frame}:");
+                var (work, ltq) = CellRows(ladder.Renderer);
+                workFrames += work > 0 ? 1 : 0;
+                ltqFrames += ltq > 0 ? 1 : 0;
             }
+            Assert.True(!cells || (workFrames > 30 && ltqFrames > 30), $"work on {workFrames} frames, LTQ on {ltqFrames}");
         }
+    }
+
+    // Working orders and a trade near the touch, so Work and LTQ cells come and go, move rows and
+    // resize their columns (mirrors workAndTrades in incremental-render.test.js)
+    private static void WorkAndTrades(PriceLadderCore core, RandomBookFeed feed, int frame)
+    {
+        var tick = RandomBookFeed.TickSize;
+        if (frame % 5 == 0 && feed.BestBid is { } bid && feed.BestAsk is { } ask)
+        {
+            var side = frame % 2 == 1 ? Side.BID : Side.ASK;
+            var price = side == Side.BID ? bid - (frame % 4) * tick : ask + (frame % 4) * tick;
+            var quantity = frame % 15 == 0 ? 0 : (decimal)Math.Pow(10, frame % 6);
+            core.SetWorkingOrders(price, side, quantity, 1 + frame % 3);
+        }
+        if (frame % 3 == 0 && feed.BestAsk is { } best)
+        {
+            Side? aggressor = (frame % 9 / 3) switch { 0 => Side.BID, 1 => Side.ASK, _ => null };
+            core.ProcessTrade(best + (frame % 7 - 3) * tick, 1 + frame * 37 % 2000, aggressor);
+        }
+    }
+
+    // Rows of the last render with a Work cell and with an LTQ cell, read from the renderer's row states
+    private static (int Work, int Ltq) CellRows(SkiaRenderer renderer)
+    {
+        var rows = (Array)typeof(SkiaRenderer).GetField("_rows", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(renderer)!;
+        var rowType = rows.GetType().GetElementType()!;
+        var workCount = rowType.GetField("WorkCount")!;
+        var ltqQuantity = rowType.GetField("LtqQuantity")!;
+        var (work, ltq) = (0, 0);
+        foreach (var row in rows)
+        {
+            work += (int)workCount.GetValue(row)! > 0 ? 1 : 0;
+            ltq += (decimal)ltqQuantity.GetValue(row)! > 0 ? 1 : 0;
+        }
+        return (work, ltq);
     }
 
     // A drag finds its limit from the last rendered book, so a level that outgrew the bar column
@@ -666,7 +778,7 @@ public class IncrementalRenderTests
     public void ShowEmpty_DeepBook_PlacesTheSameLevelsAsAFullScan()
     {
         const decimal center = 100m, tick = 0.01m;
-        var rows = (Height + RenderConfig.RowHeight - 1) / RenderConfig.RowHeight;
+        var rows = new ViewportManager { Height = Height }.RowCount;
         var top = rows / 2; // Ticks from the center, top row
         var bottom = top - rows + 1;
         var ticks = new List<decimal> { top + 0.49m, top + 0.51m, bottom - 0.49m, bottom - 0.51m };

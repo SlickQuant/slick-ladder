@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -223,11 +222,11 @@ public partial class PriceLadderControl : UserControl
             var pos = e.GetPosition(this);
             var kind = e.GetCurrentPoint(this).Properties.PointerUpdateKind;
 
-            // Middle button (wheel click): re-center, unless it lands on a qty column and the app
-            // handles the level click
+            // Middle button (wheel click): re-center, unless it lands on a qty or Work cell and the
+            // app handles the click
             if (kind == PointerUpdateKind.MiddleButtonPressed)
             {
-                if (!RaiseLevelClick(pos, ClickButton.Middle))
+                if (!RaiseCellClick(pos, ClickButton.Middle))
                 {
                     _parent.Recenter();
                 }
@@ -254,170 +253,19 @@ public partial class PriceLadderControl : UserControl
                 }
             }
 
-            // Back/forward buttons don't click levels
+            // Back/forward buttons don't click cells
             if (kind is PointerUpdateKind.LeftButtonPressed or PointerUpdateKind.RightButtonPressed)
             {
-                RaiseLevelClick(pos, kind == PointerUpdateKind.LeftButtonPressed ? ClickButton.Left : ClickButton.Right);
+                RaiseCellClick(pos, kind == PointerUpdateKind.LeftButtonPressed ? ClickButton.Left : ClickButton.Right);
             }
         }
 
         /// <summary>
-        /// Raise a level click when pos is on a quantity column. Returns true when the app handled it
+        /// Raise a level click on a qty cell or a Work click on a Work cell. Returns true when the app handled it
         /// </summary>
-        private bool RaiseLevelClick(Point pos, ClickButton button)
-        {
-            if (_parent._viewport == null || _parent._viewModel == null || _parent._viewModel.CurrentSnapshot == null) return false;
-
-            // Click on BID qty column = BUY (Side.BID), ASK qty column = SELL (Side.ASK)
-            var side = _parent._viewport.QtyColumnSideAt((float)pos.X);
-            if (side == null)
-            {
-                return false; // Clicked outside quantity columns
-            }
-
-            var snapshot = _parent._viewModel.CurrentSnapshot.Value;
-            var visibleRows = _parent._viewport.Height / RenderConfig.RowHeight;
-            var midRow = visibleRows / 2;
-
-            // System.Diagnostics.Debug.WriteLine($"Viewport: height={_parent._viewport.Height}, visibleRows={visibleRows}, midRow={midRow}");
-
-            decimal? clickedPrice = null;
-
-            if (_parent._viewport.RemovalMode == LevelRemovalMode.RemoveRow)
-            {
-                // Dense packing mode: asks and bids are rendered consecutively
-                // Build the same layout the renderer uses
-                var nonEmptyAsks = snapshot.Asks.Where(l => l.Quantity > 0).ToArray();
-                var nonEmptyBids = snapshot.Bids.Where(l => l.Quantity > 0).ToArray();
-                var scrollOffset = _parent._viewport.DensePackingScrollOffset;
-                var totalLevels = nonEmptyAsks.Length + nonEmptyBids.Length;
-
-                var virtualTopRow = nonEmptyAsks.Length - midRow + scrollOffset;
-
-                int startAskIndex = 0, askRowsToRender = 0;
-                int startBidIndex = 0, bidRowsToRender = 0;
-                float topOffset = 0;
-
-                if (virtualTopRow < 0)
-                {
-                    topOffset = -virtualTopRow * RenderConfig.RowHeight;
-                    startAskIndex = 0;
-                    askRowsToRender = Math.Min(nonEmptyAsks.Length, Math.Max(0, visibleRows + virtualTopRow));
-                    startBidIndex = 0;
-                    var bidRowsAvailable = Math.Max(0, visibleRows + virtualTopRow - nonEmptyAsks.Length);
-                    bidRowsToRender = Math.Min(nonEmptyBids.Length, bidRowsAvailable);
-                }
-                else if (virtualTopRow < nonEmptyAsks.Length)
-                {
-                    startAskIndex = virtualTopRow;
-                    askRowsToRender = Math.Min(nonEmptyAsks.Length - startAskIndex, visibleRows);
-                    startBidIndex = 0;
-                    var bidRowsAvailable = visibleRows - askRowsToRender;
-                    bidRowsToRender = Math.Min(nonEmptyBids.Length, bidRowsAvailable);
-                }
-                else if (virtualTopRow < totalLevels)
-                {
-                    startAskIndex = nonEmptyAsks.Length;
-                    askRowsToRender = 0;
-                    var bidStartRow = virtualTopRow - nonEmptyAsks.Length;
-                    startBidIndex = bidStartRow;
-                    bidRowsToRender = Math.Min(nonEmptyBids.Length - startBidIndex, visibleRows);
-                }
-                else
-                {
-                    // Scrolled past all data — clickedPrice stays null, fall through
-                }
-
-                var firstRowIndex = (int)(topOffset / RenderConfig.RowHeight);
-
-                // Debug: calculate which row the best ask (asks[0]) should render at
-                // Formula: askIndex = nonEmptyAsks.Length - 1 - startAskIndex - i
-                // For askIndex=0: i = nonEmptyAsks.Length - 1 - startAskIndex
-                var bestAskLoopIndex = nonEmptyAsks.Length - 1 - startAskIndex;
-                var bestAskRowIndex = bestAskLoopIndex >= 0 && bestAskLoopIndex < askRowsToRender
-                    ? firstRowIndex + bestAskLoopIndex
-                    : -1;
-                var lastAskRow = firstRowIndex + askRowsToRender - 1;
-                var bestAskExpectedY = topOffset + (bestAskLoopIndex * RenderConfig.RowHeight);
-                var bestAskYRange = $"{bestAskExpectedY}-{bestAskExpectedY + RenderConfig.RowHeight - 1}";
-                // System.Diagnostics.Debug.WriteLine($"Layout: bestAsk (asks[0]) should render at i={bestAskLoopIndex}, rowIndex={bestAskRowIndex} (Y={bestAskYRange}, lastAskRow={lastAskRow})");
-
-                // Convert click Y to row index, then to relative row
-                // IMPORTANT: Subtract one row height to correct for coordinate system offset
-                // Empirically, clicks land exactly one row (24px) below the intended target
-                // This may be due to grid line rendering, text baseline positioning, or Avalonia coordinate system
-                var clickY = (float)pos.Y;
-                var adjustedY = Math.Max(0, clickY - RenderConfig.RowHeight);
-                var rowIndex = (int)(adjustedY / RenderConfig.RowHeight);
-                var relativeRow = rowIndex - firstRowIndex;
-
-                // System.Diagnostics.Debug.WriteLine($"Dense Click Debug: clickY={clickY}, topOffset={topOffset}, rowIndex={rowIndex}, firstRowIndex={firstRowIndex}, relativeRow={relativeRow}, askRows={askRowsToRender}, startAskIdx={startAskIndex}");
-
-                if (relativeRow >= 0)
-                {
-                    if (relativeRow < askRowsToRender)
-                    {
-                        // Clicked on an ask row
-                        var askIndex = nonEmptyAsks.Length - 1 - startAskIndex - relativeRow;
-                        if (askIndex >= 0 && askIndex < nonEmptyAsks.Length)
-                        {
-                            var level = nonEmptyAsks[askIndex];
-                            clickedPrice = level.Price;
-                        }
-                        // else: out-of-bounds ask index — clickedPrice stays null
-                    }
-                    else
-                    {
-                        // Clicked on a bid row
-                        var bidRow = relativeRow - askRowsToRender;
-                        if (bidRow < bidRowsToRender)
-                        {
-                            var bidIndex = nonEmptyBids.Length - 1 - startBidIndex - bidRow;
-                            if (bidIndex >= 0 && bidIndex < nonEmptyBids.Length)
-                            {
-                                var level = nonEmptyBids[bidIndex];
-                                clickedPrice = level.Price;
-                            }
-                            // else: out-of-bounds bid index — clickedPrice stays null
-                        }
-                        // else: clicked below visible data — clickedPrice stays null
-                    }
-                }
-                // else: clicked above visible data — clickedPrice stays null
-            }
-            else
-            {
-                // ShowEmpty mode: price-to-row mapping
-                var rowIndex = (int)(pos.Y / RenderConfig.RowHeight);
-                var tickSize = _parent._viewport.TickSize;
-                var referencePrice = _parent._viewport.CenterPrice != 0
-                    ? _parent._viewport.CenterPrice
-                    : (snapshot.MidPrice ?? 50000m);
-
-                var rowOffset = rowIndex - midRow;
-                var price = referencePrice - (rowOffset * tickSize);
-                price = Math.Round(price / tickSize) * tickSize;
-
-                // Find the level at this price
-                var askLevel = snapshot.Asks.FirstOrDefault(a => Math.Abs(a.Price - price) < tickSize * 0.5m);
-                if (askLevel.Price != 0 && askLevel.Quantity > 0)
-                {
-                    clickedPrice = askLevel.Price;
-                }
-                else
-                {
-                    var bidLevel = snapshot.Bids.FirstOrDefault(b => Math.Abs(b.Price - price) < tickSize * 0.5m);
-                    if (bidLevel.Price != 0 && bidLevel.Quantity > 0)
-                    {
-                        clickedPrice = bidLevel.Price;
-                    }
-                    // else: empty row — clickedPrice stays null
-                }
-            }
-
-            // Notify ViewModel of click with price (null if empty row), side and button
-            return _parent._viewModel.HandlePriceClick(clickedPrice, side.Value, button);
-        }
+        private bool RaiseCellClick(Point pos, ClickButton button) =>
+            _parent._viewport != null && _parent._viewModel != null &&
+            _parent._viewModel.HandleClick(_parent._viewport, (float)pos.X, (float)pos.Y, button);
 
         private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
         {

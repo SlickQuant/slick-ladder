@@ -164,6 +164,29 @@ public class PriceLadderCore
     }
 
     /// <summary>
+    /// Set our own working orders at a price: their total quantity and how many there are, shown
+    /// in the Work column as "10 (2)". Quantity or count 0 clears the price. Kept apart from the
+    /// book, so it shows before the market data has the level. Emits a snapshot right away
+    /// </summary>
+    public void SetWorkingOrders(decimal price, Side side, decimal quantity, int count)
+    {
+        _orderBook.SetWorkingOrders(price, side, quantity, count);
+        _batcher.EmitCurrentSnapshot();
+    }
+
+    /// <summary>
+    /// A trade from the feed, in either mode. The LTQ column shows its quantity on its price,
+    /// green when the buyer was the aggressor, red for the seller, white when unknown (null). Only
+    /// the last trade is shown. It flushes like a queued level update: on its own when a batch is
+    /// due, otherwise with the next update or Flush()
+    /// </summary>
+    public bool ProcessTrade(decimal price, decimal quantity, Side? aggressor = null)
+    {
+        _orderBook.LastTrade = new Trade(price, quantity, aggressor);
+        return _batcher.MarkPending();
+    }
+
+    /// <summary>
     /// Clear any queued updates without flushing.
     /// Use when stopping a data feed to drop in-flight updates.
     /// </summary>

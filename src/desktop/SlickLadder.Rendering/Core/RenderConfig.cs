@@ -40,6 +40,15 @@ public class RenderConfig
     // Own order border color (must match web version ownOrderBorder)
     public SKColor OwnOrderBorderColor { get; } = new SKColor(255, 215, 0);  // #ffd700 (gold)
 
+    // Header, Work and LTQ columns (must match web version)
+    public SKColor HeaderBackground { get; } = new SKColor(43, 43, 43);     // #2b2b2b
+    public SKColor WorkBackground { get; } = new SKColor(37, 37, 37);       // #252525
+    public SKColor LtqBackground { get; } = new SKColor(37, 37, 37);        // #252525
+    public SKColor LtqBuyBackground { get; } = new SKColor(76, 175, 80);    // #4caf50 (green, buyer aggressor)
+    public SKColor LtqSellBackground { get; } = new SKColor(244, 67, 54);   // #f44336 (red, seller aggressor)
+    public SKColor LtqUnknownBackground { get; } = SKColors.White;          // #ffffff (aggressor unknown)
+    public SKColor LtqTextColor { get; } = SKColors.Black;                  // #000000
+
     // Layout constants (must match web version exactly)
     public const int RowHeight = 24;
     public const float ColumnWidth = 66.7f;  // Matches web version COL_WIDTH

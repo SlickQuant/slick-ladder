@@ -30,6 +30,10 @@ const mboOrderIndex = new Map<number, { price: number; side: Side }>();
 let mboNextOrderId = 1;
 let mboTotalOrders = 0;
 
+// Our demo orders by id, placed by clicking a qty cell
+const demoOrders = new Map<number, { price: number; side: Side; quantity: number }>();
+let demoNextOrderId = 1;
+
 // Initialize on DOM ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
@@ -81,6 +85,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const showVolumeBars = toggleBarsCheckbox?.checked ?? true;
             const showOrderCount = toggleOrdersCheckbox?.checked ?? false;
             const autoCenter = getAutoCenter();
+            const layout = getLayoutToggles();
 
             // Get current removal mode from radio buttons
             const removalModeRadio = document.querySelector('input[name="removal-mode"]:checked') as HTMLInputElement;
@@ -103,7 +108,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             const minQuantityThreshold = getMinQuantityThreshold();
 
             // Calculate initial width based on display settings (same as TypeScript mode)
-            const dataColumns = 3; // Bid qty, price, ask qty
+            const dataColumns = 3 + (layout.showWorkColumn ? 1 : 0) + (layout.showLtqColumn ? 1 : 0); // Bid qty, price, ask qty, Work, LTQ
             const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
             const initialWidth = Math.round((dataColumns * COL_WIDTH) + barWidth);
 
@@ -118,21 +123,12 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 mode: dataMode,
                 showVolumeBars,
                 showOrderCount,
+                ...layout,
                 autoCenter,
                 mboOrderSizeFilter,
                 minQuantityThreshold,
-                onLevelClick: (price, side, button) => {
-                    const action = side === Side.BID ? 'BUY' : 'SELL';
-                    const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
-                    const message = `${action} @ ${priceStr} (${ClickButton[button]} click)`;
-                    console.log(message);
-                    alert(message);
-                    if (price !== null && ladder) {
-                        ladder.setHasOwnOrders(price, side, true);
-                        const delay = 2000 + Math.random() * 6000;
-                        setTimeout(() => ladder?.setHasOwnOrders(price, side, false), delay);
-                    }
-                },
+                onLevelClick: handleLevelClick,
+                onWorkClick: handleWorkClick,
                 onPriceHover: (price) => {
                     const tooltip = document.getElementById('tooltip');
                     if (tooltip && price !== null) {
@@ -173,6 +169,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         const showVolumeBars = toggleBarsCheckbox?.checked ?? true;
         const showOrderCount = toggleOrdersCheckbox?.checked ?? false;
         const autoCenter = getAutoCenter();
+        const layout = getLayoutToggles();
 
         // Get current removal mode from radio buttons
         const removalModeRadio = document.querySelector('input[name="removal-mode"]:checked') as HTMLInputElement;
@@ -195,7 +192,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         const minQuantityThreshold = getMinQuantityThreshold();
 
         // Calculate initial width based on display settings
-        const dataColumns = 3; // Bid qty, price, ask qty
+        const dataColumns = 3 + (layout.showWorkColumn ? 1 : 0) + (layout.showLtqColumn ? 1 : 0); // Bid qty, price, ask qty, Work, LTQ
         const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
         const initialWidth = Math.round((dataColumns * COL_WIDTH) + barWidth);
 
@@ -211,21 +208,12 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             readOnly: false,
             showVolumeBars,
             showOrderCount,
+            ...layout,
             autoCenter,
             mboOrderSizeFilter,
             minQuantityThreshold,
-            onLevelClick: (price, side, button) => {
-                const action = side === Side.BID ? 'BUY' : 'SELL';
-                const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
-                const message = `${action} @ ${priceStr} (${ClickButton[button]} click)`;
-                console.log(message);
-                alert(message);
-                if (price !== null && ladder) {
-                    ladder.setHasOwnOrders(price, side, true);
-                    const delay = 2000 + Math.random() * 6000;
-                    setTimeout(() => ladder?.setHasOwnOrders(price, side, false), delay);
-                }
-            },
+            onLevelClick: handleLevelClick,
+            onWorkClick: handleWorkClick,
             onPriceHover: (price) => {
                 const tooltip = document.getElementById('tooltip');
                 if (tooltip && price !== null) {
@@ -561,6 +549,83 @@ function roundToTick(price: number, tickSize: number): number {
     return Math.round(price / tickSize) * tickSize;
 }
 
+function getLayoutToggles(): { showWorkColumn: boolean; showLtqColumn: boolean; showHeader: boolean } {
+    const checked = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked ?? true;
+    return { showWorkColumn: checked('toggle-work'), showLtqColumn: checked('toggle-ltq'), showHeader: checked('toggle-header') };
+}
+
+/**
+ * Clicking a qty cell places a demo order there: a gold border on the level and a working order
+ * in the Work column. Each one is pulled after a few seconds
+ */
+function handleLevelClick(price: number | null, side: Side, button: ClickButton): void {
+    const action = side === Side.BID ? 'BUY' : 'SELL';
+    const priceStr = price !== null ? `$${price.toFixed(2)}` : 'empty level';
+    const message = `${action} @ ${priceStr} (${ClickButton[button]} click)`;
+    console.log(message);
+    alert(message);
+    if (price === null || !ladder) {
+        return;
+    }
+
+    const id = demoNextOrderId++;
+    demoOrders.set(id, { price, side, quantity: 10 * (1 + Math.floor(Math.random() * 10)) });
+    publishDemoOrders(price, side);
+    setTimeout(() => cancelDemoOrder(id), 2000 + Math.random() * 6000);
+}
+
+/**
+ * Clicking a Work cell cancels our demo orders on that row: those whose display price (their
+ * bucket when the display tick aggregates) is the row's
+ */
+function handleWorkClick(price: number | null, button: ClickButton): void {
+    console.log(`Work click @ ${price ?? 'no price'} (${ClickButton[button]} click)`);
+    if (price === null || !ladder) {
+        return;
+    }
+    for (const [id, order] of demoOrders) {
+        if (Math.abs(ladder.displayPrice(order.price, order.side) - price) < 1e-9) { // Float noise from rounding to tick
+            cancelDemoOrder(id);
+        }
+    }
+}
+
+function cancelDemoOrder(id: number): void {
+    const order = demoOrders.get(id);
+    if (order && demoOrders.delete(id)) {
+        publishDemoOrders(order.price, order.side);
+    }
+}
+
+// Our orders at a price and side: their total in the Work column, and the level's border
+function publishDemoOrders(price: number, side: Side): void {
+    let quantity = 0;
+    let count = 0;
+    for (const order of demoOrders.values()) {
+        if (order.price === price && order.side === side) {
+            quantity += order.quantity;
+            count++;
+        }
+    }
+    ladder?.setWorkingOrders(price, side, quantity, count);
+    ladder?.setHasOwnOrders(price, side, count > 0);
+}
+
+/**
+ * A trade near the touch: a buyer lifts an ask, a seller hits a bid, and 1 in 10 has no aggressor.
+ * Prices follow the generator's book around 100
+ */
+function simulateTrade(tickSize: number): void {
+    const roll = Math.random();
+    const aggressor = roll < 0.45 ? Side.BID : roll < 0.9 ? Side.ASK : null;
+    const ticks = Math.floor(Math.random() * 3);
+    const tradesAsk = aggressor === Side.BID || (aggressor === null && Math.random() < 0.5);
+    const price = tradesAsk
+        ? Math.round((100 + tickSize / 2 + ticks * tickSize) / tickSize) * tickSize
+        : Math.round((100 - tickSize / 2 - ticks * tickSize) / tickSize) * tickSize;
+    ladder?.processTrade({ price, quantity: generateRandomQuantity(1, 500), aggressor });
+}
+
 function getAutoCenter(): boolean {
     const input = document.getElementById('toggle-auto-center') as HTMLInputElement | null;
     return input?.checked ?? true;
@@ -700,6 +765,11 @@ function setupControls() {
             ladder.setShowOrderCount(checked);
         }
     });
+
+    // Toggle the Work and LTQ columns and the header
+    document.getElementById('toggle-work')?.addEventListener('change', () => ladder?.setShowWorkColumn(getLayoutToggles().showWorkColumn));
+    document.getElementById('toggle-ltq')?.addEventListener('change', () => ladder?.setShowLtqColumn(getLayoutToggles().showLtqColumn));
+    document.getElementById('toggle-header')?.addEventListener('change', () => ladder?.setShowHeader(getLayoutToggles().showHeader));
 
     // Toggle auto center (when off: Space / middle-click re-centers)
     document.getElementById('toggle-auto-center')?.addEventListener('change', () => {
@@ -890,6 +960,11 @@ function startMarketUpdates(rate: number) {
             if (isWasm && batchUpdates.length > 0) {
                 (ladder as WasmPriceLadder).processBatch(batchUpdates);
             }
+        }
+
+        // A trade now and then, at most one per interval
+        if (Math.random() < Math.min(1, batchSize * 0.2)) {
+            simulateTrade(tickSize);
         }
 
         const endTime = performance.now();

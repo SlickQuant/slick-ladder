@@ -30,6 +30,10 @@ public class MarketDataSimulator : IDisposable
     private volatile bool _isRunning = false;
     private int _batchInProgress;
 
+    // Our demo orders by id, placed and cancelled on the UI thread
+    private readonly Dictionary<long, (decimal Price, Side Side, decimal Quantity)> _ownOrders = new();
+    private long _nextOwnOrderId;
+
     // MBO mode tracking
     private readonly Dictionary<decimal, List<long>> _ordersByPrice = new();
     private long _nextOrderId = 1;
@@ -191,6 +195,7 @@ public class MarketDataSimulator : IDisposable
         {
             if (!_isRunning) return;
 
+            SimulateTrade(batchSize);
             if (_useMBOMode)
             {
                 GenerateMBOBatch(batchSize);
@@ -204,6 +209,80 @@ public class MarketDataSimulator : IDisposable
         {
             Interlocked.Exchange(ref _batchInProgress, 0);
         }
+    }
+
+    /// <summary>
+    /// A trade now and then at the touch: a buyer lifts the best ask, a seller hits the best bid,
+    /// and 1 in 10 has no aggressor. It flushes with the batch
+    /// </summary>
+    private void SimulateTrade(int batchSize)
+    {
+        if (_random.Next(100) >= Math.Min(100, batchSize * 20))
+        {
+            return;
+        }
+        var roll = _random.Next(20);
+        Side? aggressor = roll < 9 ? Side.BID : roll < 18 ? Side.ASK : null;
+        var hitsBid = aggressor == Side.ASK || (aggressor == null && _random.Next(2) == 0);
+        var price = hitsBid ? _core.GetBestBid() : _core.GetBestAsk();
+        if (price.HasValue)
+        {
+            _core.ProcessTrade(price.Value, NextOrderQuantity(), aggressor);
+        }
+    }
+
+    /// <summary>
+    /// Place a demo order of ours at a price: a working order in the Work column and the level's
+    /// own-order border. Returns its id, for CancelOwnOrder. Call on the UI thread
+    /// </summary>
+    public long PlaceOwnOrder(decimal price, Side side)
+    {
+        var id = ++_nextOwnOrderId;
+        _ownOrders[id] = (price, side, 10m * Random.Shared.Next(1, 11));
+        PublishOwnOrders(price, side);
+        return id;
+    }
+
+    /// <summary>
+    /// Cancel a demo order PlaceOwnOrder placed, if it's still working. Call on the UI thread
+    /// </summary>
+    public void CancelOwnOrder(long id)
+    {
+        if (_ownOrders.Remove(id, out var order))
+        {
+            PublishOwnOrders(order.Price, order.Side);
+        }
+    }
+
+    /// <summary>
+    /// Cancel all our demo orders on a row, both sides: those whose display price is rowPrice.
+    /// displayPrice maps an order's price and side to its row's, as PriceLadderViewModel.DisplayPrice
+    /// does, so a Work click on an aggregated row finds the orders under it. Call on the UI thread
+    /// </summary>
+    public void CancelOwnOrders(decimal rowPrice, Func<decimal, Side, decimal> displayPrice)
+    {
+        foreach (var id in _ownOrders.Where(order => displayPrice(order.Value.Price, order.Value.Side) == rowPrice)
+            .Select(order => order.Key).ToArray())
+        {
+            CancelOwnOrder(id);
+        }
+    }
+
+    // Our orders at a price and side: their total in the Work column, and the level's border
+    private void PublishOwnOrders(decimal price, Side side)
+    {
+        decimal quantity = 0;
+        var count = 0;
+        foreach (var order in _ownOrders.Values)
+        {
+            if (order.Price == price && order.Side == side)
+            {
+                quantity += order.Quantity;
+                count++;
+            }
+        }
+        _core.SetWorkingOrders(price, side, quantity, count);
+        _core.SetHasOwnOrders(price, side, count > 0);
     }
 
     private void GeneratePriceLevelBatch(int batchSize)

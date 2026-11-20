@@ -76,6 +76,14 @@ public partial class MainWindow : Window
         {
             _autoCenterCheckbox.IsCheckedChanged += AutoCenterCheckbox_Changed;
         }
+        foreach (var name in new[] { "ShowWorkColumnCheckbox", "ShowLtqColumnCheckbox", "ShowHeaderCheckbox" })
+        {
+            var checkbox = this.FindControl<CheckBox>(name);
+            if (checkbox != null)
+            {
+                checkbox.IsCheckedChanged += LayoutCheckbox_Changed;
+            }
+        }
         if (_minQuantityThresholdText != null)
         {
             _minQuantityThresholdText.TextChanged += MinQuantityThresholdText_Changed;
@@ -97,6 +105,7 @@ public partial class MainWindow : Window
 
         // Subscribe to trade events
         _viewModel.OnLevelClick += OnLevelClickExecuted;
+        _viewModel.OnWorkClick += OnWorkClickExecuted;
 
         // Create market data simulator (pass tick size from ViewModel)
         var tickSize = 0.01m; // Default tick size
@@ -114,6 +123,16 @@ public partial class MainWindow : Window
         };
         _metricsTimer.Tick += UpdateMetrics;
         _metricsTimer.Start();
+    }
+
+    // A Work cell click cancels our demo orders on that row (its display bucket when aggregating)
+    private void OnWorkClickExecuted(WorkClickEventArgs work)
+    {
+        System.Diagnostics.Debug.WriteLine($"Work click @ {work.Price?.ToString() ?? "no price"} ({work.Button} click)");
+        if (work.Price.HasValue && _viewModel != null)
+        {
+            _simulator?.CancelOwnOrders(work.Price.Value, _viewModel.DisplayPrice);
+        }
     }
 
     private void OnLevelClickExecuted(LevelClickEventArgs trade)
@@ -139,17 +158,17 @@ public partial class MainWindow : Window
             };
             await dialog.ShowDialog(this);
 
-            if (!trade.Price.HasValue || _viewModel == null) return;
+            if (!trade.Price.HasValue || _simulator == null) return;
 
-            _viewModel.Core.SetHasOwnOrders(trade.Price.Value, trade.Side, true);
-
-            // Randomly simulate order removal after 2-8 seconds
+            // Place one of our orders there (Work column), cancelled after 2-8 seconds
+            var (simulator, price, side) = (_simulator, trade.Price.Value, trade.Side);
+            var id = simulator.PlaceOwnOrder(price, side);
             var delay = TimeSpan.FromMilliseconds(2000 + Random.Shared.Next(6000));
             var removalTimer = new DispatcherTimer { Interval = delay };
             removalTimer.Tick += (s, e) =>
             {
                 removalTimer.Stop();
-                _viewModel?.Core.SetHasOwnOrders(trade.Price.Value, trade.Side, false);
+                simulator.CancelOwnOrder(id);
             };
             removalTimer.Start();
         });
@@ -222,6 +241,18 @@ public partial class MainWindow : Window
         if (priceLadder?.GetViewport() != null && _showOrderCountCheckbox != null)
         {
             priceLadder.GetViewport().ShowOrderCount = _showOrderCountCheckbox.IsChecked ?? false;
+        }
+    }
+
+    // Work column, LTQ column and header
+    private void LayoutCheckbox_Changed(object? sender, RoutedEventArgs e)
+    {
+        var viewport = this.FindControl<global::SlickLadder.Avalonia.Controls.PriceLadderControl>("PriceLadder")?.GetViewport();
+        if (viewport != null)
+        {
+            viewport.ShowWorkColumn = this.FindControl<CheckBox>("ShowWorkColumnCheckbox")?.IsChecked ?? true;
+            viewport.ShowLtqColumn = this.FindControl<CheckBox>("ShowLtqColumnCheckbox")?.IsChecked ?? true;
+            viewport.ShowHeader = this.FindControl<CheckBox>("ShowHeaderCheckbox")?.IsChecked ?? true;
         }
     }
 
@@ -378,6 +409,7 @@ public partial class MainWindow : Window
 
             // Subscribe to trade events on new ViewModel
             _viewModel.OnLevelClick += OnLevelClickExecuted;
+            _viewModel.OnWorkClick += OnWorkClickExecuted;
 
             _viewModel.Core.SetDataMode(isMBOMode ? DataMode.MBO : DataMode.PriceLevel);
 

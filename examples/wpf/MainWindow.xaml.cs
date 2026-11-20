@@ -34,6 +34,7 @@ public partial class MainWindow : Window
 
         // Subscribe to trade events
         _viewModel.OnLevelClick += OnLevelClickExecuted;
+        _viewModel.OnWorkClick += OnWorkClickExecuted;
 
         // Create market data simulator (pass tick size from ViewModel)
         var tickSize = 0.01m; // Default tick size
@@ -53,6 +54,16 @@ public partial class MainWindow : Window
         _metricsTimer.Start();
     }
 
+    // A Work cell click cancels our demo orders on that row (its display bucket when aggregating)
+    private void OnWorkClickExecuted(WorkClickEventArgs work)
+    {
+        System.Diagnostics.Debug.WriteLine($"Work click @ {work.Price?.ToString() ?? "no price"} ({work.Button} click)");
+        if (work.Price.HasValue && _viewModel != null)
+        {
+            _simulator?.CancelOwnOrders(work.Price.Value, _viewModel.DisplayPrice);
+        }
+    }
+
     private void OnLevelClickExecuted(LevelClickEventArgs trade)
     {
         var action = trade.Side == SlickLadder.Core.Models.Side.BID ? "BUY" : "SELL";
@@ -60,17 +71,17 @@ public partial class MainWindow : Window
         System.Diagnostics.Debug.WriteLine($"{action} @ {priceStr}");
         MessageBox.Show($"{action} @ {priceStr}", "Trade Clicked");
 
-        if (!trade.Price.HasValue || _viewModel == null) return;
+        if (!trade.Price.HasValue || _simulator == null) return;
 
-        _viewModel.Core.SetHasOwnOrders(trade.Price.Value, trade.Side, true);
-
-        // Randomly simulate order removal after 2-8 seconds
+        // Place one of our orders there (Work column), cancelled after 2-8 seconds
+        var (simulator, price, side) = (_simulator, trade.Price.Value, trade.Side);
+        var id = simulator.PlaceOwnOrder(price, side);
         var delay = TimeSpan.FromMilliseconds(2000 + Random.Shared.Next(6000));
         var removalTimer = new DispatcherTimer { Interval = delay };
         removalTimer.Tick += (s, e) =>
         {
             removalTimer.Stop();
-            _viewModel?.Core.SetHasOwnOrders(trade.Price.Value, trade.Side, false);
+            simulator.CancelOwnOrder(id);
         };
         removalTimer.Start();
     }
@@ -125,6 +136,18 @@ public partial class MainWindow : Window
         if (PriceLadder?.GetViewport() != null)
         {
             PriceLadder.GetViewport().ShowOrderCount = ShowOrderCountCheckbox.IsChecked ?? false;
+        }
+    }
+
+    // Work column, LTQ column and header
+    private void LayoutCheckbox_Changed(object sender, RoutedEventArgs e)
+    {
+        var viewport = PriceLadder?.GetViewport();
+        if (viewport != null)
+        {
+            viewport.ShowWorkColumn = ShowWorkColumnCheckbox?.IsChecked ?? true;
+            viewport.ShowLtqColumn = ShowLtqColumnCheckbox?.IsChecked ?? true;
+            viewport.ShowHeader = ShowHeaderCheckbox?.IsChecked ?? true;
         }
     }
 
@@ -289,6 +312,7 @@ public partial class MainWindow : Window
 
         // Subscribe to trade events on new ViewModel
         _viewModel.OnLevelClick += OnLevelClickExecuted;
+        _viewModel.OnWorkClick += OnWorkClickExecuted;
 
         // Restore data mode
         _viewModel.Core.SetDataMode(isMBOMode ? DataMode.MBO : DataMode.PriceLevel);

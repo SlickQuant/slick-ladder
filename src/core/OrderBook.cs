@@ -17,6 +17,12 @@ public class OrderBook
     private readonly int _maxLevels;
     private readonly decimal _tickSize;
 
+    // Our working orders and the last trade. Each is replaced whole, never changed, so snapshots
+    // share them and writers on any thread publish without a lock
+    private Dictionary<decimal, WorkingOrders>? _bidWork;
+    private Dictionary<decimal, WorkingOrders>? _askWork;
+    private Trade? _lastTrade;
+
     /// <summary>Number of bid levels</summary>
     public int BidCount => _bids.Count;
 
@@ -111,6 +117,52 @@ public class OrderBook
             level.HasOwnOrders = value;
             book.AddOrUpdate(price, level);
         }
+    }
+
+    /// <summary>
+    /// Set our own working orders at a price (quantity or count 0 clears it). Lock-free: the side's
+    /// map is copied, changed and swapped in, retrying if another thread swapped first
+    /// </summary>
+    public void SetWorkingOrders(decimal price, Side side, decimal quantity, int count)
+    {
+        ref var work = ref side == Side.BID ? ref _bidWork : ref _askWork;
+        while (true)
+        {
+            var current = Volatile.Read(ref work);
+            Dictionary<decimal, WorkingOrders>? next;
+            if (quantity > 0 && count > 0)
+            {
+                next = current == null ? new() : new(current);
+                next[price] = new WorkingOrders(quantity, count);
+            }
+            else if (current == null || !current.ContainsKey(price))
+            {
+                return; // Nothing to clear
+            }
+            else
+            {
+                next = new(current);
+                next.Remove(price);
+                if (next.Count == 0) next = null;
+            }
+            if (Interlocked.CompareExchange(ref work, next, current) == current)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>Our working orders on the bid side by price, null when none</summary>
+    public Dictionary<decimal, WorkingOrders>? BidWork => Volatile.Read(ref _bidWork);
+
+    /// <summary>Our working orders on the ask side by price, null when none</summary>
+    public Dictionary<decimal, WorkingOrders>? AskWork => Volatile.Read(ref _askWork);
+
+    /// <summary>The last trade, null before the first</summary>
+    public Trade? LastTrade
+    {
+        get => Volatile.Read(ref _lastTrade);
+        set => Volatile.Write(ref _lastTrade, value);
     }
 
     /// <summary>
@@ -261,6 +313,9 @@ public class OrderBook
         _bids.Clear();
         _asks.Clear();
         _dirtyLevels.SetAll(false);
+        Volatile.Write(ref _bidWork, null);
+        Volatile.Write(ref _askWork, null);
+        Volatile.Write(ref _lastTrade, null);
     }
 
     /// <summary>
@@ -286,7 +341,10 @@ public class OrderBook
                 MidPrice = MidPrice,
                 Bids = Array.Empty<BookLevel>(),
                 Asks = Array.Empty<BookLevel>(),
-                Timestamp = DateTime.UtcNow
+                Timestamp = DateTime.UtcNow,
+                BidWork = BidWork,
+                AskWork = AskWork,
+                LastTrade = LastTrade
             };
         }
 
@@ -315,7 +373,10 @@ public class OrderBook
             MidPrice = MidPrice,
             Bids = bids.ToArray(),
             Asks = asks.ToArray(),
-            Timestamp = DateTime.UtcNow
+            Timestamp = DateTime.UtcNow,
+            BidWork = BidWork,
+            AskWork = AskWork,
+            LastTrade = LastTrade
         };
     }
 
@@ -409,4 +470,11 @@ public struct OrderBookSnapshot
     /// Individual orders per price level for asks (null in PriceLevel mode, populated in MBO mode)
     /// </summary>
     public Dictionary<decimal, Managers.Order[]>? AskOrders;
+
+    /// <summary>Our working orders by price (Work column), null when none. Shared, never changed</summary>
+    public Dictionary<decimal, WorkingOrders>? BidWork;
+    public Dictionary<decimal, WorkingOrders>? AskWork;
+
+    /// <summary>The last trade (LTQ column), null before the first</summary>
+    public Trade? LastTrade;
 }

@@ -7,11 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Work column** left of Bid Qty: your own working orders at each price as `10 (2)`, green for buys and red for sells (normal text color when a row has both). Set them with `setWorkingOrders(price, side, quantity, count)` on web or `PriceLadderCore.SetWorkingOrders` on desktop. Quantity 0 clears a price. They're kept apart from the book, so they show before the market data has the level.
+- **LTQ column** right of Ask Qty: the last trade's quantity on its price. The cell is green when the buyer was the aggressor, red for the seller and white when unknown. Send trades with `processTrade({ price, quantity, aggressor })` on web or `PriceLadderCore.ProcessTrade(price, quantity, aggressor)` on desktop, in either data mode.
+- **Header row** with the column titles, and separator lines between the columns and on both sides.
+- Toggles for all three, on by default: `showWorkColumn`, `showLtqColumn` and `showHeader` (web config, plus `setShow*` methods) and `ViewportManager.ShowWorkColumn`, `ShowLtqColumn` and `ShowHeader` on desktop.
+- **Work cell clicks**: `onWorkClick(price, button)` on web and `PriceLadderViewModel.OnWorkClick` (`WorkClickEventArgs`) on desktop, for example to cancel your orders at a price. The price is the row's: the level's price, or in Show Empty Rows the row's own price, since working orders can sit on a price with no level. Return `true` or set `Handled` when you handle it. An unhandled middle-click re-centers.
+- Colors `headerBackground`, `workBackground`, `ltqBackground`, `ltqBuyBackground`, `ltqSellBackground`, `ltqUnknownBackground` and `ltqText`, with matching `RenderConfig` properties.
+- Desktop: `ViewportManager.LevelPriceAt(snapshot, y)` returns the price of the level drawn at a y, and `RowPriceAt` the row's price. Also `WorkColumnAt`, `HeaderHeight`, `RowCount` and `RowTop`. `PriceLadderViewModel.HandleClick(viewport, x, y, button)` raises the level or Work click for a point, and the WPF and Avalonia controls use it.
+- Web: `CanvasRenderer.rowPrice(row)`, the price of a row as drawn.
+- `displayPrice(price, side)` on web and `PriceLadderViewModel.DisplayPrice` on desktop: the row price an order shows on, its display bucket when the display tick aggregates (bids round down, asks up). A Work click on an aggregated row passes the bucket's price, so match your orders through it.
+
 ### Changed
-- **Order count moved into the qty column**: the two order count columns are gone, so the ladder is always Bid Qty | Price | Ask Qty | Bars. With `showOrderCount` (web) or `ViewportManager.ShowOrderCount` (desktop) on, bid cells read `(5) 102` and ask cells read `102 (5)`. The qty column widens to fit.
+- The default layout is `Work | Bid | Price | Ask | LTQ | Volume` under a header. Turn the three toggles off for the old one.
+- Web: `colors` takes a `Partial<CanvasColors>` and is merged over `DEFAULT_COLORS`.
+- Desktop: `LevelClickEventArgs` derives from the new `CellClickEventArgs`, which holds `Price`, `Button` and `Handled`.
+- Web: `screenXToColumn` returns 4 for Work and 5 for LTQ (the other ids are unchanged), and `screenYToRow` is negative on the header. Header clicks aren't level clicks.
+- Desktop GPU: with the new columns on, each redrawn row fills two more column rects, about 12% more render time in the GPU benchmark. Raster rendering is unchanged.
+- Web: the ladder no longer watches its container. Its width is its columns plus the bar column, as it was until the first container resize.
+- **Order count moved into the qty column**: the two order count columns are gone. With `showOrderCount` (web) or `ViewportManager.ShowOrderCount` (desktop) on, bid cells read `(5) 102` and ask cells read `102 (5)`. The qty column widens to fit.
 - Desktop: removed `ViewportManager.BidOrderCountColumnX`, `ViewportManager.AskOrderCountColumnX` and `RenderConfig.OrderCountBackground`.
 
 ### Fixed
+- **Web: levels on a display bucket edge could land in the next bucket**: in floating point `100.3 / 0.1` is `1002.9999999999999`, so with display tick aggregation a bid at 100.3 went into the 100.2 bucket (desktop's decimal math kept it at 100.3). A tick count within a millionth of a whole number now counts as whole, for levels, working orders and trades.
+- **Web: black area after a window resize**: a container resize set the canvas width directly, stretching the bar column to fill the container, but the renderer kept drawing at its old width. The rest of the canvas stayed black and the ladder sat at the left. The ladder now keeps its own width.
+- **Desktop: clicks could pick the level one row above**: the WPF and Avalonia controls laid the rows out again to hit-test a click, with a different row count than the renderer and a fixed one-row correction. When the ladder's height was a whole number of rows, a Remove Rows click picked the level above the one clicked. Show Empty Rows clicks used the tick size, not the display tick size, so aggregated rows found no level. Both controls now hit-test through `PriceLadderViewModel.HandleClick`, which uses `ViewportManager.LevelPriceAt` to lay the rows out as the renderer does.
 - **Web: price column clicks could SELL**: outside the qty columns, a click's column came from `x / COL_WIDTH`. With a qty column wider than `COL_WIDTH`, a click on the right part of the price column landed in the ask qty column. Columns are now hit-tested by their real positions.
 - **Web: bar drag started inside the ask qty column**: the drag area began 3 default column widths from the left (5 with order count columns), whatever the real widths were. It now starts where the bar column does.
 
