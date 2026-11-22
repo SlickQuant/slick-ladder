@@ -267,6 +267,9 @@ public class SkiaRenderer : IDisposable
         _pixelsChanged = false;
         var targetCanvas = surface.Canvas;
 
+        // The Orders column comes and goes with the book's mode (a change is a layout change)
+        viewport.DataMode = snapshot.Mode;
+
         _askStats = LevelStats.Scan(snapshot.Asks);
         _bidStats = LevelStats.Scan(snapshot.Bids);
 
@@ -276,7 +279,7 @@ public class SkiaRenderer : IDisposable
         // Recalculate base scale if order quantities changed
         CalculateBaseScale(snapshot);
 
-        var maxVolume = viewport.ShowVolumeBars ? maxQuantity : 0m;
+        var maxVolume = viewport.OrdersShown ? maxQuantity : 0m;
 
         // Rows below the header, counting one cut off at the bottom
         var visibleRows = viewport.RowCount;
@@ -403,7 +406,7 @@ public class SkiaRenderer : IDisposable
         ReadOnlySpan<float> edges = stackalloc float[]
         {
             viewport.BidQtyColumnX, viewport.PriceColumnX, viewport.AskQtyColumnX,
-            viewport.LtqColumnX ?? -1, viewport.VolumeBarColumnX ?? -1
+            viewport.LtqColumnX ?? -1, viewport.OrdersColumnX ?? -1
         };
         foreach (var x in edges)
         {
@@ -425,9 +428,9 @@ public class SkiaRenderer : IDisposable
         {
             DrawCellText(canvas, "LTQ", ltqX + viewport.LtqColWidth / 2, textY);
         }
-        if (viewport.VolumeBarColumnX is { } barX && barX < viewport.Width)
+        if (viewport.OrdersColumnX is { } barX && barX < viewport.Width)
         {
-            DrawCellText(canvas, "Volume", barX + (viewport.Width - barX) / 2, textY); // Centered on the part on screen
+            DrawCellText(canvas, "Orders", barX + (viewport.Width - barX) / 2, textY); // Centered on the part on screen
         }
     }
 
@@ -629,7 +632,7 @@ public class SkiaRenderer : IDisposable
         _lastReferencePrice = referencePrice;
         _lastSnapshot = snapshot;
         _lastView = new ViewState(layout, viewport);
-        _lastBarMaxWidth = viewport.VolumeBarMaxWidth;
+        _lastBarMaxWidth = viewport.OrdersColumnWidth;
     }
 
     /// <summary>
@@ -663,7 +666,7 @@ public class SkiaRenderer : IDisposable
                 var row = layout.FirstRowIndex + i;
                 if (askIndex >= 0 && askIndex < layout.NonEmptyAsks.Length && row < rows.Length)
                 {
-                    rows[row].Ask = CreateRowLevel(layout.NonEmptyAsks[askIndex], snapshot.AskOrders, viewport, maxVolume);
+                    rows[row].Ask = CreateRowLevel(layout.NonEmptyAsks[askIndex], snapshot.AskOrders, snapshot.AskOrderBreaks, viewport, maxVolume);
                 }
             }
 
@@ -674,7 +677,7 @@ public class SkiaRenderer : IDisposable
                 var row = firstBidRow + i;
                 if (bidIndex >= 0 && bidIndex < layout.NonEmptyBids.Length && row < rows.Length)
                 {
-                    rows[row].Bid = CreateRowLevel(layout.NonEmptyBids[bidIndex], snapshot.BidOrders, viewport, maxVolume);
+                    rows[row].Bid = CreateRowLevel(layout.NonEmptyBids[bidIndex], snapshot.BidOrders, snapshot.BidOrderBreaks, viewport, maxVolume);
                 }
             }
             PlaceCells(rows, snapshot, viewport, layout, midRow, displayTickSize, referencePrice);
@@ -689,8 +692,10 @@ public class SkiaRenderer : IDisposable
             rows[rowIndex] = new RowState { Drawn = true, Label = Math.Round(price / displayTickSize) * displayTickSize };
         }
 
-        PlaceLevels(rows, snapshot.Asks, _askStats, snapshot.AskOrders, isAsk: true, viewport, maxVolume, midRow, displayTickSize, referencePrice);
-        PlaceLevels(rows, snapshot.Bids, _bidStats, snapshot.BidOrders, isAsk: false, viewport, maxVolume, midRow, displayTickSize, referencePrice);
+        PlaceLevels(rows, snapshot.Asks, _askStats, snapshot.AskOrders, snapshot.AskOrderBreaks, isAsk: true, viewport, maxVolume, midRow,
+            displayTickSize, referencePrice);
+        PlaceLevels(rows, snapshot.Bids, _bidStats, snapshot.BidOrders, snapshot.BidOrderBreaks, isAsk: false, viewport, maxVolume, midRow,
+            displayTickSize, referencePrice);
         PlaceCells(rows, snapshot, viewport, null, midRow, displayTickSize, referencePrice);
     }
 
@@ -787,6 +792,7 @@ public class SkiaRenderer : IDisposable
         BookLevel[] levels,
         in LevelStats stats,
         Dictionary<decimal, Order[]>? ordersByPrice,
+        Dictionary<decimal, int[]>? breaksByPrice,
         bool isAsk,
         ViewportManager viewport,
         decimal maxVolume,
@@ -819,7 +825,7 @@ public class SkiaRenderer : IDisposable
 
             ref var row = ref rows[rowIndex];
             ref var slot = ref isAsk ? ref row.Ask : ref row.Bid;
-            var rowLevel = CreateRowLevel(level, ordersByPrice, viewport, maxVolume);
+            var rowLevel = CreateRowLevel(level, ordersByPrice, breaksByPrice, viewport, maxVolume);
             if (!slot.Present)
             {
                 slot = rowLevel;
@@ -832,16 +838,19 @@ public class SkiaRenderer : IDisposable
         }
     }
 
-    private RowLevel CreateRowLevel(in BookLevel level, Dictionary<decimal, Order[]>? ordersByPrice, ViewportManager viewport, decimal maxVolume)
+    private RowLevel CreateRowLevel(in BookLevel level, Dictionary<decimal, Order[]>? ordersByPrice, Dictionary<decimal, int[]>? breaksByPrice,
+        ViewportManager viewport, decimal maxVolume)
     {
         Order[]? orders = null;
         ordersByPrice?.TryGetValue(level.Price, out orders);
+        int[]? breaks = null;
+        breaksByPrice?.TryGetValue(level.Price, out breaks);
         // Same condition as the aggregated bar in Draw*Level*
-        var bar = viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 &&
+        var bar = viewport.OrdersColumnX.HasValue && maxVolume > 0 &&
                   level.Quantity != 0 && (orders == null || orders.Length == 0)
-            ? CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth)
+            ? CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.OrdersColumnWidth)
             : 0f;
-        return new RowLevel(level, orders, bar);
+        return new RowLevel(level, orders, breaks, bar);
     }
 
     /// <summary>
@@ -947,8 +956,8 @@ public class SkiaRenderer : IDisposable
         }
         // First pixel column a non-AA bar rect can touch; the columns end just before it. A GPU
         // fills pixels whose centers a rect covers, so a half-pixel edge starts a pixel earlier
-        var barColumn = !viewport.VolumeBarColumnX.HasValue ? -1
-            : (int)MathF.Floor(viewport.VolumeBarColumnX.Value + (_onGpu ? 0 : 0.5f));
+        var barColumn = !viewport.OrdersColumnX.HasValue ? -1
+            : (int)MathF.Floor(viewport.OrdersColumnX.Value + (_onGpu ? 0 : 0.5f));
 
         for (int rowIndex = 0; rowIndex < _nextRows.Length; rowIndex++)
         {
@@ -1003,7 +1012,7 @@ public class SkiaRenderer : IDisposable
     /// </summary>
     private void DrawBars(SKCanvas canvas, ViewportManager viewport, in RowState row, float y)
     {
-        var barX = viewport.VolumeBarColumnX!.Value;
+        var barX = viewport.OrdersColumnX!.Value;
         if (row.Ask.Bar > 0)
         {
             canvas.DrawRect(barX, y + 4, row.Ask.Bar, RenderConfig.RowHeight - 8, _askVolumePaint);
@@ -1209,11 +1218,11 @@ public class SkiaRenderer : IDisposable
         {
             if (row.Ask.Present)
             {
-                DrawAskLevel(canvas, row.Ask.Level, viewport, maxVolume, y, row.Ask.Orders);
+                DrawAskLevel(canvas, row.Ask.Level, viewport, maxVolume, y, row.Ask.Orders, row.Ask.Breaks);
             }
             else if (row.Bid.Present)
             {
-                DrawBidLevel(canvas, row.Bid.Level, viewport, maxVolume, y, row.Bid.Orders);
+                DrawBidLevel(canvas, row.Bid.Level, viewport, maxVolume, y, row.Bid.Orders, row.Bid.Breaks);
             }
             return;
         }
@@ -1228,12 +1237,12 @@ public class SkiaRenderer : IDisposable
         // Asks before bids, each in snapshot order
         if (row.Ask.Present)
         {
-            DrawAskLevelQuantity(canvas, row.Ask.Level, viewport, maxVolume, y, row.Ask.Orders);
+            DrawAskLevelQuantity(canvas, row.Ask.Level, viewport, maxVolume, y, row.Ask.Orders, row.Ask.Breaks);
         }
         DrawOverlaps(canvas, viewport, in row, isAsk: true, maxVolume, y);
         if (row.Bid.Present)
         {
-            DrawBidLevelQuantity(canvas, row.Bid.Level, viewport, maxVolume, y, row.Bid.Orders);
+            DrawBidLevelQuantity(canvas, row.Bid.Level, viewport, maxVolume, y, row.Bid.Orders, row.Bid.Breaks);
         }
         DrawOverlaps(canvas, viewport, in row, isAsk: false, maxVolume, y);
     }
@@ -1284,11 +1293,11 @@ public class SkiaRenderer : IDisposable
             }
             if (isAsk)
             {
-                DrawAskLevelQuantity(canvas, level.Level, viewport, maxVolume, y, level.Orders);
+                DrawAskLevelQuantity(canvas, level.Level, viewport, maxVolume, y, level.Orders, level.Breaks);
             }
             else
             {
-                DrawBidLevelQuantity(canvas, level.Level, viewport, maxVolume, y, level.Orders);
+                DrawBidLevelQuantity(canvas, level.Level, viewport, maxVolume, y, level.Orders, level.Breaks);
             }
         }
     }
@@ -1301,7 +1310,7 @@ public class SkiaRenderer : IDisposable
         int Height,
         LevelRemovalMode RemovalMode,
         bool ShowOrderCount,
-        bool ShowVolumeBars,
+        bool OrdersShown,
         decimal TickSize,
         decimal DisplayTickSize,
         int DenseScrollOffset,
@@ -1322,7 +1331,7 @@ public class SkiaRenderer : IDisposable
             viewport.Height,
             viewport.RemovalMode,
             viewport.ShowOrderCount,
-            viewport.ShowVolumeBars,
+            viewport.OrdersShown,
             viewport.TickSize,
             viewport.DisplayTickSize,
             viewport.RemovalMode == LevelRemovalMode.RemoveRow ? viewport.DensePackingScrollOffset : 0,
@@ -1383,13 +1392,15 @@ public class SkiaRenderer : IDisposable
         public readonly bool Present;
         public readonly BookLevel Level;
         public readonly Order[]? Orders; // MBOManager replaces a level's array when it changes, never mutates it
+        public readonly int[]? Breaks;   // Aggregated MBO: where each price level after the first starts. Kept while unchanged
         public readonly float Bar;       // Aggregated bar width: a volume scale change redraws the row
 
-        public RowLevel(BookLevel level, Order[]? orders, float bar)
+        public RowLevel(BookLevel level, Order[]? orders, int[]? breaks, float bar)
         {
             Present = true;
             Level = level;
             Orders = orders;
+            Breaks = breaks;
             Bar = bar;
         }
 
@@ -1402,6 +1413,7 @@ public class SkiaRenderer : IDisposable
                    Level.NumOrders == other.Level.NumOrders &&
                    Level.HasOwnOrders == other.Level.HasOwnOrders &&
                    ReferenceEquals(Orders, other.Orders) &&
+                   ReferenceEquals(Breaks, other.Breaks) &&
                    (!compareBars || Bar == other.Bar);
         }
     }
@@ -1494,12 +1506,13 @@ public class SkiaRenderer : IDisposable
     private void DrawIndividualOrders(
         SKCanvas canvas,
         Order[] orders,
+        int[]? breaks, // Aggregated MBO: where each price level after the first starts
         Side side,
         ViewportManager viewport,
         decimal maxVolume,
         float y)
     {
-        if (orders == null || orders.Length == 0 || !viewport.ShowVolumeBars || !viewport.VolumeBarColumnX.HasValue)
+        if (orders == null || orders.Length == 0 || !viewport.OrdersColumnX.HasValue)
         {
             return;
         }
@@ -1507,8 +1520,8 @@ public class SkiaRenderer : IDisposable
         // Calculate segment widths without minimum constraint
         var pixelsPerUnit = _segmentState.BasePixelsPerUnit * _segmentState.UserScaleFactor;
         var scrollOffset = _segmentState.HorizontalScrollOffset;
-        var barStartX = viewport.VolumeBarColumnX.Value;
-        var barColumnWidth = viewport.VolumeBarMaxWidth;
+        var barStartX = viewport.OrdersColumnX.Value;
+        var barColumnWidth = viewport.OrdersColumnWidth;
         var barHeight = RenderConfig.RowHeight - 8;
         var minQty = _config.MboOrderSizeFilter;
         var paint = side == Side.BID ? _bidVolumePaint : _askVolumePaint;
@@ -1521,14 +1534,28 @@ public class SkiaRenderer : IDisposable
         double xOffset = 0;  // Track position within virtual segment space
         var gap = RenderConfig.SegmentGapPx;
 
+        var nextBreak = 0;
+        var levelStart = false;
         for (int i = 0; i < orders.Length; i++)
         {
+            if (breaks != null && nextBreak < breaks.Length && breaks[nextBreak] <= i)
+            {
+                nextBreak++;
+                levelStart = true;
+            }
             var order = orders[i];
 
             if (order.Quantity <= minQty)
             {
                 continue;
             }
+
+            // A wider gap where the next price level of an aggregated row starts (as SegmentsWidth)
+            if (levelStart && xOffset > 0)
+            {
+                xOffset += RenderConfig.OrderLevelGapPx - RenderConfig.SegmentGapPx;
+            }
+            levelStart = false;
 
             // Calculate proportional width (no min constraint)
             var segmentWidth = (double)(double)order.Quantity * pixelsPerUnit;
@@ -1776,7 +1803,8 @@ public class SkiaRenderer : IDisposable
         return fractionalPart.Length;
     }
 
-    private void DrawBidLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null)
+    private void DrawBidLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null,
+        int[]? breaks = null)
     {
         // Calculate text baseline (centered vertically in row)
         var textY = TextY(y);
@@ -1806,20 +1834,20 @@ public class SkiaRenderer : IDisposable
             textY);
 
         // Draw volume bars
-        if (viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 && !isEmpty)
+        if (viewport.OrdersColumnX.HasValue && maxVolume > 0 && !isEmpty)
         {
             if (orders != null && orders.Length > 0)
             {
                 // MBO mode: Draw individual order bars
-                DrawIndividualOrders(canvas, orders, Side.BID, viewport, maxVolume, y);
+                DrawIndividualOrders(canvas, orders, breaks, Side.BID, viewport, maxVolume, y);
             }
             else
             {
                 // PriceLevel mode: Draw single aggregated bar
-                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
+                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.OrdersColumnWidth);
 
                 canvas.DrawRect(
-                    viewport.VolumeBarColumnX.Value,
+                    viewport.OrdersColumnX.Value,
                     y + 4,
                     barWidth,
                     RenderConfig.RowHeight - 8,
@@ -1828,7 +1856,8 @@ public class SkiaRenderer : IDisposable
         }
     }
 
-    private void DrawAskLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null)
+    private void DrawAskLevel(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null,
+        int[]? breaks = null)
     {
         // Calculate text baseline (centered vertically in row)
         var textY = TextY(y);
@@ -1858,20 +1887,20 @@ public class SkiaRenderer : IDisposable
         }
 
         // Draw volume bars
-        if (viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 && !isEmpty)
+        if (viewport.OrdersColumnX.HasValue && maxVolume > 0 && !isEmpty)
         {
             if (orders != null && orders.Length > 0)
             {
                 // MBO mode: Draw individual order bars
-                DrawIndividualOrders(canvas, orders, Side.ASK, viewport, maxVolume, y);
+                DrawIndividualOrders(canvas, orders, breaks, Side.ASK, viewport, maxVolume, y);
             }
             else
             {
                 // PriceLevel mode: Draw single aggregated bar
-                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
+                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.OrdersColumnWidth);
 
                 canvas.DrawRect(
-                    viewport.VolumeBarColumnX.Value,
+                    viewport.OrdersColumnX.Value,
                     y + 4,
                     barWidth,
                     RenderConfig.RowHeight - 8,
@@ -1880,7 +1909,8 @@ public class SkiaRenderer : IDisposable
         }
     }
 
-    private void DrawBidLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null)
+    private void DrawBidLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null,
+        int[]? breaks = null)
     {
         // Draw only quantity data (price already drawn in Step 1)
         var textY = TextY(y);
@@ -1893,20 +1923,20 @@ public class SkiaRenderer : IDisposable
         }
 
         // Draw volume bars
-        if (viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 && !isEmpty)
+        if (viewport.OrdersColumnX.HasValue && maxVolume > 0 && !isEmpty)
         {
             if (orders != null && orders.Length > 0)
             {
                 // MBO mode: Draw individual order bars
-                DrawIndividualOrders(canvas, orders, Side.BID, viewport, maxVolume, y);
+                DrawIndividualOrders(canvas, orders, breaks, Side.BID, viewport, maxVolume, y);
             }
             else
             {
                 // PriceLevel mode: Draw single aggregated bar
-                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
+                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.OrdersColumnWidth);
 
                 canvas.DrawRect(
-                    viewport.VolumeBarColumnX.Value,
+                    viewport.OrdersColumnX.Value,
                     y + 4,
                     barWidth,
                     RenderConfig.RowHeight - 8,
@@ -1915,7 +1945,8 @@ public class SkiaRenderer : IDisposable
         }
     }
 
-    private void DrawAskLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null)
+    private void DrawAskLevelQuantity(SKCanvas canvas, BookLevel level, ViewportManager viewport, decimal maxVolume, float y, Order[]? orders = null,
+        int[]? breaks = null)
     {
         // Draw only quantity data (price already drawn in Step 1)
         var textY = TextY(y);
@@ -1928,20 +1959,20 @@ public class SkiaRenderer : IDisposable
         }
 
         // Draw volume bars
-        if (viewport.ShowVolumeBars && viewport.VolumeBarColumnX.HasValue && maxVolume > 0 && !isEmpty)
+        if (viewport.OrdersColumnX.HasValue && maxVolume > 0 && !isEmpty)
         {
             if (orders != null && orders.Length > 0)
             {
                 // MBO mode: Draw individual order bars
-                DrawIndividualOrders(canvas, orders, Side.ASK, viewport, maxVolume, y);
+                DrawIndividualOrders(canvas, orders, breaks, Side.ASK, viewport, maxVolume, y);
             }
             else
             {
                 // PriceLevel mode: Draw single aggregated bar
-                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.VolumeBarMaxWidth);
+                var barWidth = CalculateVolumeBarWidth(level.Quantity, maxVolume, viewport.OrdersColumnWidth);
 
                 canvas.DrawRect(
-                    viewport.VolumeBarColumnX.Value,
+                    viewport.OrdersColumnX.Value,
                     y + 4,
                     barWidth,
                     RenderConfig.RowHeight - 8,
@@ -2038,12 +2069,13 @@ public class SkiaRenderer : IDisposable
         }
 
         var pixelsPerUnit = _segmentState.BasePixelsPerUnit * _segmentState.UserScaleFactor;
-        var maxWidth = Math.Max(WidestSegments(snapshot.Bids, snapshot.BidOrders, pixelsPerUnit),
-            WidestSegments(snapshot.Asks, snapshot.AskOrders, pixelsPerUnit));
+        var maxWidth = Math.Max(WidestSegments(snapshot.Bids, snapshot.BidOrders, snapshot.BidOrderBreaks, pixelsPerUnit),
+            WidestSegments(snapshot.Asks, snapshot.AskOrders, snapshot.AskOrderBreaks, pixelsPerUnit));
         _segmentState.MaxScrollOffset = Math.Max(0, maxWidth - barMaxWidth);
     }
 
-    private double WidestSegments(BookLevel[] levels, Dictionary<decimal, Order[]>? ordersByPrice, double pixelsPerUnit)
+    private double WidestSegments(BookLevel[] levels, Dictionary<decimal, Order[]>? ordersByPrice, Dictionary<decimal, int[]>? breaksByPrice,
+        double pixelsPerUnit)
     {
         double maxWidth = 0;
         if (ordersByPrice == null)
@@ -2051,24 +2083,49 @@ public class SkiaRenderer : IDisposable
             return maxWidth;
         }
 
-        var minQty = _config.MboOrderSizeFilter;
         foreach (var level in levels)
         {
             if (!ordersByPrice.TryGetValue(level.Price, out var orders))
             {
                 continue;
             }
-            double totalWidth = 0;
-            foreach (var order in orders)
-            {
-                if (order.Quantity > minQty)
-                {
-                    totalWidth += ((double)order.Quantity * pixelsPerUnit) + RenderConfig.SegmentGapPx;
-                }
-            }
-            maxWidth = Math.Max(maxWidth, totalWidth);
+            int[]? breaks = null;
+            breaksByPrice?.TryGetValue(level.Price, out breaks);
+            maxWidth = Math.Max(maxWidth, SegmentsWidth(orders, breaks, pixelsPerUnit, _config.MboOrderSizeFilter));
         }
         return maxWidth;
+    }
+
+    /// <summary>
+    /// Width of a level's order segments as DrawIndividualOrders lays them out: each order above the
+    /// size filter and a gap after it, and a wider gap where an aggregated row's next price level
+    /// starts (mirrors segmentsWidth in canvas-renderer.ts)
+    /// </summary>
+    private static double SegmentsWidth(Order[] orders, int[]? breaks, double pixelsPerUnit, long minQty)
+    {
+        double width = 0;
+        var nextBreak = 0;
+        var levelStart = false;
+        for (var i = 0; i < orders.Length; i++)
+        {
+            if (breaks != null && nextBreak < breaks.Length && breaks[nextBreak] <= i)
+            {
+                nextBreak++;
+                levelStart = true;
+            }
+            var quantity = orders[i].Quantity;
+            if (quantity <= minQty)
+            {
+                continue;
+            }
+            if (levelStart && width > 0)
+            {
+                width += RenderConfig.OrderLevelGapPx - RenderConfig.SegmentGapPx;
+            }
+            levelStart = false;
+            width += Math.Max(RenderConfig.MinSegmentWidthPx, (double)quantity * pixelsPerUnit) + RenderConfig.SegmentGapPx;
+        }
+        return width;
     }
 
     private double CalculateDynamicSegmentScaleStep()
@@ -2105,7 +2162,7 @@ public class SkiaRenderer : IDisposable
         );
 
         // Recalculate max scroll offset with new scale
-        RecalculateMaxScroll(snapshot, viewport.VolumeBarMaxWidth);
+        RecalculateMaxScroll(snapshot, viewport.OrdersColumnWidth);
 
         // Clamp current scroll to new max
         if (_segmentState.HorizontalScrollOffset > _segmentState.MaxScrollOffset)

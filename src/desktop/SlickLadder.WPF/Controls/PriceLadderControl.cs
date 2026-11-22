@@ -130,10 +130,10 @@ public partial class PriceLadderControl : UserControl
         var x = (float)pos.X;
 
         // Check if click is in bar column for horizontal scroll dragging
-        if (_viewport.VolumeBarColumnX.HasValue)
+        if (_viewport.OrdersColumnX.HasValue)
         {
-            var barStartX = _viewport.VolumeBarColumnX.Value;
-            var barColumnWidth = _viewport.VolumeBarMaxWidth;
+            var barStartX = _viewport.OrdersColumnX.Value;
+            var barColumnWidth = _viewport.OrdersColumnWidth;
 
             if (x >= barStartX && x < barStartX + barColumnWidth)
             {

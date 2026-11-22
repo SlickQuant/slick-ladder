@@ -25,7 +25,7 @@ public partial class MainWindow : Window
     private Button? _startButton;
     private Button? _stopButton;
     private ComboBox? _updateRateCombo;
-    private CheckBox? _showVolumeBarsCheckbox;
+    private CheckBox? _showOrdersCheckbox;
     private CheckBox? _showOrderCountCheckbox;
     private CheckBox? _autoCenterCheckbox;
     private ComboBox? _dataModeCombo;
@@ -53,7 +53,7 @@ public partial class MainWindow : Window
         _startButton = this.FindControl<Button>("StartButton");
         _stopButton = this.FindControl<Button>("StopButton");
         _updateRateCombo = this.FindControl<ComboBox>("UpdateRateCombo");
-        _showVolumeBarsCheckbox = this.FindControl<CheckBox>("ShowVolumeBarsCheckbox");
+        _showOrdersCheckbox = this.FindControl<CheckBox>("ShowOrdersCheckbox");
         _showOrderCountCheckbox = this.FindControl<CheckBox>("ShowOrderCountCheckbox");
         _autoCenterCheckbox = this.FindControl<CheckBox>("AutoCenterCheckbox");
         _dataModeCombo = this.FindControl<ComboBox>("DataModeCombo");
@@ -64,9 +64,9 @@ public partial class MainWindow : Window
         _mboOrderSizeFilterText = this.FindControl<TextBox>("MboOrderSizeFilterText");
 
         // Wire up checkbox changed events
-        if (_showVolumeBarsCheckbox != null)
+        if (_showOrdersCheckbox != null)
         {
-            _showVolumeBarsCheckbox.IsCheckedChanged += ShowVolumeBarsCheckbox_Changed;
+            _showOrdersCheckbox.IsCheckedChanged += ShowOrdersCheckbox_Changed;
         }
         if (_showOrderCountCheckbox != null)
         {
@@ -226,12 +226,12 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ShowVolumeBarsCheckbox_Changed(object? sender, RoutedEventArgs e)
+    private void ShowOrdersCheckbox_Changed(object? sender, RoutedEventArgs e)
     {
         var priceLadder = this.FindControl<global::SlickLadder.Avalonia.Controls.PriceLadderControl>("PriceLadder");
-        if (priceLadder?.GetViewport() != null && _showVolumeBarsCheckbox != null)
+        if (priceLadder?.GetViewport() != null && _showOrdersCheckbox != null)
         {
-            priceLadder.GetViewport().ShowVolumeBars = _showVolumeBarsCheckbox.IsChecked ?? true;
+            priceLadder.GetViewport().ShowOrders = _showOrdersCheckbox.IsChecked ?? true;
         }
     }
 

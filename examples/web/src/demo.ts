@@ -82,7 +82,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             // Get current display settings from checkboxes
             const toggleBarsCheckbox = document.getElementById('toggle-bars') as HTMLInputElement;
             const toggleOrdersCheckbox = document.getElementById('toggle-orders') as HTMLInputElement;
-            const showVolumeBars = toggleBarsCheckbox?.checked ?? true;
+            const showOrders = toggleBarsCheckbox?.checked ?? true;
             const showOrderCount = toggleOrdersCheckbox?.checked ?? false;
             const autoCenter = getAutoCenter();
             const layout = getLayoutToggles();
@@ -109,7 +109,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
 
             // Calculate initial width based on display settings (same as TypeScript mode)
             const dataColumns = 3 + (layout.showWorkColumn ? 1 : 0) + (layout.showLtqColumn ? 1 : 0); // Bid qty, price, ask qty, Work, LTQ
-            const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
+            const barWidth = showOrders && dataMode === 'MBO' ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0; // The Orders column, MBO only
             const initialWidth = Math.round((dataColumns * COL_WIDTH) + barWidth);
 
             // Create WASM ladder (same API as TypeScript ladder)
@@ -121,7 +121,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
                 tickSize,
                 displayTickSize,
                 mode: dataMode,
-                showVolumeBars,
+                showOrders,
                 showOrderCount,
                 ...layout,
                 autoCenter,
@@ -166,7 +166,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
         // Get current display settings from checkboxes
         const toggleBarsCheckbox = document.getElementById('toggle-bars') as HTMLInputElement;
         const toggleOrdersCheckbox = document.getElementById('toggle-orders') as HTMLInputElement;
-        const showVolumeBars = toggleBarsCheckbox?.checked ?? true;
+        const showOrders = toggleBarsCheckbox?.checked ?? true;
         const showOrderCount = toggleOrdersCheckbox?.checked ?? false;
         const autoCenter = getAutoCenter();
         const layout = getLayoutToggles();
@@ -193,7 +193,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
 
         // Calculate initial width based on display settings
         const dataColumns = 3 + (layout.showWorkColumn ? 1 : 0) + (layout.showLtqColumn ? 1 : 0); // Bid qty, price, ask qty, Work, LTQ
-        const barWidth = showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
+        const barWidth = showOrders && dataMode === 'MBO' ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0; // The Orders column, MBO only
         const initialWidth = Math.round((dataColumns * COL_WIDTH) + barWidth);
 
         // Create TypeScript ladder
@@ -206,7 +206,7 @@ async function initializeBackend(backend: 'typescript' | 'wasm', container: HTML
             displayTickSize: displayTickSize2,
             mode: dataMode,
             readOnly: false,
-            showVolumeBars,
+            showOrders,
             showOrderCount,
             ...layout,
             autoCenter,
@@ -750,11 +750,11 @@ function setupControls() {
     stopButton?.addEventListener('click', stopMarketUpdates);
     clearButton?.addEventListener('click', clearOrderBook);
 
-    // Toggle volume bars
+    // Toggle the Orders column (MBO mode)
     toggleBarsCheckbox?.addEventListener('change', (e) => {
         const checked = (e.target as HTMLInputElement).checked;
         if (ladder) {
-            ladder.setShowVolumeBars(checked);
+            ladder.setShowOrders(checked);
         }
     });
 

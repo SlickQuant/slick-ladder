@@ -1,6 +1,6 @@
 {
   "name": "@slickquant/slick-ladder",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "SlickLadder - Ultra-low latency price ladder component",
   "private": true,
   "workspaces": [

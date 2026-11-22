@@ -263,53 +263,11 @@ public class UpdateBatcher
         TotalBatchesFlushed++;
 
         // Get snapshot of dirty levels for rendering
-        // Use configured center price or fall back to mid price rounded to tick
-        // Round mid price to nearest tick to avoid fractional ticks (50000.005 -> 50000.00)
-        var midPrice = _orderBook.MidPrice;
-        if (!midPrice.HasValue)
+        var snapshot = TakeSnapshot();
+        if (TotalBatchesFlushed <= 10)
         {
-            midPrice = _orderBook.BestBid ?? _orderBook.BestAsk ?? 0m;
-        }
-
-        var centerPrice = SnapshotCenterPrice ?? RoundToTick(midPrice.Value, _orderBook.TickSize);
-        var snapshot = _orderBook.GetSnapshot(
-            centerPrice,
-            SnapshotVisibleLevels,
-            FillEmptyLevels
-        );
-
-        // In MBO mode, add individual orders to snapshot
-        if (_mode == DataMode.MBO && _mboManager != null)
-        {
-            snapshot.BidOrders = _mboManager.GetBidOrders();
-            snapshot.AskOrders = _mboManager.GetAskOrders();
-
-            // Debug: Log first 10 flushes to see when orders appear
-            if (TotalBatchesFlushed <= 10)
-            {
-                if (snapshot.BidOrders == null && snapshot.AskOrders == null)
-                {
-                    DebugLog($"UpdateBatcher.FlushBatch #{TotalBatchesFlushed}: MBO mode, but BidOrders and AskOrders are BOTH NULL");
-                }
-                else if (snapshot.BidOrders != null && snapshot.AskOrders != null)
-                {
-                    var totalOrders = snapshot.BidOrders.Values.Sum(orders => orders.Length) +
-                                      snapshot.AskOrders.Values.Sum(orders => orders.Length);
-                    DebugLog($"UpdateBatcher.FlushBatch #{TotalBatchesFlushed}: MBO mode, BidOrders={snapshot.BidOrders.Count} levels, AskOrders={snapshot.AskOrders.Count} levels, totalOrders={totalOrders}");
-                }
-                else
-                {
-                    DebugLog($"UpdateBatcher.FlushBatch #{TotalBatchesFlushed}: MBO mode, BidOrders={(snapshot.BidOrders != null ? snapshot.BidOrders.Count.ToString() : "NULL")}, AskOrders={(snapshot.AskOrders != null ? snapshot.AskOrders.Count.ToString() : "NULL")}");
-                }
-            }
-        }
-        else
-        {
-            // Debug: Log if not in MBO mode (first 10 flushes)
-            if (TotalBatchesFlushed <= 10)
-            {
-                DebugLog($"UpdateBatcher.FlushBatch #{TotalBatchesFlushed}: mode={_mode}, mboManager={(object?)_mboManager != null}");
-            }
+            DebugLog($"UpdateBatcher.FlushBatch #{TotalBatchesFlushed}: mode={_mode}, " +
+                $"BidOrders={snapshot.BidOrders?.Count.ToString() ?? "NULL"}, AskOrders={snapshot.AskOrders?.Count.ToString() ?? "NULL"}");
         }
 
         // Clear dirty flags after snapshot
@@ -329,15 +287,23 @@ public class UpdateBatcher
     /// </summary>
     public void EmitCurrentSnapshot()
     {
+        OnBatchFlushed?.Invoke(TakeSnapshot());
+    }
+
+    // The book around the snapshot center (configured, or the mid rounded down to tick), with the
+    // data mode and, in MBO mode, the orders
+    private OrderBookSnapshot TakeSnapshot()
+    {
         var midPrice = _orderBook.MidPrice ?? _orderBook.BestBid ?? _orderBook.BestAsk ?? 0m;
         var centerPrice = SnapshotCenterPrice ?? RoundToTick(midPrice, _orderBook.TickSize);
         var snapshot = _orderBook.GetSnapshot(centerPrice, SnapshotVisibleLevels, FillEmptyLevels);
+        snapshot.Mode = _mode;
         if (_mode == DataMode.MBO && _mboManager != null)
         {
             snapshot.BidOrders = _mboManager.GetBidOrders();
             snapshot.AskOrders = _mboManager.GetAskOrders();
         }
-        OnBatchFlushed?.Invoke(snapshot);
+        return snapshot;
     }
 
     /// <summary>

@@ -264,10 +264,7 @@ export class WasmPriceLadder extends PriceLadder {
         } else {
             this.ownOrderOverrides.delete(key);
         }
-        if (this.lastSnapshot) {
-            this.applyOwnOrderOverrides(this.lastSnapshot);
-            this.renderer.render(this.lastSnapshot);
-        }
+        this.showWorkerSnapshot();
     }
 
     /**
@@ -276,16 +273,25 @@ export class WasmPriceLadder extends PriceLadder {
      */
     public override updateConfig(partial: Partial<Pick<PriceLadderConfig, 'tickSize' | 'displayTickSize'>>): void {
         super.updateConfig(partial);
-        if (this.lastSnapshot) {
-            const config = (this as any).config;
-            const dts: number = config.displayTickSize;
-            const ts: number = config.tickSize;
-            if (dts > ts) {
-                this.lastSnapshot = this.applyAggregation(this.lastSnapshot, dts, ts);
-            }
-            this.lastSnapshot = this.attachCells(this.lastSnapshot);
-            this.renderer.render(this.lastSnapshot);
+        this.showWorkerSnapshot();
+    }
+
+    /**
+     * Show the worker's last snapshot: own-order flags first (the worker's snapshots don't carry
+     * them), then display tick aggregation, then our working orders and last trade. Every change
+     * rebuilds from the worker's snapshot this way, so no flag is lost and nothing is aggregated twice
+     */
+    private showWorkerSnapshot(): void {
+        const snapshot = this.lastWorkerSnapshot;
+        if (!snapshot) {
+            return;
         }
+        this.applyOwnOrderOverrides(snapshot);
+        const config = (this as any).config;
+        const dts: number = config.displayTickSize ?? config.tickSize ?? 0.01;
+        const ts: number = config.tickSize ?? 0.01;
+        this.lastSnapshot = this.attachCells(dts > ts ? this.applyAggregation(snapshot, dts, ts) : { ...snapshot });
+        this.renderer.render(this.lastSnapshot);
     }
 
     private applyAggregation(snapshot: OrderBookSnapshot, dts: number, ts: number): OrderBookSnapshot {
@@ -294,16 +300,9 @@ export class WasmPriceLadder extends PriceLadder {
         const bestBid = bids.length > 0 ? bids[bids.length - 1].price : null;
         const bestAsk = asks.length > 0 ? asks[0].price : null;
         const midPrice = bestBid !== null && bestAsk !== null ? (bestBid + bestAsk) / 2 : null;
-        return {
-            ...snapshot,
-            bids,
-            asks,
-            bestBid,
-            bestAsk,
-            midPrice,
-            bidOrders: null,
-            askOrders: null
-        };
+        const aggregated: OrderBookSnapshot = { ...snapshot, bids, asks, bestBid, bestAsk, midPrice };
+        this.aggregateOrders(aggregated);
+        return aggregated;
     }
 
     private applyOwnOrderOverrides(snapshot: OrderBookSnapshot): void {
@@ -432,24 +431,10 @@ export class WasmPriceLadder extends PriceLadder {
      * Render a snapshot received from WASM worker
      */
     private renderSnapshot(snapshotData: any): void {
-        // Unchanged levels keep the last snapshot's order arrays (aggregation drops orders, so
-        // the unaggregated snapshot is the one kept)
-        const snapshot = parseWasmSnapshot(snapshotData, this.lastWorkerSnapshot);
-        this.lastWorkerSnapshot = snapshot;
-
-        // Apply own-order overrides set via setHasOwnOrders()
-        this.applyOwnOrderOverrides(snapshot);
-
-        // Apply display tick size aggregation if configured
-        const config = (this as any).config;
-        const dts: number = config.displayTickSize ?? config.tickSize ?? 0.01;
-        const ts: number = config.tickSize ?? 0.01;
-        const aggregatedSnapshot = this.attachCells(dts > ts ? this.applyAggregation(snapshot, dts, ts) : snapshot);
-
-        // Store the last snapshot for re-rendering on viewport changes
-        this.lastSnapshot = aggregatedSnapshot;
-
+        // Unchanged levels keep the last worker snapshot's order arrays, so the renderer and the
+        // order buckets tell them by reference. That snapshot is the one every rebuild starts from
+        this.lastWorkerSnapshot = parseWasmSnapshot(snapshotData, this.lastWorkerSnapshot);
         this.renderer.recordFrame();
-        this.renderer.render(aggregatedSnapshot);
+        this.showWorkerSnapshot();
     }
 }

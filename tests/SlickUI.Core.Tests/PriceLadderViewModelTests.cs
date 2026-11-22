@@ -165,7 +165,8 @@ public class LevelClickTests
         var viewport = new ViewportManager
         {
             ShowOrderCount = showOrderCount, ShowWorkColumn = cellColumns, ShowLtqColumn = cellColumns,
-            QtyColWidth = 80, PriceColWidth = 70, WorkColWidth = 60, LtqColWidth = 50
+            QtyColWidth = 80, PriceColWidth = 70, WorkColWidth = 60, LtqColWidth = 50,
+            DataMode = DataMode.MBO // The Orders column shows for MBO books only
         };
         var left = cellColumns ? 60 : 0;
         Assert.Equal(cellColumns ? 0 : null, viewport.WorkColumnX);
@@ -173,7 +174,7 @@ public class LevelClickTests
         Assert.Equal(left + 150, viewport.AskQtyColumnX);
         Assert.Equal(cellColumns ? left + 230 : null, viewport.LtqColumnX);
         var bars = left + 230 + (cellColumns ? 50 : 0);
-        Assert.Equal(bars, viewport.VolumeBarColumnX);
+        Assert.Equal(bars, viewport.OrdersColumnX);
 
         Assert.Null(viewport.QtyColumnSideAt(left - 0.1f)); // Work column, or left of the ladder
         Assert.Equal(Side.BID, viewport.QtyColumnSideAt(left));

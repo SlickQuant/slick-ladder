@@ -15,7 +15,7 @@ public class ViewportManager
     public int Height { get; set; }
 
     // Column layout (MUST match web version exactly!)
-    // Order: Work | Bid Qty | Price | Ask Qty | LTQ | Volume Bars, optional ones when enabled.
+    // Order: Work | Bid Qty | Price | Ask Qty | LTQ | Orders, optional ones when enabled (Orders in MBO mode only).
     // Each x is the sum of the widths left of it, so the column fills tile edge to edge
     // Dynamic quantity column width (default to standard column width)
     public float QtyColWidth { get; set; } = RenderConfig.ColumnWidth;
@@ -31,7 +31,10 @@ public class ViewportManager
     public float AskQtyColumnX => PriceColumnX + PriceColWidth;
     public float? LtqColumnX => ShowLtqColumn ? AskQtyColumnX + QtyColWidth : null;
 
-    public float? VolumeBarColumnX => ShowVolumeBars ? FixedColumnsWidth : null;
+    public float? OrdersColumnX => OrdersShown ? FixedColumnsWidth : null;
+
+    /// <summary>The Orders (bar) column is on screen: ShowOrders, and an MBO book</summary>
+    public bool OrdersShown => ShowOrders && DataMode == DataMode.MBO;
 
     /// <summary>
     /// Side of the quantity column under x, null outside both
@@ -49,11 +52,11 @@ public class ViewportManager
     public float FixedColumnsWidth => ShowLtqColumn ? LtqColumnX!.Value + LtqColWidth : AskQtyColumnX + QtyColWidth;
 
     // Responsive bar column width: fills remaining canvas width (min 100px)
-    public float VolumeBarMaxWidth
+    public float OrdersColumnWidth
     {
         get
         {
-            if (!ShowVolumeBars) return 0;
+            if (!OrdersShown) return 0;
             var fixedColumnsWidth = FixedColumnsWidth;
             var barColumnWidth = Math.Max(RenderConfig.MinBarColumnWidth, Width - fixedColumnsWidth);
             return barColumnWidth;
@@ -72,7 +75,12 @@ public class ViewportManager
     public bool AutoCenter { get; set; } = true;
 
     // Feature toggles
-    public bool ShowVolumeBars { get; set; } = true;
+    public bool ShowOrders { get; set; } = true; // The Orders column: each order's bar, right of LTQ, in MBO mode only
+
+    /// <summary>
+    /// Data mode of the book drawn, set by the renderer from each snapshot. The Orders column shows for MBO only
+    /// </summary>
+    public DataMode DataMode { get; set; } = DataMode.PriceLevel;
     public bool ShowOrderCount { get; set; } = false; // In the qty column: "(5) 102" on bids, "102 (5)" on asks
     public bool ShowWorkColumn { get; set; } = true; // Our working orders as "10 (2)", left of Bid Qty
     public bool ShowLtqColumn { get; set; } = true; // The last trade's quantity on its price, right of Ask Qty

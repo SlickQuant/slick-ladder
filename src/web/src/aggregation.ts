@@ -1,4 +1,4 @@
-import { BookLevel, Side, Trade, WorkingOrders } from './types';
+import { BookLevel, Order, Side, Trade, WorkingOrders } from './types';
 
 /**
  * Returns the number of decimal places needed to represent a value.
@@ -87,4 +87,86 @@ export function aggregateLevels(levels: BookLevel[], displayTickSize: number, ti
         }
     }
     return Array.from(map.values());
+}
+
+// One display bucket's orders: the order arrays of its price levels, nearest the spread first,
+// merged into one
+type OrderBucket = { sources: Order[][]; orders: Order[]; breaks: number[] };
+
+const NO_BREAKS: number[] = [];
+
+function mergeBucket(sources: Order[][]): OrderBucket {
+    if (sources.length === 1) {
+        return { sources, orders: sources[0], breaks: NO_BREAKS }; // One level: its own array
+    }
+    const orders: Order[] = [];
+    const breaks: number[] = [];
+    for (const levelOrders of sources) {
+        if (orders.length > 0) breaks.push(orders.length);
+        for (const order of levelOrders) orders.push(order);
+    }
+    return { sources, orders, breaks };
+}
+
+function sameSources(a: Order[][], b: Order[][]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
+}
+
+/**
+ * MBO orders merged into display buckets: each bucket shows the orders of every price level in
+ * it, the level nearest the spread first (bids from the highest price, asks from the lowest),
+ * each in its usual order. breaks holds where each level after the first starts in a bucket's
+ * orders (buckets of one level have none). A bucket whose levels' order arrays haven't changed
+ * keeps its merged array, and both maps stay the same while no bucket changed, so renderers can
+ * tell by reference. Mirrors OrderBuckets.cs
+ */
+export class OrderBuckets {
+    private buckets = new Map<number, OrderBucket>();
+    private displayTickSize = 0;
+    private orders = new Map<number, Order[]>();
+    private breaks = new Map<number, number[]>();
+
+    // roundUp: asks, which bucket up like their levels
+    constructor(private readonly roundUp: boolean) {}
+
+    merge(orderMap: Map<number, Order[]>, displayTickSize: number): { orders: Map<number, Order[]>; breaks: Map<number, number[]> } {
+        let changed = displayTickSize !== this.displayTickSize;
+        if (changed) {
+            this.buckets = new Map();
+            this.displayTickSize = displayTickSize;
+        }
+
+        const pricesByBucket = new Map<number, number[]>();
+        for (const price of orderMap.keys()) {
+            const bucket = bucketPrice(price, displayTickSize, this.roundUp);
+            const prices = pricesByBucket.get(bucket);
+            if (prices) prices.push(price); else pricesByBucket.set(bucket, [price]);
+        }
+
+        const buckets = new Map<number, OrderBucket>();
+        changed ||= pricesByBucket.size !== this.buckets.size;
+        for (const [bucketKey, prices] of pricesByBucket) {
+            prices.sort(this.roundUp ? (a, b) => a - b : (a, b) => b - a); // Nearest the spread first
+            const sources = prices.map((price) => orderMap.get(price)!);
+            const previous = this.buckets.get(bucketKey);
+            const bucket = previous && sameSources(previous.sources, sources) ? previous : mergeBucket(sources);
+            changed ||= bucket !== previous;
+            buckets.set(bucketKey, bucket);
+        }
+        this.buckets = buckets;
+
+        if (changed) {
+            this.orders = new Map();
+            this.breaks = new Map();
+            for (const [bucketKey, bucket] of buckets) {
+                this.orders.set(bucketKey, bucket.orders);
+                if (bucket.breaks.length > 0) this.breaks.set(bucketKey, bucket.breaks);
+            }
+        }
+        return { orders: this.orders, breaks: this.breaks };
+    }
 }

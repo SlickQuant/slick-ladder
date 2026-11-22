@@ -4,8 +4,8 @@
 // Mirrors tests/SlickUI.Core.Tests/IncrementalRenderTests.cs
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { PriceLadder, Side, OrderUpdateType, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, fakeContainer, frame, render, trackScreens,
-    screenRows, resizeContainers } = require('../test-utils/ladder-harness');
+const { PriceLadder, Side, OrderUpdateType, fakeContainer, frame, render, trackScreens, screenRows, resizeContainers } =
+    require('../test-utils/ladder-harness');
 const { Feed, seededRandom, TICK_SIZE } = require('../test-utils/random-feed');
 
 trackScreens();
@@ -18,7 +18,7 @@ const create = (config) => new PriceLadder({ container: fakeContainer(400), heig
 
 // Counts what the incremental ladder did, so a pass means those paths ran
 function spy(renderer) {
-    const counts = { full: 0, moved: 0, shifted: 0, work: 0, ltq: 0 };
+    const counts = { full: 0, moved: 0, shifted: 0, work: 0, ltq: 0, merged: 0 };
     for (const [name, key] of [['renderFull', 'full'], ['moveRows', 'moved']]) {
         const original = renderer[name].bind(renderer);
         renderer[name] = (...args) => { counts[key]++; return original(...args); };
@@ -48,6 +48,39 @@ function workAndTrades(ladder, i, mid) {
     }
 }
 
+// Random MBO orders 15 ticks either side of 10000, plus working orders and trades. Each ladder gets
+// the same orders from its own seeded book
+function randomOrders() {
+    const books = new Map();
+    return (ladder, i) => {
+        if (!books.has(ladder)) books.set(ladder, { random: seededRandom(11), orders: new Map(), nextId: 1 });
+        const book = books.get(ladder);
+        const int = (min, max) => min + Math.floor(book.random() * (max - min + 1));
+        for (let n = int(0, 6); n > 0; n--) {
+            const ids = [...book.orders.keys()];
+            const op = ids.length < 40 ? 0 : int(0, 2);
+            if (op === 0) {
+                const side = book.random() < 0.5 ? Side.BID : Side.ASK;
+                const tick = side === Side.BID ? 10000 - int(0, 15) : 10001 + int(0, 15);
+                const order = { orderId: book.nextId++, side, price: tick * TICK_SIZE, quantity: int(1, 500),
+                    priority: book.nextId, isOwnOrder: book.random() < 0.1 };
+                book.orders.set(order.orderId, order);
+                ladder.processOrderUpdate(order, OrderUpdateType.Add);
+            } else {
+                const order = book.orders.get(ids[int(0, ids.length - 1)]);
+                if (op === 1) {
+                    order.quantity = int(1, 500);
+                    ladder.processOrderUpdate({ ...order }, OrderUpdateType.Modify);
+                } else {
+                    book.orders.delete(order.orderId);
+                    ladder.processOrderUpdate({ ...order }, OrderUpdateType.Delete);
+                }
+            }
+        }
+        workAndTrades(ladder, i, 10000);
+    };
+}
+
 // Runs `frames` frames: step(ladder, frame) changes both ladders' books the same way, then the
 // incremental ladder must show what a full redraw of the same book shows
 function assertMatchesFullRedraw(config, frames, step) {
@@ -64,6 +97,7 @@ function assertMatchesFullRedraw(config, frames, step) {
         // Frames with Work or LTQ cells on screen
         counts.work += ladder.renderer.rows.some((row) => row.workCount > 0) ? 1 : 0;
         counts.ltq += ladder.renderer.rows.some((row) => row.ltqQuantity > 0) ? 1 : 0;
+        counts.merged += ladder.renderer.rows.some((row) => row.bid.breaks || row.ask.breaks) ? 1 : 0; // Aggregated MBO rows of several levels
     }
     assert.ok(counts.full < frames / 2, `${counts.full} of ${frames} frames were full redraws`);
     return counts;
@@ -102,36 +136,14 @@ for (const removalMode of ['removeRow', 'showEmpty']) {
         }
 
         test(`${name}: random MBO orders match a full redraw every frame`, () => {
-            const books = new Map();
-            const counts = assertMatchesFullRedraw({ ...config, mode: 'MBO' }, 200, (ladder, i) => {
-                // Same seed per ladder, so both get the same orders
-                if (!books.has(ladder)) books.set(ladder, { random: seededRandom(11), orders: new Map(), nextId: 1 });
-                const book = books.get(ladder);
-                const int = (min, max) => min + Math.floor(book.random() * (max - min + 1));
-                for (let n = int(0, 6); n > 0; n--) {
-                    const ids = [...book.orders.keys()];
-                    const op = ids.length < 40 ? 0 : int(0, 2);
-                    if (op === 0) {
-                        const side = book.random() < 0.5 ? Side.BID : Side.ASK;
-                        const tick = side === Side.BID ? 10000 - int(0, 15) : 10001 + int(0, 15);
-                        const order = { orderId: book.nextId++, side, price: tick * TICK_SIZE, quantity: int(1, 500),
-                            priority: book.nextId, isOwnOrder: book.random() < 0.1 };
-                        book.orders.set(order.orderId, order);
-                        ladder.processOrderUpdate(order, OrderUpdateType.Add);
-                    } else {
-                        const order = book.orders.get(ids[int(0, ids.length - 1)]);
-                        if (op === 1) {
-                            order.quantity = int(1, 500);
-                            ladder.processOrderUpdate({ ...order }, OrderUpdateType.Modify);
-                        } else {
-                            book.orders.delete(order.orderId);
-                            ladder.processOrderUpdate({ ...order }, OrderUpdateType.Delete);
-                        }
-                    }
-                }
-                workAndTrades(ladder, i, 10000);
-            });
+            const counts = assertMatchesFullRedraw({ ...config, mode: 'MBO' }, 200, randomOrders());
             assert.ok(!showHeader || (counts.work > 30 && counts.ltq > 30), JSON.stringify(counts));
+        });
+
+        // Aggregated, a row shows the orders of every level in its bucket, with a gap between levels
+        test(`${name}: random MBO orders on aggregated rows match a full redraw every frame`, () => {
+            const counts = assertMatchesFullRedraw({ ...config, mode: 'MBO', displayTickSize: 5 * TICK_SIZE }, 200, randomOrders());
+            assert.ok(counts.merged > 150, JSON.stringify(counts));
         });
     }
 }
@@ -228,8 +240,7 @@ test('MBO segments repaint when a level total stays the same', () => {
 
 // Bug: a container resize set the canvas width itself, stretching the bar column to the
 // container, but the renderer kept drawing at its old width and the rest of the canvas showed
-// black. The ladder now keeps its own width (its columns and the bar column) whatever the
-// container does
+// black. The ladder now keeps its own width (its columns) whatever the container does
 test('a container resize leaves the canvas at the width the renderer draws', () => {
     for (const removalMode of ['removeRow', 'showEmpty']) {
         const container = fakeContainer(400);
@@ -239,8 +250,7 @@ test('a container resize leaves the canvas at the width the renderer draws', () 
         const { renderer } = ladder;
         const width = ladder.canvas.width;
         assert.equal(width, renderer.width, removalMode);
-        assert.equal(width, Math.round(renderer.getColumnPositions().barX + COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER),
-            `${removalMode}: the columns and the bar column`);
+        assert.equal(width, renderer.calculateCanvasWidth(), `${removalMode}: its columns`);
 
         for (const clientWidth of [1200, 300]) {
             container.clientWidth = clientWidth;

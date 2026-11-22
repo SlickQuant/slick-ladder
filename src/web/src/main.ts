@@ -19,14 +19,14 @@ import {
 } from './types';
 import { MBOManager } from './mbo-manager';
 import { SortedLevels } from './sorted-levels';
-import { aggregateLevels, aggregateWork, bucketPrice, tradeBucketPrice } from './aggregation';
+import { aggregateLevels, aggregateWork, bucketPrice, OrderBuckets, tradeBucketPrice } from './aggregation';
 
 // The ladder's width with every column at its default width: bid qty, price, ask qty, and the
-// Work, LTQ and bar columns when shown. The renderer widens columns to fit their text and the
+// Work, LTQ and Orders columns when shown. The renderer widens columns to fit their text and the
 // canvas with them
-const defaultLadderWidth = (showVolumeBars: boolean, showWorkColumn: boolean, showLtqColumn: boolean): number =>
+const defaultLadderWidth = (showOrders: boolean, showWorkColumn: boolean, showLtqColumn: boolean): number =>
     Math.round((3 + (showWorkColumn ? 1 : 0) + (showLtqColumn ? 1 : 0)) * COL_WIDTH +
-        (showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0));
+        (showOrders ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0));
 
 /**
  * Main Price Ladder component for web.
@@ -53,6 +53,8 @@ export class PriceLadder {
     private bidWork: Map<number, WorkingOrders> = new Map(); // Our working orders by price
     private askWork: Map<number, WorkingOrders> = new Map();
     private lastTrade: Trade | null = null;
+    private bidOrderBuckets = new OrderBuckets(false); // MBO orders by display bucket, see aggregateOrders
+    private askOrderBuckets = new OrderBuckets(true);
 
     // Animation frame request
     private rafId: number = 0;
@@ -60,7 +62,7 @@ export class PriceLadder {
     constructor(config: PriceLadderConfig) {
         this.container = config.container;
 
-        const showVolumeBars = config.showVolumeBars !== undefined ? config.showVolumeBars : true;
+        const showOrders = config.showOrders !== undefined ? config.showOrders : true;
         const showOrderCount = config.showOrderCount !== undefined ? config.showOrderCount : true;
         const showWorkColumn = config.showWorkColumn ?? true;
         const showLtqColumn = config.showLtqColumn ?? true;
@@ -68,7 +70,7 @@ export class PriceLadder {
         // Apply defaults
         this.config = {
             container: config.container,
-            width: config.width || defaultLadderWidth(showVolumeBars, showWorkColumn, showLtqColumn),
+            width: config.width || defaultLadderWidth(showOrders && config.mode === 'MBO', showWorkColumn, showLtqColumn),
             height: config.height || 600,
             rowHeight: config.rowHeight || 24,
             visibleLevels: config.visibleLevels || 50,
@@ -76,7 +78,7 @@ export class PriceLadder {
             displayTickSize: Math.max(config.tickSize || 0.01, config.displayTickSize || config.tickSize || 0.01),
             mode: config.mode || 'PriceLevel',
             readOnly: config.readOnly || false,
-            showVolumeBars,
+            showOrders,
             showOrderCount,
             showWorkColumn,
             showLtqColumn,
@@ -126,7 +128,7 @@ export class PriceLadder {
             this.config.height,
             this.config.rowHeight,
             this.config.colors as CanvasColors, // Merged with DEFAULT_COLORS in the constructor
-            this.config.showVolumeBars,
+            this.config.showOrders,
             this.config.showOrderCount,
             this.config.tickSize,
             this.config.mboOrderSizeFilter,
@@ -135,7 +137,8 @@ export class PriceLadder {
             {
                 showWorkColumn: this.config.showWorkColumn,
                 showLtqColumn: this.config.showLtqColumn,
-                showHeader: this.config.showHeader
+                showHeader: this.config.showHeader,
+                mode: this.dataMode
             }
         );
         renderer.setRemovalMode(this.config.removalMode);
@@ -286,16 +289,20 @@ export class PriceLadder {
                 ? (bestBid + bestAsk) / 2
                 : null;
 
-            return this.attachCells({
+            const snapshot: OrderBookSnapshot = {
                 bestBid,
                 bestAsk,
                 midPrice,
                 bids,
                 asks,
                 timestamp: Date.now(),
-                bidOrders: isAggregating ? null : this.mboManager.getBidOrders(),
-                askOrders: isAggregating ? null : this.mboManager.getAskOrders()
-            });
+                bidOrders: this.mboManager.getBidOrders(),
+                askOrders: this.mboManager.getAskOrders()
+            };
+            if (isAggregating) {
+                this.aggregateOrders(snapshot);
+            }
+            return this.attachCells(snapshot);
         }
 
         // The maps hold only levels with quantity. Levels below the threshold show as "<threshold"
@@ -320,10 +327,29 @@ export class PriceLadder {
     }
 
     /**
-     * Add our working orders and the last trade to a snapshot, in display buckets when the
-     * display tick aggregates levels
+     * With the display tick aggregating, merge a snapshot's MBO orders into display buckets: each
+     * bucket gets the orders of every price level in it (see OrderBuckets)
+     */
+    protected aggregateOrders(snapshot: OrderBookSnapshot): void {
+        const dts = this.config.displayTickSize;
+        if (snapshot.bidOrders) {
+            const bids = this.bidOrderBuckets.merge(snapshot.bidOrders, dts);
+            snapshot.bidOrders = bids.orders;
+            snapshot.bidOrderBreaks = bids.breaks;
+        }
+        if (snapshot.askOrders) {
+            const asks = this.askOrderBuckets.merge(snapshot.askOrders, dts);
+            snapshot.askOrders = asks.orders;
+            snapshot.askOrderBreaks = asks.breaks;
+        }
+    }
+
+    /**
+     * Add the data mode, our working orders and the last trade to a snapshot, in display buckets
+     * when the display tick aggregates levels
      */
     protected attachCells(snapshot: OrderBookSnapshot): OrderBookSnapshot {
+        snapshot.mode = this.dataMode;
         const dts = this.config.displayTickSize;
         const trade = this.lastTrade;
         if (dts > this.config.tickSize) {
@@ -503,7 +529,8 @@ export class PriceLadder {
      * Calculate width based on visible columns: [work][bid_qty][price][ask_qty][ltq][bars], optional ones when enabled
      */
     private calculateWidth(): number {
-        return defaultLadderWidth(this.config.showVolumeBars, this.config.showWorkColumn, this.config.showLtqColumn);
+        return defaultLadderWidth(this.config.showOrders && this.dataMode === 'MBO', this.config.showWorkColumn,
+            this.config.showLtqColumn);
     }
 
     /**
@@ -524,10 +551,10 @@ export class PriceLadder {
     }
 
     /**
-     * Set volume bars visibility
+     * Show or hide the Orders column (each order's bar). It shows in MBO mode only
      */
-    public setShowVolumeBars(show: boolean): void {
-        this.config.showVolumeBars = show;
+    public setShowOrders(show: boolean): void {
+        this.config.showOrders = show;
         this.applyLayoutChange();
     }
 

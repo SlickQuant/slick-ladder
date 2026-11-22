@@ -462,6 +462,11 @@ public struct OrderBookSnapshot
     public DateTime Timestamp;
 
     /// <summary>
+    /// The data mode it was taken in. The Orders column shows for MBO only
+    /// </summary>
+    public DataMode Mode;
+
+    /// <summary>
     /// Individual orders per price level for bids (null in PriceLevel mode, populated in MBO mode)
     /// </summary>
     public Dictionary<decimal, Managers.Order[]>? BidOrders;
@@ -470,6 +475,14 @@ public struct OrderBookSnapshot
     /// Individual orders per price level for asks (null in PriceLevel mode, populated in MBO mode)
     /// </summary>
     public Dictionary<decimal, Managers.Order[]>? AskOrders;
+
+    /// <summary>
+    /// With display tick aggregation, the order maps are per display bucket (the orders of every
+    /// price level in it, nearest the spread first) and these hold where each level after the first
+    /// starts in a bucket's orders. Null otherwise
+    /// </summary>
+    public Dictionary<decimal, int[]>? BidOrderBreaks;
+    public Dictionary<decimal, int[]>? AskOrderBreaks;
 
     /// <summary>Our working orders by price (Work column), null when none. Shared, never changed</summary>
     public Dictionary<decimal, WorkingOrders>? BidWork;

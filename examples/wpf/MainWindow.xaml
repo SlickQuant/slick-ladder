@@ -113,12 +113,12 @@
                          BorderBrush="#444"
                          Margin="0,0,0,20">
                     <StackPanel Margin="10">
-                        <CheckBox x:Name="ShowVolumeBarsCheckbox"
-                                 Content="Show Volume Bars"
+                        <CheckBox x:Name="ShowOrdersCheckbox"
+                                 Content="Show Orders Column (MBO)"
                                  Foreground="White"
                                  IsChecked="True"
-                                 Checked="ShowVolumeBarsCheckbox_Changed"
-                                 Unchecked="ShowVolumeBarsCheckbox_Changed"
+                                 Checked="ShowOrdersCheckbox_Changed"
+                                 Unchecked="ShowOrdersCheckbox_Changed"
                                  Margin="0,0,0,10"/>
 
                         <CheckBox x:Name="ShowOrderCountCheckbox"

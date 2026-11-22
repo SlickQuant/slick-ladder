@@ -121,8 +121,8 @@
                                   FontWeight="Bold"
                                   Margin="0,0,0,10"/>
 
-                        <CheckBox x:Name="ShowVolumeBarsCheckbox"
-                                 Content="Show Volume Bars"
+                        <CheckBox x:Name="ShowOrdersCheckbox"
+                                 Content="Show Orders Column (MBO)"
                                  Foreground="White"
                                  IsChecked="True"
                                  Margin="0,0,0,10"/>

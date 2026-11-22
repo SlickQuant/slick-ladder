@@ -1,4 +1,4 @@
-import { BookLevel, Side, OrderBookSnapshot, CanvasColors, DEFAULT_COLORS, RenderMetrics, Order, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, SegmentRenderState, DEFAULT_SEGMENT_CONFIG, DEFAULT_MBO_ORDER_SIZE_FILTER, DEFAULT_MIN_QUANTITY_THRESHOLD, SEGMENT_SCALE_MIN, SEGMENT_SCALE_MAX, SEGMENT_SCALE_STEP, MIN_SEGMENT_WIDTH_PX, SEGMENT_GAP_PX, MIN_BAR_COLUMN_WIDTH, TARGET_MAX_SEGMENT_WIDTH } from './types';
+import { BookLevel, Side, OrderBookSnapshot, CanvasColors, DEFAULT_COLORS, RenderMetrics, Order, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, SegmentRenderState, DEFAULT_SEGMENT_CONFIG, DEFAULT_MBO_ORDER_SIZE_FILTER, DEFAULT_MIN_QUANTITY_THRESHOLD, SEGMENT_SCALE_MIN, SEGMENT_SCALE_MAX, SEGMENT_SCALE_STEP, MIN_SEGMENT_WIDTH_PX, SEGMENT_GAP_PX, ORDER_LEVEL_GAP_PX, MIN_BAR_COLUMN_WIDTH, TARGET_MAX_SEGMENT_WIDTH } from './types';
 
 type DensePackingLayout = {
     nonEmptyAsks: BookLevel[];
@@ -27,6 +27,7 @@ type RowLevel = {
     numOrders: number;
     hasOwnOrders: boolean;
     orders: Order[] | undefined;
+    breaks: number[] | undefined; // Aggregated MBO: where each price level after the first starts in orders
     bar: number;                  // Aggregated bar width: a volume scale change redraws the bar column
 };
 
@@ -51,7 +52,7 @@ const WORK_BUY = 1;
 const WORK_SELL = 2;
 
 const createLevel = (side: Side): RowLevel => ({
-    present: false, side, price: 0, quantity: 0, numOrders: 0, hasOwnOrders: false, orders: undefined, bar: 0
+    present: false, side, price: 0, quantity: 0, numOrders: 0, hasOwnOrders: false, orders: undefined, breaks: undefined, bar: 0
 });
 
 const createRow = (): RowState => ({
@@ -67,8 +68,10 @@ function resetRow(row: RowState, label: number): void {
     row.label = label;
     row.ask.present = false;
     row.ask.orders = undefined;
+    row.ask.breaks = undefined;
     row.bid.present = false;
     row.bid.orders = undefined;
+    row.bid.breaks = undefined;
     row.overlaps = null;
     row.workQuantity = 0;
     row.workCount = 0;
@@ -92,7 +95,47 @@ function sameLevel(a: RowLevel, b: RowLevel, compareBars: boolean): boolean {
         return false;
     }
     return !a.present || (a.price === b.price && a.quantity === b.quantity && a.numOrders === b.numOrders &&
-        a.hasOwnOrders === b.hasOwnOrders && sameOrders(a.orders, b.orders) && (!compareBars || a.bar === b.bar));
+        a.hasOwnOrders === b.hasOwnOrders && sameOrders(a.orders, b.orders) && sameBreaks(a.breaks, b.breaks) &&
+        (!compareBars || a.bar === b.bar));
+}
+
+function sameBreaks(a: number[] | undefined, b: number[] | undefined): boolean {
+    if (a === b) {
+        return true;
+    }
+    if (!a || !b || a.length !== b.length) {
+        return false;
+    }
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
+}
+
+/**
+ * Width of a level's order segments as drawIndividualOrders lays them out: each order above the
+ * size filter and a gap after it, and a wider gap where an aggregated row's next price level starts
+ */
+function segmentsWidth(orders: Order[], breaks: number[] | undefined, pixelsPerUnit: number, minQty: number): number {
+    let width = 0;
+    let nextBreak = 0;
+    let levelStart = false;
+    for (let i = 0; i < orders.length; i++) {
+        if (breaks !== undefined && nextBreak < breaks.length && breaks[nextBreak] <= i) {
+            nextBreak++;
+            levelStart = true;
+        }
+        const quantity = orders[i].quantity;
+        if (quantity <= minQty) {
+            continue;
+        }
+        if (levelStart && width > 0) {
+            width += ORDER_LEVEL_GAP_PX - SEGMENT_GAP_PX;
+        }
+        levelStart = false;
+        width += Math.max(MIN_SEGMENT_WIDTH_PX, quantity * pixelsPerUnit) + SEGMENT_GAP_PX;
+    }
+    return width;
 }
 
 function sameOrders(a: Order[] | undefined, b: Order[] | undefined): boolean {
@@ -300,7 +343,7 @@ type ColumnPositions = {
     readonly ltqX: number;        // -1 when hidden
     readonly barX: number;        // -1 when hidden
     // What they were computed from
-    readonly showVolumeBars: boolean;
+    readonly ordersShown: boolean;
     readonly qtyColWidth: number;
     readonly priceColWidth: number;
     readonly workColWidth: number;
@@ -315,6 +358,7 @@ export type LayoutOptions = {
     showWorkColumn?: boolean; // Default true
     showLtqColumn?: boolean;  // Default true
     showHeader?: boolean;     // Default true
+    mode?: 'PriceLevel' | 'MBO'; // Expected data mode, so the canvas starts with or without the Orders column. Snapshots have the final say. Default 'PriceLevel'
 };
 
 /**
@@ -345,7 +389,7 @@ export class CanvasRenderer {
     private needsFullRedraw: boolean = true;
     private lastRemovalMode: 'showEmpty' | 'removeRow' = 'removeRow';
     private lastShowOrderCount: boolean = true;
-    private lastShowVolumeBars: boolean = true;
+    private lastOrdersShown: boolean = false;
     private lastTickSize: number = 0.01;
     private lastDisplayTickSize: number = 0.01;
     private lastDensePackingScrollOffset: number = 0;
@@ -371,7 +415,9 @@ export class CanvasRenderer {
     private columns: ColumnPositions | null = null;             // See getColumnPositions
 
     // Layout configuration
-    private showVolumeBars: boolean = true;
+    private showOrders: boolean = true; // The Orders (bar) column, shown only for MBO snapshots
+    private ordersShown: boolean = false; // The Orders column is on screen: showOrders and an MBO snapshot
+    private mboMode: boolean = false; // The snapshot being rendered is MBO
     private showOrderCount: boolean = true; // In the qty column: "(5) 102" on bids, "102 (5)" on asks
     private readonly showWorkColumn: boolean;
     private readonly showLtqColumn: boolean;
@@ -420,7 +466,7 @@ export class CanvasRenderer {
         height: number,
         rowHeight: number = 24,
         colors: CanvasColors = DEFAULT_COLORS,
-        showVolumeBars: boolean = true,
+        showOrders: boolean = true,
         showOrderCount: boolean = true,
         tickSize: number = 0.01,
         mboOrderSizeFilter: number = DEFAULT_MBO_ORDER_SIZE_FILTER,
@@ -433,11 +479,14 @@ export class CanvasRenderer {
         this.height = height;
         this.rowHeight = rowHeight;
         this.colors = colors;
-        this.showVolumeBars = showVolumeBars;
+        this.showOrders = showOrders;
         this.showOrderCount = showOrderCount;
         this.showWorkColumn = layout.showWorkColumn ?? true;
         this.showLtqColumn = layout.showLtqColumn ?? true;
         this.headerHeight = (layout.showHeader ?? true) ? rowHeight : 0;
+        this.mboMode = layout.mode === 'MBO';
+        this.ordersShown = showOrders && this.mboMode;
+        this.lastOrdersShown = this.ordersShown;
         this.tickSize = tickSize;
         this.displayTickSize = Math.max(tickSize, displayTickSize);
         this.updatePriceFormat();
@@ -639,14 +688,14 @@ export class CanvasRenderer {
      */
     private getColumnPositions(): ColumnPositions {
         const cached = this.columns;
-        if (cached !== null && cached.showVolumeBars === this.showVolumeBars && cached.qtyColWidth === this.qtyColWidth &&
+        if (cached !== null && cached.ordersShown === this.ordersShown && cached.qtyColWidth === this.qtyColWidth &&
             cached.priceColWidth === this.priceColWidth && cached.workColWidth === this.workColWidth &&
             cached.ltqColWidth === this.ltqColWidth) {
             return cached;
         }
 
-        // Work | Bid qty | Price | Ask qty | LTQ | Volume bars, optional ones when enabled. Each x
-        // is the sum of the widths left of it, so the column fills tile edge to edge
+        // Work | Bid qty | Price | Ask qty | LTQ | Orders, optional ones when enabled (Orders in MBO
+        // mode only). Each x is the sum of the widths left of it, so the column fills tile edge to edge
         const workX = this.showWorkColumn ? 0 : -1;
         const bidQtyX = this.showWorkColumn ? this.workColWidth : 0;
         const priceX = bidQtyX + this.qtyColWidth;
@@ -654,11 +703,11 @@ export class CanvasRenderer {
         const askQtyEnd = askQtyX + this.qtyColWidth;
         const ltqX = this.showLtqColumn ? askQtyEnd : -1;
         const columnsEnd = this.showLtqColumn ? ltqX + this.ltqColWidth : askQtyEnd;
-        const barX = this.showVolumeBars ? columnsEnd : -1;
+        const barX = this.ordersShown ? columnsEnd : -1;
 
         return this.columns = {
             workX, bidQtyX, priceX, askQtyX, ltqX, barX,
-            showVolumeBars: this.showVolumeBars, qtyColWidth: this.qtyColWidth, priceColWidth: this.priceColWidth,
+            ordersShown: this.ordersShown, qtyColWidth: this.qtyColWidth, priceColWidth: this.priceColWidth,
             workColWidth: this.workColWidth, ltqColWidth: this.ltqColWidth
         };
     }
@@ -668,7 +717,7 @@ export class CanvasRenderer {
      */
     private calculateBarColumnWidth(): number {
         const cols = this.getColumnPositions();
-        if (!this.showVolumeBars) {
+        if (!this.ordersShown) {
             return 0;
         }
         // Bar column starts where barX indicates, and extends to the end of canvas
@@ -724,16 +773,11 @@ export class CanvasRenderer {
         ];
 
         for (const level of allLevels) {
-            const orders = level.side === Side.BID
-                ? this.currentSnapshot.bidOrders?.get(level.price)
-                : this.currentSnapshot.askOrders?.get(level.price);
-
+            const bid = level.side === Side.BID;
+            const orders = (bid ? this.currentSnapshot.bidOrders : this.currentSnapshot.askOrders)?.get(level.price);
             if (orders && orders.length > 0) {
-                const totalWidth = orders.reduce((sum, order) =>
-                    order.quantity > minQty
-                        ? sum + (order.quantity * pixelsPerUnit) + SEGMENT_GAP_PX
-                        : sum, 0);
-                maxWidth = Math.max(maxWidth, totalWidth);
+                const breaks = (bid ? this.currentSnapshot.bidOrderBreaks : this.currentSnapshot.askOrderBreaks)?.get(level.price);
+                maxWidth = Math.max(maxWidth, segmentsWidth(orders, breaks, pixelsPerUnit, minQty));
             }
         }
 
@@ -825,7 +869,7 @@ export class CanvasRenderer {
             ctx.fillText('LTQ', cols.ltqX + this.ltqColWidth / 2, textY);
         }
         if (cols.barX >= 0 && cols.barX < this.width) {
-            ctx.fillText('Volume', cols.barX + (this.width - cols.barX) / 2, textY); // Centered on the part on screen
+            ctx.fillText('Orders', cols.barX + (this.width - cols.barX) / 2, textY); // Centered on the part on screen
         }
     }
 
@@ -853,9 +897,15 @@ export class CanvasRenderer {
         scanLevels(snapshot.asks, this.askStats);
         scanLevels(snapshot.bids, this.bidStats);
 
+        // The Orders column comes and goes with the book's mode (mirrors SkiaRenderer, which sets ViewportManager.DataMode)
+        this.mboMode = snapshot.mode === 'MBO';
+        const ordersShown = this.showOrders && this.mboMode;
+        const ordersToggled = ordersShown !== this.ordersShown;
+        this.ordersShown = ordersShown;
+
         // Largest level sizes the quantity column and scales every volume bar
         const maxQuantity = Math.max(this.bidStats.maxQuantity, this.askStats.maxQuantity);
-        this.maxQuantity = this.showVolumeBars ? maxQuantity : 0;
+        this.maxQuantity = this.ordersShown ? maxQuantity : 0;
 
         // Recalculate base scale if order quantities changed
         this.calculateBaseScale();
@@ -876,7 +926,7 @@ export class CanvasRenderer {
             Math.max(this.bidStats.maxOrders, this.askStats.maxOrders));
         const newPriceColWidth = this.calculatePriceColumnWidth();
         const [newWorkColWidth, newLtqColWidth] = this.calculateCellColumnWidths();
-        if (newQtyColWidth !== this.qtyColWidth || newPriceColWidth !== this.priceColWidth ||
+        if (ordersToggled || newQtyColWidth !== this.qtyColWidth || newPriceColWidth !== this.priceColWidth ||
             newWorkColWidth !== this.workColWidth || newLtqColWidth !== this.ltqColWidth) {
             this.qtyColWidth = newQtyColWidth;
             this.priceColWidth = newPriceColWidth;
@@ -886,6 +936,8 @@ export class CanvasRenderer {
             const newCanvasWidth = this.calculateCanvasWidth();
             if (newCanvasWidth !== this.width) {
                 this.resizeCanvas(newCanvasWidth, this.height);
+            } else if (ordersToggled) {
+                this.barColumnWidth = this.calculateBarColumnWidth(); // Same canvas, the Orders column came or went
             }
         }
 
@@ -937,7 +989,7 @@ export class CanvasRenderer {
     private layoutChanged(): boolean {
         return this.lastRemovalMode !== this.removalMode ||
             this.lastShowOrderCount !== this.showOrderCount ||
-            this.lastShowVolumeBars !== this.showVolumeBars ||
+            this.lastOrdersShown !== this.ordersShown ||
             this.lastTickSize !== this.tickSize ||
             this.lastDisplayTickSize !== this.displayTickSize ||
             this.lastWidth !== this.width ||
@@ -957,7 +1009,7 @@ export class CanvasRenderer {
         this.needsFullRedraw = false;
         this.lastRemovalMode = this.removalMode;
         this.lastShowOrderCount = this.showOrderCount;
-        this.lastShowVolumeBars = this.showVolumeBars;
+        this.lastOrdersShown = this.ordersShown;
         this.lastTickSize = this.tickSize;
         this.lastDisplayTickSize = this.displayTickSize;
         this.lastDensePackingScrollOffset = this.scrollOffset;
@@ -1021,7 +1073,7 @@ export class CanvasRenderer {
                 const askIndex = layout.nonEmptyAsks.length - 1 - layout.startAskIndex - i;
                 const rowIndex = layout.firstRowIndex + i;
                 if (askIndex >= 0 && askIndex < layout.nonEmptyAsks.length && rowIndex < rowCount) {
-                    this.placeLevel(rows[rowIndex].ask, layout.nonEmptyAsks[askIndex], snapshot.askOrders);
+                    this.placeLevel(rows[rowIndex].ask, layout.nonEmptyAsks[askIndex], snapshot.askOrders, snapshot.askOrderBreaks);
                 }
             }
 
@@ -1030,7 +1082,7 @@ export class CanvasRenderer {
                 const bidIndex = layout.nonEmptyBids.length - 1 - layout.startBidIndex - i;
                 const rowIndex = firstBidRow + i;
                 if (bidIndex >= 0 && bidIndex < layout.nonEmptyBids.length && rowIndex < rowCount) {
-                    this.placeLevel(rows[rowIndex].bid, layout.nonEmptyBids[bidIndex], snapshot.bidOrders);
+                    this.placeLevel(rows[rowIndex].bid, layout.nonEmptyBids[bidIndex], snapshot.bidOrders, snapshot.bidOrderBreaks);
                 }
             }
             this.placeCells(rows, snapshot, layout, 0, 0);
@@ -1044,8 +1096,8 @@ export class CanvasRenderer {
             // Round to display tick size to avoid floating-point precision issues
             resetRow(rows[rowIndex], Math.round(price / this.displayTickSize) * this.displayTickSize);
         }
-        this.placeLevels(rows, snapshot.asks, this.askStats, snapshot.askOrders, Side.ASK, midRow, referencePrice);
-        this.placeLevels(rows, snapshot.bids, this.bidStats, snapshot.bidOrders, Side.BID, midRow, referencePrice);
+        this.placeLevels(rows, snapshot.asks, this.askStats, snapshot.askOrders, snapshot.askOrderBreaks, Side.ASK, midRow, referencePrice);
+        this.placeLevels(rows, snapshot.bids, this.bidStats, snapshot.bidOrders, snapshot.bidOrderBreaks, Side.BID, midRow, referencePrice);
         this.placeCells(rows, snapshot, null, midRow, referencePrice);
     }
 
@@ -1121,8 +1173,8 @@ export class CanvasRenderer {
      * Show Empty Rows: put each level on the row its price maps to (mirrors SkiaRenderer.PlaceLevels).
      * Ascending levels are read only around the rows' prices
      */
-    private placeLevels(rows: RowState[], levels: BookLevel[], stats: LevelStats,
-        orderMap: Map<number, Order[]> | null | undefined, side: Side, midRow: number, referencePrice: number): void {
+    private placeLevels(rows: RowState[], levels: BookLevel[], stats: LevelStats, orderMap: Map<number, Order[]> | null | undefined,
+        breakMap: Map<number, number[]> | null | undefined, side: Side, midRow: number, referencePrice: number): void {
         let start = 0;
         let maxPrice = Infinity;
         if (stats.ascending) {
@@ -1147,11 +1199,11 @@ export class CanvasRenderer {
             const row = rows[rowIndex];
             const slot = side === Side.ASK ? row.ask : row.bid;
             if (!slot.present) {
-                this.placeLevel(slot, level, orderMap);
+                this.placeLevel(slot, level, orderMap, breakMap);
             } else {
                 // Prices off the display grid can share a row: draw them all, in snapshot order
                 const overlap = createLevel(side);
-                this.placeLevel(overlap, level, orderMap);
+                this.placeLevel(overlap, level, orderMap, breakMap);
                 (row.overlaps ??= []).push(overlap);
             }
         }
@@ -1160,7 +1212,8 @@ export class CanvasRenderer {
     /**
      * Fill a row's ask or bid slot with a level and, in MBO mode, its orders
      */
-    private placeLevel(slot: RowLevel, level: BookLevel, orderMap: Map<number, Order[]> | null | undefined): void {
+    private placeLevel(slot: RowLevel, level: BookLevel, orderMap: Map<number, Order[]> | null | undefined,
+        breakMap: Map<number, number[]> | null | undefined): void {
         const orders = orderMap?.get(level.price); // Keyed by the same prices as the levels
         slot.present = true;
         slot.price = level.price;
@@ -1168,8 +1221,9 @@ export class CanvasRenderer {
         slot.numOrders = level.numOrders;
         slot.hasOwnOrders = level.hasOwnOrders;
         slot.orders = orders;
+        slot.breaks = breakMap?.get(level.price);
         // Same condition as the aggregated bar in drawRowBars
-        slot.bar = this.showVolumeBars && !(orders && orders.length > 0) ? this.volumeBarWidth(level.quantity) : 0;
+        slot.bar = this.ordersShown && !(orders && orders.length > 0) ? this.volumeBarWidth(level.quantity) : 0;
     }
 
     /**
@@ -1506,13 +1560,13 @@ export class CanvasRenderer {
      * Aggregated volume bar, or the order segments in MBO mode
      */
     private drawRowBars(row: RowLevel, barX: number, y: number): void {
-        if (!this.showVolumeBars) {
+        if (!this.ordersShown) {
             return;
         }
 
         if (row.orders && row.orders.length > 0) {
             // MBO mode: Draw individual order bars
-            this.drawIndividualOrders(row.orders, row.side, y);
+            this.drawIndividualOrders(row.orders, row.breaks, row.side, y);
         } else if (row.bar > 0) {
             // PriceLevel mode: Draw single aggregated bar
             this.offscreenCtx.fillStyle = row.side === Side.BID ? this.colors.bidBar : this.colors.askBar;
@@ -1583,10 +1637,11 @@ export class CanvasRenderer {
      */
     private drawIndividualOrders(
         orders: Order[],
+        breaks: number[] | undefined, // Aggregated MBO: where each price level after the first starts
         side: Side,
         y: number
     ): void {
-        if (!orders || orders.length === 0 || !this.showVolumeBars) return;
+        if (!orders || orders.length === 0 || !this.ordersShown) return;
 
         // Calculate segment widths without minimum constraint
         const pixelsPerUnit = this.segmentState.basePixelsPerUnit * this.segmentState.userScaleFactor;
@@ -1612,12 +1667,24 @@ export class CanvasRenderer {
         let xOffset = 0; // Track position within virtual segment space
         const gap = SEGMENT_GAP_PX;
 
+        let nextBreak = 0;
+        let levelStart = false;
         for (let i = 0; i < orders.length; i++) {
+            if (breaks !== undefined && nextBreak < breaks.length && breaks[nextBreak] <= i) {
+                nextBreak++;
+                levelStart = true;
+            }
             const order = orders[i];
 
             if (order.quantity <= minQty) {
                 continue;
             }
+
+            // A wider gap where the next price level of an aggregated row starts (as segmentsWidth)
+            if (levelStart && xOffset > 0) {
+                xOffset += ORDER_LEVEL_GAP_PX - SEGMENT_GAP_PX;
+            }
+            levelStart = false;
 
             // Calculate proportional width (no min constraint)
             let segmentWidth = order.quantity * pixelsPerUnit;
@@ -1759,7 +1826,7 @@ export class CanvasRenderer {
     }
 
     /**
-     * X where the volume bar column starts, -1 when bars are hidden (for interaction handler)
+     * X where the Orders column starts, -1 when it's hidden (for the interaction handler)
      */
     public getBarColumnX(): number {
         return this.getColumnPositions().barX;
@@ -2004,11 +2071,12 @@ export class CanvasRenderer {
     }
 
     /**
-     * Set whether to show volume bars
+     * Set whether to show the Orders (bar) column. It shows for MBO snapshots only
      */
-    public setShowVolumeBars(show: boolean): void {
-        if (this.showVolumeBars !== show) {
-            this.showVolumeBars = show;
+    public setShowOrders(show: boolean): void {
+        if (this.showOrders !== show) {
+            this.showOrders = show;
+            this.ordersShown = show && this.mboMode;
             // Recalculate and resize canvas based on new column count
             const newWidth = this.calculateCanvasWidth();
             this.resize(newWidth, this.height);
@@ -2209,7 +2277,7 @@ export class CanvasRenderer {
         const cellColumnsWidth = (this.showWorkColumn ? this.workColWidth : 0) + (this.showLtqColumn ? this.ltqColWidth : 0);
 
         // Volume bar column
-        const barWidth = this.showVolumeBars ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
+        const barWidth = this.ordersShown ? COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER : 0;
 
         return Math.round(qtyColumnsWidth + priceColWidth + cellColumnsWidth + barWidth);
     }

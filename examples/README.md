@@ -19,7 +19,9 @@ Demonstrates the web component with TypeScript/WASM hybrid rendering.
 - TypeScript and WASM engine selection
 - Configurable tick size (0.01, 0.05, 0.10, 0.25, 1.00)
 - Market data simulation (10 to 10,000 updates/sec)
-- Show/hide volume bars and order count
+- Show/hide the Orders column (MBO), order count, the Work and LTQ columns and the header
+- Click a qty cell to place a working order, a Work cell to cancel the orders on that row
+- Simulated trades in the LTQ column
 - Level removal modes (remove rows vs. show empty)
 - Real-time performance metrics
 
@@ -38,7 +40,7 @@ dotnet run --project examples/wpf/SlickLadder.WPF.Demo.csproj
 ### Features:
 - High-performance SkiaSharp rendering
 - Shared rendering core with Avalonia
-- Market data simulation
+- Market data simulation, with trades and working orders
 - Interactive controls for all display options
 - Performance metrics (FPS, frame time)
 
@@ -58,7 +60,7 @@ dotnet run --project examples/avalonia/SlickLadder.Avalonia.Demo.csproj
 - Cross-platform (Windows, Linux, macOS)
 - High-performance SkiaSharp rendering
 - Shared rendering core with WPF
-- Market data simulation
+- Market data simulation, with trades and working orders
 - Interactive controls for all display options
 - Performance metrics (FPS, frame time)
 

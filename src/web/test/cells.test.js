@@ -2,8 +2,8 @@
 // Mirrors tests/SlickUI.Core.Tests/CellColumnTests.cs
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { PriceLadder, Side, ClickButton, DEFAULT_COLORS, fakeContainer, render, trackScreens, screenRows } =
-    require('../test-utils/ladder-harness');
+const { PriceLadder, Side, ClickButton, OrderUpdateType, COL_WIDTH, VOLUME_BAR_WIDTH_MULTIPLIER, SEGMENT_GAP_PX, ORDER_LEVEL_GAP_PX,
+    DEFAULT_COLORS, fakeContainer, render, trackScreens, screenRows } = require('../test-utils/ladder-harness');
 
 trackScreens();
 
@@ -11,9 +11,13 @@ const LEVELS = [[Side.BID, 100.00], [Side.BID, 99.99], [Side.ASK, 100.02], [Side
 
 function createLadder(config = {}) {
     const ladder = new PriceLadder({ container: fakeContainer(), height: 600, ...config });
-    for (const [side, price] of LEVELS) {
-        ladder.processUpdate({ side, price, quantity: 10, numOrders: 1 });
-    }
+    LEVELS.forEach(([side, price], i) => {
+        if (config.mode === 'MBO') {
+            ladder.processOrderUpdate({ orderId: i + 1, side, price, quantity: 10, priority: i + 1 }, OrderUpdateType.Add);
+        } else {
+            ladder.processUpdate({ side, price, quantity: 10, numOrders: 1 });
+        }
+    });
     render(ladder);
     return ladder;
 }
@@ -35,8 +39,8 @@ const at = (x) => `${x.toFixed(2)} `;
 const textAt = (items, x) => items.filter((item) => item.startsWith(at(x)) && item.includes(' text '));
 const fillAt = (items, x) => items.filter((item) => item.startsWith(at(x)) && item.includes(' fill '));
 
-test('columns read Work | Bid | Price | Ask | LTQ | bars, and toggle off to the old layout', () => {
-    const { renderer } = createLadder();
+test('columns read Work | Bid | Price | Ask | LTQ | Orders, and toggle off to Bid | Price | Ask', () => {
+    const { renderer } = createLadder({ mode: 'MBO' });
     const cols = renderer.getColumnPositions();
     assert.equal(cols.workX, 0);
     assert.equal(cols.bidQtyX, renderer.workColWidth);
@@ -54,11 +58,39 @@ test('columns read Work | Bid | Price | Ask | LTQ | bars, and toggle off to the 
         renderer.getLtqColumn(), 3]);
     assert.equal(renderer.screenYToRow(0), -1, 'header');
 
-    const off = createLadder({ showWorkColumn: false, showLtqColumn: false, showHeader: false }).renderer;
+    const off = createLadder({ mode: 'MBO', showWorkColumn: false, showLtqColumn: false, showHeader: false, showOrders: false }).renderer;
     const plain = off.getColumnPositions();
-    assert.deepEqual([plain.workX, plain.bidQtyX, plain.ltqX, plain.barX],
-        [-1, 0, -1, plain.askQtyX + off.qtyColWidth]);
+    assert.deepEqual([plain.workX, plain.bidQtyX, plain.ltqX, plain.barX], [-1, 0, -1, -1]);
     assert.equal(off.screenYToRow(0), 0, 'rows start at the top');
+});
+
+// The Orders column draws each order, so it shows in MBO mode only, and comes and goes with the
+// mode, widening and narrowing the canvas
+test('the Orders column shows in MBO mode only', () => {
+    const ladder = createLadder();
+    const { renderer } = ladder;
+    const titles = () => {
+        renderer.needsFullRedraw = true;
+        render(ladder);
+        return screenRows(ladder.canvas, 1)[0].filter((item) => item.includes(' text ')).map((item) => item.split(' ').pop());
+    };
+    assert.equal(renderer.getColumnPositions().barX, -1, 'price levels');
+    assert.ok(!titles().includes('Orders'));
+    const priceLevelWidth = ladder.canvas.width;
+
+    ladder.setDataMode('MBO');
+    ladder.processOrderUpdate({ orderId: 1, side: Side.BID, price: 100, quantity: 10, priority: 1 }, OrderUpdateType.Add);
+    render(ladder);
+    const { barX, ltqX } = renderer.getColumnPositions();
+    assert.equal(barX, ltqX + renderer.ltqColWidth, 'MBO');
+    assert.ok(titles().includes('Orders'));
+    assert.equal(ladder.canvas.width, Math.round(barX + COL_WIDTH * VOLUME_BAR_WIDTH_MULTIPLIER), 'the canvas widens by the Orders column');
+    assert.equal(renderer.getBarColumnWidth(), ladder.canvas.width - barX, 'the bars get the new room');
+
+    ladder.setDataMode('PriceLevel');
+    render(ladder);
+    assert.equal(renderer.getColumnPositions().barX, -1, 'back to price levels');
+    assert.equal(ladder.canvas.width, priceLevelWidth);
 });
 
 test('the header titles the columns that are shown', () => {
@@ -68,8 +100,9 @@ test('the header titles the columns that are shown', () => {
         render(ladder);
         return screenRows(ladder.canvas, 1)[0].filter((item) => item.includes(' text ')).map((item) => item.split(' ').pop()).sort();
     };
-    assert.deepEqual(titles({}), ['Ask', 'Bid', 'LTQ', 'Price', 'Volume', 'Work']);
-    assert.deepEqual(titles({ showWorkColumn: false, showLtqColumn: false, showVolumeBars: false }), ['Ask', 'Bid', 'Price']);
+    assert.deepEqual(titles({}), ['Ask', 'Bid', 'LTQ', 'Price', 'Work']);
+    assert.deepEqual(titles({ mode: 'MBO' }), ['Ask', 'Bid', 'LTQ', 'Orders', 'Price', 'Work']);
+    assert.deepEqual(titles({ mode: 'MBO', showWorkColumn: false, showLtqColumn: false, showOrders: false }), ['Ask', 'Bid', 'Price']);
     assert.ok(!titles({ showHeader: false }).includes('Bid'), 'no header');
 });
 
@@ -91,9 +124,12 @@ test('the header separates its columns with a line on each edge', () => {
         const edges = (...xs) => [0, renderer.width - 1, ...xs.map(Math.floor)];
         return { xs, cols, edges };
     };
-    const all = separators({});
+    const all = separators({ mode: 'MBO' });
     assert.deepEqual(all.xs, all.edges(all.cols.bidQtyX, all.cols.priceX, all.cols.askQtyX, all.cols.ltqX, all.cols.barX));
-    const plain = separators({ showWorkColumn: false, showLtqColumn: false });
+    const levels = separators({});
+    assert.deepEqual(levels.xs, levels.edges(levels.cols.bidQtyX, levels.cols.priceX, levels.cols.askQtyX, levels.cols.ltqX),
+        'no Orders column for price levels');
+    const plain = separators({ mode: 'MBO', showWorkColumn: false, showLtqColumn: false });
     assert.deepEqual(plain.xs, plain.edges(plain.cols.priceX, plain.cols.askQtyX, plain.cols.barX), 'bid qty starts on the left side');
     assert.deepEqual(separators({ showHeader: false }).xs, []);
 });
@@ -208,6 +244,53 @@ test('the Work column fits its widest cell, not its largest quantity', () => {
     render(ladder);
     const { renderer } = ladder;
     assert.equal(renderer.workColWidth, renderer.columnWidthFor('0.12345678 (1)'));
+});
+
+// With the display tick aggregating, an MBO row shows the orders of every price level in its
+// bucket, the level nearest the spread first, with breaks where each next level starts. Buckets
+// whose levels didn't change keep their arrays, and the maps stay while nothing changed
+test('aggregated MBO merges every level\'s orders, nearest the spread first', () => {
+    const { OrderBuckets } = require('../.test-build/aggregation.js');
+    const order = (orderId) => ({ orderId, quantity: 10, priority: orderId });
+    const ids = (orders) => orders.map((o) => o.orderId);
+    const bids = new Map([[100.00, [order(1), order(2)]], [99.95, [order(3)]], [99.97, [order(4)]]]);
+    const buckets = new OrderBuckets(false);
+    const first = buckets.merge(bids, 0.1);
+    assert.equal(first.orders.get(100), bids.get(100.00), 'one level: its own array');
+    assert.deepEqual(ids(first.orders.get(99.9)), [4, 3], '99.97 before 99.95');
+    assert.deepEqual(first.breaks.get(99.9), [1]);
+    assert.equal(first.breaks.has(100), false);
+
+    const asks = new OrderBuckets(true).merge(new Map([[100.04, [order(5)]], [100.01, [order(6), order(7)]]]), 0.1);
+    assert.deepEqual(ids(asks.orders.get(100.1)), [6, 7, 5], '100.01 before 100.04');
+    assert.deepEqual(asks.breaks.get(100.1), [2]);
+
+    assert.equal(buckets.merge(new Map(bids), 0.1).orders, first.orders, 'no change: the same maps');
+    bids.set(100.00, [order(1)]);
+    const next = buckets.merge(bids, 0.1);
+    assert.notEqual(next.orders, first.orders);
+    assert.equal(next.orders.get(99.9), first.orders.get(99.9), 'its levels did not change');
+});
+
+// Price levels in an aggregated MBO row are set apart by a wider gap than orders of one level
+test('aggregated MBO sets each level\'s orders apart in the Orders column', () => {
+    const ladder = new PriceLadder({ container: fakeContainer(), width: 800, height: 600, mode: 'MBO', tickSize: 0.01, displayTickSize: 0.1 });
+    // The 1000 lot sets the scale (200px), so 100 lots are 20px
+    [[1, Side.BID, 100.00, 1000], [2, Side.ASK, 100.01, 100], [3, Side.ASK, 100.04, 100], [4, Side.ASK, 100.04, 100]].forEach(
+        ([orderId, side, price, quantity]) => ladder.processOrderUpdate({ orderId, side, price, quantity, priority: orderId }, OrderUpdateType.Add));
+    render(ladder);
+    ladder.renderer.needsFullRedraw = true;
+    render(ladder);
+    const { renderer } = ladder;
+    const row = [...Array(renderer.rowCount()).keys()].find((r) => renderer.rowToLevelInfo(r)?.price === 100.1);
+    const segments = screenRows(ladder.canvas, renderer.rowCount() + 1)[renderer.rowTop(row) / renderer.rowHeight]
+        .filter((item) => item.includes(` fill ${DEFAULT_COLORS.askBar} `))
+        .map((item) => { const parts = item.split(' '); return [parseFloat(parts[0]), parseFloat(parts[3])]; })
+        .sort((a, b) => a[0] - b[0]);
+    assert.equal(segments.length, 3);
+    const gap = (i) => segments[i + 1][0] - (segments[i][0] + segments[i][1]);
+    assert.ok(Math.abs(gap(0) - ORDER_LEVEL_GAP_PX) < 1e-6, `between levels: ${gap(0)}`);
+    assert.ok(Math.abs(gap(1) - SEGMENT_GAP_PX) < 1e-6, `within a level: ${gap(1)}`);
 });
 
 test('clear() drops working orders and the last trade', () => {

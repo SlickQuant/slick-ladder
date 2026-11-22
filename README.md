@@ -41,8 +41,8 @@ SlickLadder renders order book ladders across web, WASM, and desktop (WPF/Avalon
 - **Desktop**: SkiaSharp GPU-accelerated rendering for WPF and Avalonia
 
 ### Dual Data Modes
-- **PriceLevel Mode**: Aggregated volume bars per price level (lower memory footprint)
-- **MBO Mode**: Individual orders rendered as stacked bars per price level
+- **PriceLevel Mode**: Aggregated quantity per price level (lower memory footprint)
+- **MBO Mode**: Individual orders, drawn as bar segments in the Orders column
 
 ### High-Performance Pipeline
 - Sub-millisecond update processing
@@ -53,10 +53,10 @@ SlickLadder renders order book ladders across web, WASM, and desktop (WPF/Avalon
 ### Display Features
 - Configurable tick sizes (0.01, 0.05, 0.10, 0.25, 1.00)
 - **Display tick size aggregation**: group multiple raw price levels into coarser display buckets (e.g. show 0.10 rows when tick size is 0.01)
-- Columns: `Work | Bid | Price | Ask | LTQ | Volume`, with a header row on top. Work, LTQ and the header can each be turned off
+- Columns: `Work | Bid | Price | Ask | LTQ`, plus `Orders` in MBO mode, with a header row on top. Work, LTQ, Orders and the header can each be turned off
 - **Work column**: your own working orders at each price as `10 (2)` (quantity and order count), green for buys and red for sells
 - **LTQ column**: the last trade's quantity on its price. Green when the buyer was the aggressor, red for the seller, white when unknown
-- Toggle volume bars and order counts (shown in the qty column: `(5) 102` on bids, `102 (5)` on asks)
+- Toggle the Orders column and order counts (shown in the qty column: `(5) 102` on bids, `102 (5)` on asks)
 - Own order highlighting with gold border
 - Price level scrolling with mouse wheel (when auto-center is off)
 - Auto-center on the bid/ask midpoint, or re-center on demand with Space / middle-click
@@ -145,12 +145,11 @@ npm run build:all
 #### Basic Setup
 
 ```typescript
-import { PriceLadder, Side } from 'slick-ladder';
+import { PriceLadder, Side } from '@slickquant/slick-ladder';
 
-// Create the ladder
+// Create the ladder. Its width fits its columns
 const ladder = new PriceLadder({
     container: document.getElementById('ladder-container')!,
-    width: 400,
     height: 600
 });
 
@@ -173,7 +172,7 @@ ladder.processUpdate({
 #### Full Configuration
 
 ```typescript
-import { PriceLadder, Side, ClickButton, CanvasColors } from 'slick-ladder';
+import { PriceLadder, Side, ClickButton, CanvasColors } from '@slickquant/slick-ladder';
 
 const customColors: Partial<CanvasColors> = {
     background: '#1e1e1e',
@@ -190,15 +189,18 @@ const ladder = new PriceLadder({
     tickSize: 0.01,
     mode: 'PriceLevel',
     readOnly: false,
-    showVolumeBars: true,
+    showOrders: true,
     showOrderCount: true,
     showWorkColumn: true,
     showLtqColumn: true,
     showHeader: true,
     colors: customColors,
     onLevelClick: (price, side, button) => {
-        const action = side === Side.ASK ? 'BUY' : 'SELL';
+        const action = side === Side.BID ? 'BUY' : 'SELL';
         console.log(`${action} @ ${price} (${ClickButton[button]} click)`);
+    },
+    onWorkClick: (price, button) => {
+        console.log(`Work cell @ ${price} (${ClickButton[button]} click)`);
     },
     onPriceHover: (price) => {
         if (price !== null) {
@@ -215,7 +217,7 @@ console.log(`FPS: ${metrics.fps}, Updates: ${metrics.updateCount}`);
 ladder.resize(600, 900);
 
 // Toggle features
-ladder.setShowVolumeBars(false);
+ladder.setShowOrders(false);
 ladder.setShowOrderCount(true);
 
 // Our working orders at a price (Work column). Quantity 0 clears it
@@ -257,11 +259,10 @@ priceLadder.GetViewport().DisplayTickSize = 0.10m; // updates price grid
 #### MBO Mode (Market-By-Order)
 
 ```typescript
-import { PriceLadder, Side, OrderUpdateType } from 'slick-ladder';
+import { PriceLadder, Side, OrderUpdateType } from '@slickquant/slick-ladder';
 
 const ladder = new PriceLadder({
     container: document.getElementById('ladder-container')!,
-    width: 400,
     height: 600,
     mode: 'MBO'
 });
@@ -326,11 +327,14 @@ ladder.processOrderBatch([
 ### Web (WASM)
 
 ```typescript
-import { WasmPriceLadder } from 'slick-ladder/wasm-adapter';
-import { Side } from 'slick-ladder/types';
+import { WasmPriceLadder } from '@slickquant/slick-ladder/wasm-adapter';
+import { Side } from '@slickquant/slick-ladder/types';
 
-// Initialize WASM backend
-const wasm = new WasmPriceLadder(200, 0.01);
+// Same config as PriceLadder. The book lives in a Web Worker
+const wasm = new WasmPriceLadder({
+    container: document.getElementById('ladder-container')!,
+    tickSize: 0.01
+});
 await wasm.waitForReady();
 
 // Process updates (same API as TypeScript)
@@ -346,36 +350,22 @@ wasm.processUpdate({
 
 ```csharp
 using SlickLadder.Core;
-using SlickLadder.Rendering;
-using SlickLadder.WPF;
+using SlickLadder.Core.Models;
+using SlickLadder.Rendering.ViewModels;
+using SlickLadder.WPF.Controls;
 
-// In your WPF window
-var core = new PriceLadderCore();
-var ladderControl = new PriceLadderControl(core);
-
-// Add to your XAML container
+// In your WPF window: the control draws the book of the view model in its DataContext
+var viewModel = new PriceLadderViewModel(tickSize: 0.01m);
+var ladderControl = new PriceLadderControl { DataContext = viewModel };
 myGrid.Children.Add(ladderControl);
+var core = viewModel.Core;
 
-// Configure
-core.SetDataMode(DataMode.PriceLevel);
-
-// Process updates
-core.ProcessPriceLevelUpdate(new PriceLevelUpdate {
-    Side = Side.Bid,
-    Price = 100.25m,
-    Quantity = 1200,
-    NumOrders = 4
-});
+// Process updates (price level mode is the default)
+core.ProcessPriceLevelUpdate(new PriceLevel(Side.BID, 100.25m, 1200, 4));
 
 // MBO mode
 core.SetDataMode(DataMode.MBO);
-core.ProcessOrderUpdate(new OrderUpdate {
-    OrderId = 12345,
-    Side = Side.Bid,
-    Price = 100.25m,
-    Quantity = 500,
-    Priority = 1
-}, OrderUpdateType.Add);
+core.ProcessOrderUpdate(new OrderUpdate(12345, Side.BID, 100.25m, 500, priority: 1), OrderUpdateType.Add);
 
 // Our working orders (Work column) and trades (LTQ column), in either mode
 core.SetWorkingOrders(100.25m, Side.BID, 30, 2); // Quantity 0 clears it
@@ -386,26 +376,23 @@ core.ProcessTrade(100.26m, 5, Side.BID);         // Aggressor null when unknown
 ladderControl.GetViewport()!.AutoCenter = false;
 ladderControl.Recenter();
 
-// Work, LTQ and the header are on by default
+// ShowWorkColumn, ShowLtqColumn, ShowHeader and ShowOrders (the Orders column, MBO mode) are on by default
 ladderControl.GetViewport()!.ShowLtqColumn = false;
 ```
 
 ### Desktop (Avalonia)
 
 ```csharp
-using SlickLadder.Core;
-using SlickLadder.Rendering;
-using SlickLadder.Avalonia;
+using SlickLadder.Avalonia.Controls;
+using SlickLadder.Rendering.ViewModels;
 
-// In your Avalonia window
-var core = new PriceLadderCore();
-var ladderControl = new PriceLadderControl(core);
-
-// Add to your panel
+// In your Avalonia window, as with WPF
+var viewModel = new PriceLadderViewModel(tickSize: 0.01m);
+var ladderControl = new PriceLadderControl { DataContext = viewModel };
 myPanel.Children.Add(ladderControl);
 
 // Same API as WPF
-core.ProcessPriceLevelUpdate(update);
+viewModel.Core.ProcessPriceLevelUpdate(update);
 ```
 
 ## API Reference
@@ -420,10 +407,10 @@ core.ProcessPriceLevelUpdate(update);
 | `rowHeight` | `number` | `24` | Height of each price row in pixels |
 | `visibleLevels` | `number` | `50` | Number of price levels to track |
 | `tickSize` | `number` | `0.01` | Minimum price increment |
-| `displayTickSize` | `number` | same as `tickSize` | Display bucket size — must be ≥ `tickSize`. When larger, raw levels are aggregated into coarser rows (quantities summed, `hasOwnOrders` OR'd). |
+| `displayTickSize` | `number` | same as `tickSize` | Display bucket size, at least `tickSize`. When larger, raw levels are aggregated into coarser rows: quantities are summed, `hasOwnOrders` is OR'd and, in MBO mode, a row shows the orders of every level in it. |
 | `mode` | `'PriceLevel' \| 'MBO'` | `'PriceLevel'` | Data visualization mode |
 | `readOnly` | `boolean` | `false` | Disable click interactions |
-| `showVolumeBars` | `boolean` | `true` | Show volume bar visualization |
+| `showOrders` | `boolean` | `true` | Show the Orders column, each order as a bar segment. MBO mode only |
 | `showOrderCount` | `boolean` | `true` | Show each level's order count in the qty column: `(5) 102` on bids, `102 (5)` on asks |
 | `showWorkColumn` | `boolean` | `true` | Work column left of Bid: your working orders, set with `setWorkingOrders` |
 | `showLtqColumn` | `boolean` | `true` | LTQ column right of Ask: the last trade from `processTrade` |
@@ -444,8 +431,8 @@ const DEFAULT_COLORS = {
     bidQtyBackground: '#1a2f3a', // BID quantity column (dark blue)
     askQtyBackground: '#3a1a1f', // ASK quantity column (dark red)
     priceBackground: '#3a3a3a',  // Price column (gray)
-    bidBar: '#4caf50',           // BID volume bar (green)
-    askBar: '#f44336',           // ASK volume bar (red)
+    bidBar: '#4caf50',           // BID order bars (green)
+    askBar: '#f44336',           // ASK order bars (red)
     text: '#e0e0e0',             // Text color
     gridLine: '#444444',         // Grid lines
     ownOrderBorder: '#ffd700',   // Own order highlight (gold)
@@ -469,7 +456,7 @@ const DEFAULT_COLORS = {
 | `processOrderUpdate` | `OrderUpdate, OrderUpdateType` | `void` | Process a single MBO update |
 | `processOrderBatch` | `Array<{update, type}>` | `void` | Process multiple MBO updates |
 | `setDataMode` | `'PriceLevel' \| 'MBO'` | `void` | Switch data mode |
-| `setShowVolumeBars` | `boolean` | `void` | Toggle volume bars |
+| `setShowOrders` | `boolean` | `void` | Toggle the Orders column (MBO mode) |
 | `setShowOrderCount` | `boolean` | `void` | Toggle the order count in the qty column |
 | `setShowWorkColumn` | `boolean` | `void` | Toggle the Work column |
 | `setShowLtqColumn` | `boolean` | `void` | Toggle the LTQ column |
@@ -563,7 +550,7 @@ onLevelClick: (price: number | null, side: Side, button: ClickButton) => boolean
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `price` | `number \| null` | The price level that was clicked, `null` for an empty row |
-| `side` | `Side` | `Side.ASK` for BUY, `Side.BID` for SELL |
+| `side` | `Side` | `Side.BID` (bid qty column) for BUY, `Side.ASK` for SELL |
 | `button` | `ClickButton` | `Left`, `Middle` or `Right` |
 
 #### onWorkClick
@@ -590,7 +577,7 @@ Subscribe to trade click events on the `PriceLadderViewModel`:
 ```csharp
 viewModel.OnLevelClick += (LevelClickEventArgs trade) =>
 {
-    var action = trade.Side == Side.ASK ? "BUY" : "SELL";
+    var action = trade.Side == Side.BID ? "BUY" : "SELL";
     Console.WriteLine($"{action} @ {trade.Price} ({trade.Button} click)");
 };
 ```
@@ -600,7 +587,7 @@ viewModel.OnLevelClick += (LevelClickEventArgs trade) =>
 | Property | Type | Description |
 |----------|------|-------------|
 | `Price` | `decimal?` | The price level clicked, `null` for an empty row |
-| `Side` | `Side` | `Side.ASK` for BUY, `Side.BID` for SELL |
+| `Side` | `Side` | `Side.BID` (bid qty column) for BUY, `Side.ASK` for SELL |
 | `Button` | `ClickButton` | `Left`, `Middle` or `Right` |
 | `Handled` | `bool` | Set it to `true` when you handle the click. A middle-click left unhandled re-centers the ladder |
 
@@ -666,17 +653,17 @@ Aggregates all orders at each price level into a single quantity.
 
 **Characteristics:**
 - One row per distinct price (or per display bucket when `displayTickSize > tickSize`)
-- Single volume bar per level
+- No Orders column: each row shows its total quantity
 - Lower memory footprint
 - Suitable for most trading applications
 
 **Visual:**
 ```
-[Orders] [Qty]  [Price]  [Qty] [Orders]  [Volume Bars]
-   4     1200   100.25                    ████████
-   2      800   100.20                    █████
-                100.30    600     3       ████
-                100.35    400     2       ███
+ Work      Bid    Price    Ask    LTQ
+                 100.35    400
+                 100.30    600     5
+ 30 (2)   1200   100.25
+           800   100.20
 ```
 
 ### MBO Mode (Market-By-Order)
@@ -684,17 +671,18 @@ Aggregates all orders at each price level into a single quantity.
 Displays individual orders as stacked segments within each price level.
 
 **Characteristics:**
-- Per-order visibility
-- Stacked bar visualization
+- Per-order visibility in the Orders column, one segment per order in queue order
+- With `displayTickSize > tickSize`, a row shows the orders of every price level in its bucket, the level nearest the spread first, with a wider gap between levels
 - Higher memory usage
 - Detailed analysis for market makers
 
 **Visual:**
 ```
-[Orders] [Qty]  [Price]  [Qty] [Orders]  [Volume Bars]
-   4     1200   100.25                    ██|███|██|█
-   2      800   100.20                    ████|███
-                100.30    600     3       ██|███|█
+ Work      Bid    Price    Ask    LTQ    Orders
+                 100.35    400           ██|█
+                 100.30    600     5     ██|███|█
+ 30 (2)   1200   100.25                  ██|███|██|█
+           800   100.20                  ████|███
 ```
 
 ## Performance
@@ -708,7 +696,7 @@ SlickLadder is designed for high-frequency trading environments:
 
 ### Dirty Region Rendering
 
-Only changed rows are redrawn each frame. Both renderers (web `CanvasRenderer`, desktop `SkiaRenderer`) compare what each row should show with what they last drew, so changes from several flushes between frames all land. Rows that only moved are copied, a volume scale change redraws just the bar column, and a Show Empty Rows center move shifts the pixels. The result is pixel-identical to a full redraw.
+Only changed rows are redrawn each frame. Both renderers (web `CanvasRenderer`, desktop `SkiaRenderer`) compare what each row should show with what they last drew, so changes from several flushes between frames all land. Rows that only moved are copied, a bar scale change redraws just the Orders column, and a Show Empty Rows center move shifts the pixels. The result is pixel-identical to a full redraw.
 
 Idle ladders skip their frame: the web render loop builds no snapshot while the book and view are unchanged, and desktop hosts check `NeedsRender()`. A host whose surface keeps its pixels between paints (WPF `SKElement`) can call `RenderRetained()` to update it in place without copying a cached frame. `Invalidate()` forces a full redraw.
 
@@ -722,13 +710,13 @@ From the multi-ladder perf tests on a Ryzen 9 5900HX laptop. Each ladder has its
 
 | Scenario | Updates/sec | Web (Node) | Desktop (raster) |
 |----------|-------------|------------|------------------|
-| 50 ladders, price levels | ~40,000 | 0.7 / 1.4ms | 5.8 / 7.9ms |
-| 100 ladders, price levels | ~82,000 | 1.5 / 1.9ms | 11.6 / 16.9ms |
-| 50 ladders, MBO | ~39,000 | 2.1 / 2.9ms | 8.3 / 18.9ms |
-| 100 ladders, MBO | ~80,000 | 5.9 / 7.8ms | 16.9 / 36.7ms |
-| 100 ladders, 500-level books | ~82,000 | 3.3 / 4.4ms | 5.7 / 8.2ms |
+| 50 ladders, price levels | ~40,000 | 0.9 / 1.6ms | 4.1 / 5.8ms |
+| 100 ladders, price levels | ~82,000 | 1.8 / 2.7ms | 8.3 / 11.9ms |
+| 50 ladders, MBO | ~39,000 | 2.4 / 3.2ms | 6.2 / 15.5ms |
+| 100 ladders, MBO | ~80,000 | 5.4 / 6.7ms | 13.4 / 32.2ms |
+| 100 ladders, 500-level books | ~82,000 | 3.3 / 4.3ms | 4.7 / 7.3ms |
 
-The web test draws to a stubbed canvas, so the browser's own drawing isn't in it: in Edge, 100 price-level ladders take ~30ms per frame. On a GPU (Avalonia, each ladder in its own OpenGL surface), 50 and 100 ladders take ~14ms and ~26ms. Run the tests to get numbers for your machine.
+The web test draws to a stubbed canvas, so the browser's own drawing isn't in it: in Edge, 100 price-level ladders take ~30ms per frame. On a GPU (Avalonia, each ladder in its own OpenGL surface), 50 and 100 price-level ladders take ~10ms and ~21ms. Run the tests to get numbers for your machine.
 
 ## Project Structure
 
@@ -839,7 +827,7 @@ The demo applications include:
 - Data mode toggle (PriceLevel / MBO)
 - Tick size configuration
 - Update rate slider (10 - 10,000 updates/sec)
-- Volume bars and order count toggles
+- Orders column and order count toggles
 - Work, LTQ and header toggles. Clicking a qty cell places a working order that's pulled a few seconds later, and clicking a Work cell cancels the orders on that row
 - Simulated trades for the LTQ column
 - Auto-center toggle

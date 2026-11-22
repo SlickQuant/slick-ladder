@@ -50,7 +50,6 @@ const container = document.getElementById('ladder-container') as HTMLElement;
 // Initialize the ladder
 const ladder = new PriceLadder({
   container,
-  width: 400,
   height: 600
 });
 
@@ -67,22 +66,19 @@ ladder.processUpdate({ price: 100.7, quantity: 1800, numOrders: 1, side: Side.AS
 - **WebAssembly powered** order book processing (optional)
 - **Real-time updates** with minimal CPU overhead
 - **Customizable appearance** and behavior
-- **Interactive** - click to trade
+- **Work and LTQ columns**: your working orders and the last trade, under a header row
+- **Interactive**: click a qty cell to trade, a Work cell to act on your orders
 
 ## WebAssembly Mode
 
 The package includes pre-built WASM files for enhanced performance:
 
 ```typescript
-import { initWasm } from '@slickquant/slick-ladder/wasm-adapter';
+import { WasmPriceLadder } from '@slickquant/slick-ladder/wasm-adapter';
 
-// Initialize WASM runtime
-await initWasm('/path/to/wasm/files/');
-
-// Now create ladder with WASM support
-const ladder = new PriceLadder(canvas, {
-  useWasm: true
-});
+// Same config and API as PriceLadder. The book lives in a Web Worker
+const ladder = new WasmPriceLadder({ container });
+await ladder.waitForReady();
 ```
 
 ## API Documentation

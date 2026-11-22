@@ -64,6 +64,7 @@ public class RenderConfig
     public const double SegmentScaleStep = 0.25; // Base step for dynamic zoom
     public const int MinSegmentWidthPx = 1;
     public const int SegmentGapPx = 2;
+    public const int OrderLevelGapPx = 8; // Between price levels in an aggregated MBO row (must match web ORDER_LEVEL_GAP_PX)
     public const int MinBarColumnWidth = 100;
     public const int TargetMaxSegmentWidth = 200;
 }

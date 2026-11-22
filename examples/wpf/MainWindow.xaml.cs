@@ -123,11 +123,11 @@ public partial class MainWindow : Window
         _simulator.UpdatesPerSecond = rate;
     }
 
-    private void ShowVolumeBarsCheckbox_Changed(object sender, RoutedEventArgs e)
+    private void ShowOrdersCheckbox_Changed(object sender, RoutedEventArgs e)
     {
         if (PriceLadder?.GetViewport() != null)
         {
-            PriceLadder.GetViewport().ShowVolumeBars = ShowVolumeBarsCheckbox.IsChecked ?? true;
+            PriceLadder.GetViewport().ShowOrders = ShowOrdersCheckbox.IsChecked ?? true;
         }
     }
 

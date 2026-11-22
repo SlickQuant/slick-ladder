@@ -81,9 +81,16 @@ export interface OrderBookSnapshot {
     asks: BookLevel[];
     timestamp: number;
 
-    // MBO mode: Individual orders per price level (null in PriceLevel mode)
+    // MBO mode: Individual orders per price level (null in PriceLevel mode). With the display tick
+    // aggregating, per display bucket: the orders of every price level in it, nearest the spread
+    // first, and the breaks maps hold where each level after the first starts
     bidOrders?: Map<number, Order[]> | null;
     askOrders?: Map<number, Order[]> | null;
+    bidOrderBreaks?: Map<number, number[]> | null;
+    askOrderBreaks?: Map<number, number[]> | null;
+
+    // The data mode it was taken in. The Orders column shows for MBO only
+    mode?: 'PriceLevel' | 'MBO';
 
     // Our own working orders by price (Work column) and the last trade (LTQ column)
     bidWork?: Map<number, WorkingOrders> | null;
@@ -101,7 +108,7 @@ export interface PriceLadderConfig {
     displayTickSize?: number; // Display bucket size >= tickSize. Default: same as tickSize (no aggregation)
     mode?: 'PriceLevel' | 'MBO';
     readOnly?: boolean;
-    showVolumeBars?: boolean;
+    showOrders?: boolean; // The Orders column: each order's bar, right of LTQ, in MBO mode only. Default: true
     showOrderCount?: boolean; // Order count in the qty column: "(5) 102" on bids, "102 (5)" on asks. Default: true
     showWorkColumn?: boolean; // Work column left of Bid: our working orders as "10 (2)". Default: true
     showLtqColumn?: boolean; // LTQ column right of Ask: the last trade's quantity on its price. Default: true
@@ -177,6 +184,7 @@ export const SEGMENT_SCALE_MAX = 100.0;
 export const SEGMENT_SCALE_STEP = 0.2; // Base step for dynamic zoom
 export const MIN_SEGMENT_WIDTH_PX = 1; // Minimum rendered width
 export const SEGMENT_GAP_PX = 2;
+export const ORDER_LEVEL_GAP_PX = 8; // Between price levels in an aggregated MBO row (RenderConfig.OrderLevelGapPx)
 export const MIN_BAR_COLUMN_WIDTH = 100; // Prevent collapse on resize
 export const TARGET_MAX_SEGMENT_WIDTH = 200; // Target width for largest order
 

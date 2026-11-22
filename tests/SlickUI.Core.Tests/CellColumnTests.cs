@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using SkiaSharp;
+using SlickLadder.Core.Managers;
 using SlickLadder.Core.Models;
 using SlickLadder.Rendering.Core;
 using SlickLadder.Rendering.Simulation;
@@ -331,6 +332,135 @@ public class CellColumnTests
         var sell = WorkTint(100.02m);
         Assert.True(buy.Green > 5 && buy.Red == 0, $"buy {buy}");
         Assert.True(sell.Red > 5 && sell.Green == 0, $"sell {sell}");
+    }
+
+    // The Orders column draws each order, so it shows for MBO books only (aggregated by display tick
+    // too) and comes and goes with the mode
+    [Fact]
+    public void OrdersColumn_ShowsForMboBooksOnly()
+    {
+        var viewModel = new PriceLadderViewModel(0.01m);
+        var levels = new[] { new PriceLevel(Side.BID, 100m, 10, 1), new PriceLevel(Side.ASK, 100.01m, 10, 1) };
+        viewModel.ProcessBatch(levels);
+        const int wide = 600; // Room for more than the bar column's minimum
+        var viewport = new ViewportManager { Width = wide, Height = 600 };
+        using var renderer = new SkiaRenderer(new RenderConfig());
+        using var surface = SKSurface.Create(new SKImageInfo(wide, 600));
+        void Render() => renderer.Render(surface.Canvas, viewModel.CurrentSnapshot!.Value, viewport);
+
+        Render();
+        Assert.Null(viewport.OrdersColumnX); // Price levels
+
+        var core = viewModel.Core;
+        core.SetDataMode(DataMode.MBO);
+        core.ProcessOrderUpdate(new OrderUpdate(1, Side.BID, 100m, 10, 1), OrderUpdateType.Add);
+        core.Flush();
+        Render();
+        Assert.Equal(viewport.LtqColumnX + viewport.LtqColWidth, viewport.OrdersColumnX);
+        Assert.Equal(wide - viewport.OrdersColumnX!.Value, viewport.OrdersColumnWidth);
+
+        viewModel.DisplayTickSize = 0.1m;
+        core.ProcessOrderUpdate(new OrderUpdate(2, Side.ASK, 100.01m, 10, 2), OrderUpdateType.Add);
+        core.Flush();
+        Assert.NotNull(viewModel.CurrentSnapshot!.Value.BidOrders); // Aggregated: each bucket's orders
+        Render();
+        Assert.NotNull(viewport.OrdersColumnX);
+
+        viewModel.DisplayTickSize = 0.01m;
+        core.SetDataMode(DataMode.PriceLevel);
+        viewModel.ProcessBatch(levels);
+        Render();
+        Assert.Null(viewport.OrdersColumnX);
+    }
+
+    // With the display tick aggregating, an MBO row shows the orders of every price level in its
+    // bucket, the level nearest the spread first, with breaks where each next level starts. Buckets
+    // whose levels didn't change keep their arrays, and the maps stay while no order changed
+    [Fact]
+    public void AggregatedMbo_MergesEveryLevelsOrders()
+    {
+        var viewModel = new PriceLadderViewModel(0.01m) { DisplayTickSize = 0.1m };
+        var core = viewModel.Core;
+        core.SetDataMode(DataMode.MBO);
+        foreach (var (id, side, price) in new[]
+        {
+            (1L, Side.BID, 100.00m), (2L, Side.BID, 100.00m), (3L, Side.BID, 99.95m), (4L, Side.BID, 99.97m),
+            (5L, Side.ASK, 100.04m), (6L, Side.ASK, 100.01m), (7L, Side.ASK, 100.01m)
+        })
+        {
+            core.ProcessOrderUpdateNoFlush(new OrderUpdate(id, side, price, 10 * id, id), OrderUpdateType.Add);
+        }
+        core.Flush();
+        var snapshot = viewModel.CurrentSnapshot!.Value;
+
+        long[] Ids(Order[] orders) => orders.Select(order => order.OrderId).ToArray();
+        Assert.Equal(new long[] { 1, 2 }, Ids(snapshot.BidOrders![100.0m]));
+        Assert.Equal(new long[] { 4, 3 }, Ids(snapshot.BidOrders[99.9m])); // 99.97 before 99.95
+        Assert.Equal(new[] { 1 }, snapshot.BidOrderBreaks![99.9m]);
+        Assert.False(snapshot.BidOrderBreaks.ContainsKey(100.0m)); // One level
+        Assert.Equal(new long[] { 6, 7, 5 }, Ids(snapshot.AskOrders![100.1m])); // 100.01 before 100.04
+        Assert.Equal(new[] { 2 }, snapshot.AskOrderBreaks![100.1m]);
+
+        var bucket = snapshot.BidOrders[99.9m];
+        core.ProcessOrderUpdate(new OrderUpdate(1, Side.BID, 100.00m, 15, 1), OrderUpdateType.Modify);
+        core.Flush();
+        var next = viewModel.CurrentSnapshot!.Value;
+        Assert.NotSame(snapshot.BidOrders, next.BidOrders);
+        Assert.Same(bucket, next.BidOrders![99.9m]); // Its levels didn't change
+
+        core.SetWorkingOrders(100m, Side.BID, 5, 1); // A snapshot with no order change
+        Assert.Same(next.BidOrders, viewModel.CurrentSnapshot!.Value.BidOrders);
+        Assert.Same(next.AskOrders, viewModel.CurrentSnapshot!.Value.AskOrders);
+    }
+
+    // Price levels in an aggregated MBO row are set apart by a wider gap than orders of one level
+    [Fact]
+    public void AggregatedMbo_LevelsAreSetApartInTheOrdersColumn()
+    {
+        var viewModel = new PriceLadderViewModel(0.01m) { DisplayTickSize = 0.1m };
+        var core = viewModel.Core;
+        core.SetDataMode(DataMode.MBO);
+        // The 1000 lot sets the scale (200px), so 100 lots are 20px and the ask row fits
+        foreach (var (id, side, price, quantity) in new[]
+        {
+            (1L, Side.BID, 100.00m, 1000m), (2L, Side.ASK, 100.01m, 100m), (3L, Side.ASK, 100.04m, 100m), (4L, Side.ASK, 100.04m, 100m)
+        })
+        {
+            core.ProcessOrderUpdateNoFlush(new OrderUpdate(id, side, price, quantity, id), OrderUpdateType.Add);
+        }
+        core.Flush();
+        var snapshot = viewModel.CurrentSnapshot!.Value;
+
+        const int wide = 600;
+        var config = new RenderConfig();
+        var viewport = new ViewportManager { Width = wide, Height = 600, DisplayTickSize = 0.1m };
+        using var renderer = new SkiaRenderer(config);
+        using var surface = SKSurface.Create(new SKImageInfo(wide, 600));
+        renderer.Render(surface.Canvas, snapshot, viewport);
+
+        // Runs of the ask bar color along the top of the 100.1 row's bars: 100.01's order, then 100.04's two
+        var row = Enumerable.Range(0, viewport.RowCount).Single(r => viewport.LevelPriceAt(snapshot, viewport.RowTop(r)) == 100.1m);
+        using var pixels = surface.PeekPixels();
+        var y = viewport.RowTop(row) + 5;
+        var runs = new List<(int Start, int End)>();
+        for (var x = (int)viewport.OrdersColumnX!.Value; x < wide; x++)
+        {
+            if (pixels.GetPixelColor(x, y) != config.AskVolumeBar)
+            {
+                continue;
+            }
+            if (runs.Count > 0 && runs[^1].End == x - 1)
+            {
+                runs[^1] = (runs[^1].Start, x);
+            }
+            else
+            {
+                runs.Add((x, x));
+            }
+        }
+        Assert.Equal(3, runs.Count);
+        Assert.InRange(runs[1].Start - runs[0].End - 1, RenderConfig.OrderLevelGapPx - 1, RenderConfig.OrderLevelGapPx + 1);
+        Assert.InRange(runs[2].Start - runs[1].End - 1, RenderConfig.SegmentGapPx - 1, RenderConfig.SegmentGapPx + 1);
     }
 
     [Fact]

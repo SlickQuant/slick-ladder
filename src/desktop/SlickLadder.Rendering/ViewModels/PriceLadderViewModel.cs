@@ -73,6 +73,8 @@ public class PriceLadderViewModel : ReactiveObject, IDisposable
     private OrderBookSnapshot? _currentSnapshot;
     private decimal _displayTickSize;
     private decimal _tickSize;
+    private readonly OrderBuckets _bidOrderBuckets = new(roundUp: false); // MBO orders by display bucket, when aggregating
+    private readonly OrderBuckets _askOrderBuckets = new(roundUp: true);
 
     /// <summary>
     /// Event fired when user clicks a price level
@@ -263,7 +265,7 @@ public class PriceLadderViewModel : ReactiveObject, IDisposable
     /// </summary>
     public PriceLadderCore Core => _core;
 
-    private static decimal BucketPrice(decimal price, decimal displayTickSize, bool roundUp = false)
+    internal static decimal BucketPrice(decimal price, decimal displayTickSize, bool roundUp = false)
     {
         return SnapToBucket(roundUp ? Math.Ceiling(price / displayTickSize) : Math.Floor(price / displayTickSize), displayTickSize);
     }
@@ -317,7 +319,7 @@ public class PriceLadderViewModel : ReactiveObject, IDisposable
         return dotIndex == -1 ? 0 : str.Length - dotIndex - 1;
     }
 
-    private static OrderBookSnapshot AggregateLevels(OrderBookSnapshot snapshot, decimal displayTickSize, decimal tickSize)
+    private OrderBookSnapshot AggregateLevels(OrderBookSnapshot snapshot, decimal displayTickSize, decimal tickSize)
     {
         var bids = AggregateArray(snapshot.Bids, displayTickSize, Side.BID);
         var asks = AggregateArray(snapshot.Asks, displayTickSize, Side.ASK);
@@ -334,8 +336,14 @@ public class PriceLadderViewModel : ReactiveObject, IDisposable
         result.MidPrice = midPrice;
         result.Bids = bids;
         result.Asks = asks;
-        result.BidOrders = null;
-        result.AskOrders = null;
+        if (snapshot.BidOrders != null)
+        {
+            (result.BidOrders, result.BidOrderBreaks) = _bidOrderBuckets.Merge(snapshot.BidOrders, displayTickSize);
+        }
+        if (snapshot.AskOrders != null)
+        {
+            (result.AskOrders, result.AskOrderBreaks) = _askOrderBuckets.Merge(snapshot.AskOrders, displayTickSize);
+        }
         result.BidWork = AggregateWork(snapshot.BidWork, displayTickSize, roundUp: false);
         result.AskWork = AggregateWork(snapshot.AskWork, displayTickSize, roundUp: true);
         if (snapshot.LastTrade != null)

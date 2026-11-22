@@ -17,7 +17,7 @@ const event = (fields) => ({ preventDefault: () => {}, ...fields });
 const assertNear = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`);
 
 // Bug: recreating the renderer (volume bars / order count toggle) reset removal mode to 'removeRow'
-for (const toggle of ['setShowVolumeBars', 'setShowOrderCount', 'setShowWorkColumn', 'setShowLtqColumn', 'setShowHeader']) {
+for (const toggle of ['setShowOrders', 'setShowOrderCount', 'setShowWorkColumn', 'setShowLtqColumn', 'setShowHeader']) {
     test(`${toggle} keeps removal mode set at runtime`, () => {
         const ladder = createLadder();
         ladder.setRemovalMode('showEmpty');
@@ -174,6 +174,14 @@ for (const mode of ['PriceLevel', 'MBO']) {
     });
 }
 
+// Snapshots marked MBO, so the Orders column shows. A price level book then draws like an MBO
+// snapshot without orders, one bar per level
+function levelBars(ladder) {
+    const getSnapshot = ladder.getSnapshot.bind(ladder);
+    ladder.getSnapshot = () => ({ ...getSnapshot(), mode: 'MBO' });
+    return ladder;
+}
+
 // Bar widths on the offscreen canvas by row. A background fill wipes the rows it covers
 function trackBars(renderer) {
     const { offscreenCtx: ctx, colors, rowHeight } = renderer;
@@ -212,7 +220,10 @@ function apply(ladder, rows, type = OrderUpdateType.Add) {
 // Bars after `update` repaints the ladder incrementally, and after a fresh ladder draws the same book in full.
 // No order count: "200 (1)" would widen the qty column, and the resize swaps the tracked context
 function barsAfterUpdate(config, book, update, type) {
-    const create = () => new PriceLadder({ container: fakeContainer(400), height: 600, tickSize: 0.01, showOrderCount: false, ...config });
+    const create = () => {
+        const ladder = new PriceLadder({ container: fakeContainer(400), height: 600, tickSize: 0.01, showOrderCount: false, ...config });
+        return config.mode === 'MBO' ? ladder : levelBars(ladder);
+    };
     const ladder = create();
     apply(ladder, book);
     const screen = renderTracked(ladder);
@@ -259,14 +270,14 @@ for (const removalMode of ['showEmpty', 'removeRow']) {
 // ask on the same row showed only the bid, and a second price rounding to a row was dropped.
 // Desktop draws them all
 test('showEmpty: every level that maps to a row is drawn', () => {
-    const locked = createLadder({ removalMode: 'showEmpty', height: 600 }, 100.00, 100.00);
+    const locked = levelBars(createLadder({ removalMode: 'showEmpty', height: 600 }, 100.00, 100.00));
     const lockedBars = renderTracked(locked);
     assert.deepEqual([...lockedBars.values()].filter((widths) => widths.length === 2).length, 1, 'bid and ask on 100.00');
 
     // Prices off the 0.01 grid, as a WASM snapshot can carry: 100.012 shares 100.01's row
     const { renderer } = createLadder({ removalMode: 'showEmpty', height: 600 });
     const level = (price, quantity) => ({ price, quantity, numOrders: 1, side: Side.ASK, isDirty: false, hasOwnOrders: false });
-    const snapshot = { bestBid: null, bestAsk: 100.01, midPrice: 100.01, bids: [], asks: [level(100.01, 10), level(100.012, 20)], timestamp: 0 };
+    const snapshot = { bestBid: null, bestAsk: 100.01, midPrice: 100.01, bids: [], asks: [level(100.01, 10), level(100.012, 20)], timestamp: 0, mode: 'MBO' };
     renderer.render(snapshot);
     const screen = trackBars(renderer);
     renderer.needsFullRedraw = true;
@@ -280,7 +291,7 @@ test('showEmpty: every level that maps to a row is drawn', () => {
 test('showEmpty: a deep book places the same levels as a full scan', () => {
     const height = 600;
     const { renderer } = createLadder({ removalMode: 'showEmpty', height });
-    const snapshotOf = (asks, bids) => ({ bestBid: 100, bestAsk: 100.01, midPrice: 100.005, bids, asks, timestamp: 0 });
+    const snapshotOf = (asks, bids) => ({ bestBid: 100, bestAsk: 100.01, midPrice: 100.005, bids, asks, timestamp: 0, mode: 'MBO' });
     const level = (side, price, quantity) => ({ price, quantity, numOrders: 1, side, isDirty: false, hasOwnOrders: false });
     renderer.render(snapshotOf([level(Side.ASK, 100.01, 1)], [level(Side.BID, 100, 1)]));
     const reference = renderer.getCenterPrice();
@@ -487,7 +498,7 @@ test('click on a wide ladder\'s price column is not a level click', () => {
 // Bug: the bar drag started 3 default column widths from the left (5 with order count columns),
 // which is inside a widened ask qty column. It now starts where the bar column does
 test('bar drag starts at the bar column of a wide ladder', () => {
-    const ladder = createLadder({ showOrderCount: true });
+    const ladder = levelBars(createLadder({ showOrderCount: true }));
     ladder.processUpdate({ side: Side.BID, price: 100.00, quantity: 123456789, numOrders: 1 });
     render(ladder);
     const { renderer, interactionHandler } = ladder;

@@ -45,7 +45,9 @@ public class IncrementalRenderTests
         {
             _core.SetDataMode(mode);
             _core.SetSnapshotViewport(null, snapshotLevels);
-            _core.OnSnapshotReady += snapshot => Snapshot = snapshot;
+            // Marked MBO, so the Orders column shows. A price level book then draws like an MBO
+            // snapshot without orders, one bar per level
+            _core.OnSnapshotReady += snapshot => Snapshot = snapshot with { Mode = DataMode.MBO };
         }
 
         /// <summary>Bids mid-0.10..mid and asks mid+0.01..mid+0.11, 1000 each</summary>
@@ -98,6 +100,7 @@ public class IncrementalRenderTests
         private readonly bool _retained;
         private readonly bool _showOrderCount;
         private readonly bool _cells;
+        private readonly decimal _displayTickSize;
         private readonly int _width;
         private readonly GRContext? _gpu;
 
@@ -107,9 +110,10 @@ public class IncrementalRenderTests
 
         // cells: the Work and LTQ columns and the header, all on or all off (the layout before them)
         public Ladder(LevelRemovalMode mode, bool retained, bool showOrderCount = false, int width = Width, GRContext? gpu = null,
-            bool cells = true)
+            bool cells = true, decimal displayTickSize = 0.01m)
         {
             (_mode, _retained, _showOrderCount, _width, _gpu, _cells) = (mode, retained, showOrderCount, width, gpu, cells);
+            _displayTickSize = displayTickSize;
             Surface = NewSurface();
             Viewport = NewViewport();
         }
@@ -122,7 +126,7 @@ public class IncrementalRenderTests
         public ViewportManager NewViewport() => new()
         {
             Width = _width, Height = Height, RemovalMode = _mode, ShowOrderCount = _showOrderCount,
-            ShowWorkColumn = _cells, ShowLtqColumn = _cells, ShowHeader = _cells
+            ShowWorkColumn = _cells, ShowLtqColumn = _cells, ShowHeader = _cells, DisplayTickSize = _displayTickSize
         };
 
         public void Render(in OrderBookSnapshot snapshot)
@@ -145,6 +149,20 @@ public class IncrementalRenderTests
             renderer.Render(expected.Canvas, snapshot, NewViewport());
 
             var want = Pixels(expected);
+            var got = Pixels(Surface);
+            var index = want.CommonPrefixLength(got);
+            Assert.True(index == want.Length,
+                $"{context} pixel ({index / 4 % _width}, {index / 4 / _width}) differs from a full redraw");
+        }
+
+        /// <summary>
+        /// Same pixels as a ladder that redrew everything for the same frame. Unlike
+        /// AssertMatchesFullRedraw, that ladder has seen every earlier frame too, so history-bound
+        /// state such as the segment scale (which moves only past 20%) is the same
+        /// </summary>
+        public void AssertMatches(Ladder fullRedraw, string context)
+        {
+            var want = fullRedraw.Pixels(fullRedraw.Surface);
             var got = Pixels(Surface);
             var index = want.CommonPrefixLength(got);
             Assert.True(index == want.Length,
@@ -215,7 +233,7 @@ public class IncrementalRenderTests
         book.SetHasOwnOrders(100.03m, Side.ASK); // Remove Rows replays this row clipped to the bar column
         using var ladder = new Ladder(mode, retained, width: 100);
         ladder.Render(book.Snapshot);
-        Assert.True(ladder.Viewport.VolumeBarColumnX >= 100, "the bar column must start past the right edge");
+        Assert.True(ladder.Viewport.OrdersColumnX >= 100, "the bar column must start past the right edge");
 
         book.Flush(new PriceLevel(Side.ASK, 100.02m, 2000, 9)); // Same digits: only the bar scale moves
         ladder.Render(book.Snapshot);
@@ -746,6 +764,43 @@ public class IncrementalRenderTests
         return (work, ltq);
     }
 
+    // With the display tick aggregating, an MBO row merges the orders of the levels in its bucket.
+    // Every frame of a random order feed still matches a full redraw
+    [Theory]
+    [MemberData(nameof(Paths))]
+    public void AggregatedMboFeed_EveryFrameMatchesFullRedraw(LevelRemovalMode mode, bool retained)
+    {
+        const decimal displayTickSize = RandomFeed<OrderUpdate>.TickSize * 5;
+        var feed = new RandomOrderFeed(seed: 5, ticksPerSecond: 150);
+        var viewModel = new PriceLadderViewModel(RandomFeed<OrderUpdate>.TickSize) { DisplayTickSize = displayTickSize };
+        var core = viewModel.Core;
+        core.SetDataMode(DataMode.MBO);
+        void Ingest((OrderUpdate Update, OrderUpdateType Type)[] batch)
+        {
+            foreach (var (update, type) in batch) core.ProcessOrderUpdateNoFlush(update, type);
+            core.Flush();
+        }
+        Ingest(feed.Seed());
+        using var ladder = new Ladder(mode, retained, displayTickSize: displayTickSize);
+        using var fullRedraw = new Ladder(mode, retained: false, displayTickSize: displayTickSize);
+        var mergedFrames = 0;
+
+        for (var frame = 0; frame < 120; frame++)
+        {
+            foreach (var batch in feed.Advance((frame + 1) * 1000.0 / 60)) Ingest(batch);
+            var snapshot = viewModel.CurrentSnapshot!.Value;
+            if (ladder.Renderer.NeedsRender(snapshot, ladder.Viewport))
+            {
+                ladder.Render(snapshot);
+            }
+            fullRedraw.Renderer.Invalidate();
+            fullRedraw.Render(snapshot);
+            ladder.AssertMatches(fullRedraw, $"frame {frame}:");
+            mergedFrames += snapshot.BidOrderBreaks?.Count > 0 && snapshot.AskOrderBreaks?.Count > 0 ? 1 : 0;
+        }
+        Assert.Equal(120, mergedFrames); // Rows of several levels on every frame
+    }
+
     // A drag finds its limit from the last rendered book, so a level that outgrew the bar column
     // can be dragged to its end
     [Fact]
@@ -757,7 +812,7 @@ public class IncrementalRenderTests
         var state = SegmentState(ladder.Renderer);
         // Scrolled to the end of a level of n orders of 100
         double End(int n) => n * (100 * state.BasePixelsPerUnit * state.UserScaleFactor + RenderConfig.SegmentGapPx) -
-            ladder.Viewport.VolumeBarMaxWidth;
+            ladder.Viewport.OrdersColumnWidth;
 
         ladder.Render(book.Snapshot);
         ladder.Renderer.AdjustHorizontalScroll(1e6);
@@ -802,7 +857,8 @@ public class IncrementalRenderTests
             };
             var snapshot = new OrderBookSnapshot
             {
-                BestBid = center, BestAsk = center + tick, MidPrice = center, Bids = bidLevels, Asks = askLevels, Timestamp = DateTime.UtcNow
+                BestBid = center, BestAsk = center + tick, MidPrice = center, Bids = bidLevels, Asks = askLevels, Timestamp = DateTime.UtcNow,
+                Mode = DataMode.MBO // Level bars in the Orders column
             };
             renderer.Render(surface.Canvas, snapshot, viewport);
             return surface.PeekPixels().GetPixelSpan().ToArray();
